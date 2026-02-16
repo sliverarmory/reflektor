@@ -19,3 +19,6 @@ go test ./memmod -run TestLoadLibraryAndCallExport_Linux -count=1 -v
 
 # Validate the root package linux shared-library load case too.
 go test ./... -run TestLoadGeneratedCLinuxSOAndCallStartW -count=1 -v
+
+# Validate the root package linux shared-library load case using a Go c-shared fixture.
+go test ./... -run TestLoadGeneratedGoLinuxSOAndCallStartW -count=1 -v

@@ -1,0 +1,113 @@
+name: Test Matrix
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  darwin:
+    name: darwin-${{ matrix.goarch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-13
+            goarch: amd64
+          - runner: macos-14
+            goarch: arm64
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      GOARCH: ${{ matrix.goarch }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.0
+      - name: Run Darwin C and Go fixture tests
+        run: |
+          go test ./... -run 'TestLoadGeneratedCDylibAndCallStartW|TestLoadGeneratedGoDylibAndCallStartW|TestLoadLibraryAndCallExport_Darwin' -count=1 -v
+
+  linux-native:
+    name: linux-${{ matrix.goarch }}-native
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            goarch: amd64
+          - runner: ubuntu-24.04-arm
+            goarch: arm64
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      GOARCH: ${{ matrix.goarch }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.0
+      - name: Run Linux C and Go fixture tests
+        run: |
+          go test ./... -run 'TestLoadGeneratedCLinuxSOAndCallStartW|TestLoadGeneratedGoLinuxSOAndCallStartW|TestLoadLibraryAndCallExport_Linux' -count=1 -v
+
+  linux-386:
+    name: linux-386-docker
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Run linux/386 C and Go fixture tests in Docker
+        run: |
+          docker build --platform linux/386 -f testdata/docker/linux-memmod.Dockerfile -t reflektor-linux-386-ci .
+          docker run --rm --platform linux/386 reflektor-linux-386-ci
+
+  windows:
+    name: windows-${{ matrix.goarch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            goarch: amd64
+          - runner: windows-2022
+            goarch: 386
+          - runner: windows-11-arm
+            goarch: arm64
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      GOARCH: ${{ matrix.goarch }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.0
+      - name: Run Windows C and Go fixture tests
+        run: |
+          go test ./... -run 'TestLoadGeneratedCWindowsDLLAndCallStartW|TestLoadGeneratedGoWindowsDLLAndCallStartW' -count=1 -v
