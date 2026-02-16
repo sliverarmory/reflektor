@@ -7,10 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"syscall"
 	"testing"
-
-	"golang.org/x/sys/windows"
 )
 
 func TestLoadGeneratedCWindowsDLLAndCallStartW(t *testing.T) {
@@ -19,6 +16,10 @@ func TestLoadGeneratedCWindowsDLLAndCallStartW(t *testing.T) {
 	outDir := t.TempDir()
 	dllPath := buildOneSharedLib(t, outDir, "windows", runtime.GOARCH)
 	markerPath := filepath.Join(t.TempDir(), "reflektor_marker.txt")
+	_ = os.Remove(windowsFallbackMarkerPath)
+	t.Cleanup(func() {
+		_ = os.Remove(windowsFallbackMarkerPath)
+	})
 
 	if err := os.Setenv("REFLEKTOR_MARKER", markerPath); err != nil {
 		t.Fatalf("set env REFLEKTOR_MARKER: %v", err)
@@ -27,20 +28,9 @@ func TestLoadGeneratedCWindowsDLLAndCallStartW(t *testing.T) {
 		_ = os.Unsetenv("REFLEKTOR_MARKER")
 	})
 
-	dll := syscall.NewLazyDLL(dllPath)
-	startWProc := dll.NewProc("StartW")
-	if err := startWProc.Find(); err != nil {
-		t.Fatalf("find StartW in %s: %v", dllPath, err)
-	}
-	_, _, callErr := startWProc.Call()
-	if callErr != windows.ERROR_SUCCESS {
-		t.Fatalf("call StartW in %s failed: %v", dllPath, callErr)
-	}
+	callWindowsExportFromDLL(t, dllPath, "StartW")
 
-	got, err := os.ReadFile(markerPath)
-	if err != nil {
-		t.Fatalf("read marker %s: %v", markerPath, err)
-	}
+	got := readMarkerWithWindowsFallback(t, markerPath)
 	if !bytes.Equal(got, []byte("ok")) {
 		t.Fatalf("unexpected marker bytes: got=%q want=%q", got, []byte("ok"))
 	}

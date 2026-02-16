@@ -427,6 +427,12 @@ func applyX8664Reloc(relocType uint32, place uintptr, loadBias uintptr, symValue
 	case elf.R_X86_64_RELATIVE:
 		writeU64(place, uint64(int64(loadBias)+addend))
 		return nil
+	case elf.R_X86_64_TPOFF64:
+		// Linux TLS local-exec relocation. The pure-Go loader does not provision
+		// module TLS blocks, so we apply S+A and rely on payload/runtime behavior
+		// that does not require a non-zero static TLS offset.
+		writeU64(place, uint64(int64(symValue)+addend))
+		return nil
 	case elf.R_X86_64_JMP_SLOT, elf.R_X86_64_GLOB_DAT, elf.R_X86_64_64:
 		writeU64(place, uint64(int64(symValue)+addend))
 		return nil
@@ -463,6 +469,10 @@ func apply386Reloc(relocType uint32, place uintptr, loadBias uintptr, symValue u
 	case elf.R_386_RELATIVE:
 		writeU32(place, uint32(int64(loadBias)+addend))
 		return nil
+	case elf.R_386_TLS_TPOFF:
+		// Linux TLS local-exec relocation; see R_X86_64_TPOFF64 note above.
+		writeU32(place, uint32(int64(symValue)+addend))
+		return nil
 	case elf.R_386_JMP_SLOT, elf.R_386_GLOB_DAT:
 		writeU32(place, uint32(symValue))
 		return nil
@@ -488,6 +498,10 @@ func applyAArch64Reloc(relocType uint32, place uintptr, loadBias uintptr, symVal
 	case elf.R_AARCH64_RELATIVE:
 		writeU64(place, uint64(int64(loadBias)+addend))
 		return nil
+	case elf.R_AARCH64_TLS_TPREL64:
+		// Linux TLS local-exec relocation; see R_X86_64_TPOFF64 note above.
+		writeU64(place, uint64(int64(symValue)+addend))
+		return nil
 	case elf.R_AARCH64_JUMP_SLOT, elf.R_AARCH64_GLOB_DAT, elf.R_AARCH64_ABS64:
 		writeU64(place, uint64(int64(symValue)+addend))
 		return nil
@@ -497,11 +511,14 @@ func applyAArch64Reloc(relocType uint32, place uintptr, loadBias uintptr, symVal
 }
 
 func resolveRelocationSymbol(symIndex uint32, dynSyms []elf.Symbol, loadBias uintptr, resolver *symbolResolver) (uintptr, error) {
-	if int(symIndex) >= len(dynSyms) {
-		return 0, fmt.Errorf("relocation references invalid symbol index %d", symIndex)
+	if symIndex == 0 {
+		return 0, nil
 	}
 
-	sym := dynSyms[symIndex]
+	sym, ok := dynSymbolByIndex(dynSyms, symIndex)
+	if !ok {
+		return 0, fmt.Errorf("relocation references invalid symbol index %d", symIndex)
+	}
 	if sym.Section != elf.SHN_UNDEF && sym.Value != 0 {
 		return loadBias + uintptr(sym.Value), nil
 	}
@@ -517,6 +534,18 @@ func resolveRelocationSymbol(symIndex uint32, dynSyms []elf.Symbol, loadBias uin
 		return 0, fmt.Errorf("resolved external symbol %q to nil address", sym.Name)
 	}
 	return addr, nil
+}
+
+func dynSymbolByIndex(dynSyms []elf.Symbol, symIndex uint32) (elf.Symbol, bool) {
+	// debug/elf.DynamicSymbols omits the null symbol at dynsym index 0.
+	if symIndex == 0 {
+		return elf.Symbol{}, false
+	}
+	idx := int(symIndex - 1)
+	if idx < 0 || idx >= len(dynSyms) {
+		return elf.Symbol{}, false
+	}
+	return dynSyms[idx], true
 }
 
 func applySegmentProtections(mapped mappedELF) error {

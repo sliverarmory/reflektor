@@ -343,11 +343,7 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 		return 2
 	}
 
-	apisSec := findSection(libdyld, "__TPRO_CONST", "__dyld_apis", slide)
-	if apisSec == 0 {
-		return 3
-	}
-	apis := *(*uintptr)(unsafe.Pointer(apisSec))
+	apis := resolveDyldRuntimeAPIs(libdyld, slide)
 	if apis == 0 {
 		return 3
 	}
@@ -695,6 +691,78 @@ func findSection(base uint64, segName string, sectName string, slide uint64) uin
 		}
 		lc += uintptr(cmd.CmdSize)
 	}
+	return 0
+}
+
+func findSectionAnySegment(base uint64, sectName string, slide uint64) uintptr {
+	mh := (*machHeader64)(unsafe.Pointer(uintptr(base)))
+	lc := uintptr(base) + unsafe.Sizeof(machHeader64{})
+
+	for i := uint32(0); i < mh.NCmds; i++ {
+		cmd := (*loadCommand)(unsafe.Pointer(lc))
+		if cmd.Cmd == lcSegment64 {
+			seg := (*segmentCommand64)(unsafe.Pointer(lc))
+			sect := lc + unsafe.Sizeof(segmentCommand64{})
+			for j := uint32(0); j < seg.NSects; j++ {
+				s := (*section64)(unsafe.Pointer(sect + uintptr(j)*unsafe.Sizeof(section64{})))
+				if fixedCString(s.SectName[:]) == sectName {
+					return uintptr(s.Addr + slide)
+				}
+			}
+		}
+		lc += uintptr(cmd.CmdSize)
+	}
+	return 0
+}
+
+func resolveDyldRuntimeAPIs(libdyld uint64, slide uint64) uintptr {
+	if libdyld == 0 {
+		return 0
+	}
+
+	// Keep legacy-first order for older dyld cache layouts, then probe newer
+	// common data segments and finally a segment-agnostic section search.
+	candidates := [][2]string{
+		{"__TPRO_CONST", "__dyld_apis"},
+		{"__DATA_CONST", "__dyld_apis"},
+		{"__AUTH_CONST", "__dyld_apis"},
+		{"__DATA", "__dyld_apis"},
+	}
+
+	for _, candidate := range candidates {
+		sec := findSection(libdyld, candidate[0], candidate[1], slide)
+		if apis := dyldRuntimeAPIsFromSection(sec); apis != 0 {
+			return apis
+		}
+	}
+
+	if sec := findSectionAnySegment(libdyld, "__dyld_apis", slide); sec != 0 {
+		if apis := dyldRuntimeAPIsFromSection(sec); apis != 0 {
+			return apis
+		}
+	}
+
+	return 0
+}
+
+func dyldRuntimeAPIsFromSection(sectionAddr uintptr) uintptr {
+	if sectionAddr == 0 {
+		return 0
+	}
+
+	apis := *(*uintptr)(unsafe.Pointer(sectionAddr))
+	if apis != 0 {
+		return apis
+	}
+
+	// Some layouts may expose the APIs struct directly at section base.
+	// Validate the expected loaded-vector pointers (offsets used below).
+	imagePtr := *(*uintptr)(unsafe.Pointer(sectionAddr + 24))
+	vectorElemPtr := *(*uintptr)(unsafe.Pointer(sectionAddr + 32))
+	if imagePtr != 0 || vectorElemPtr != 0 {
+		return sectionAddr
+	}
+
 	return 0
 }
 

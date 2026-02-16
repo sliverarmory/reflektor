@@ -14,9 +14,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-13
+          - runner: macos-15-intel
             goarch: amd64
-          - runner: macos-14
+          - runner: macos-15
             goarch: arm64
     runs-on: ${{ matrix.runner }}
     defaults:
