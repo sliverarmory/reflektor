@@ -9,6 +9,8 @@ echo "go: $(go version)"
 echo "zig: $(zig version)"
 
 export CGO_ENABLED=1
+export CC="zig cc"
+export CXX="zig c++"
 export GOCACHE=/tmp/go-build-cache
 export GOMODCACHE=/tmp/go-mod-cache
 export ZIG_GLOBAL_CACHE_DIR=/tmp/zig-global-cache

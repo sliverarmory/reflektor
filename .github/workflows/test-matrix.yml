@@ -53,6 +53,9 @@ jobs:
         shell: bash
     env:
       GOARCH: ${{ matrix.goarch }}
+      CGO_ENABLED: "1"
+      CC: zig cc
+      CXX: zig c++
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

@@ -37,6 +37,6 @@ func (module *Module) CallExport(name string) error {
 		return fmt.Errorf("resolve export %q: %w", name, err)
 	}
 
-	_, _, _ = syscall.Syscall(addr, 0, 0, 0, 0)
+	_, _, _ = syscall.SyscallN(addr)
 	return nil
 }

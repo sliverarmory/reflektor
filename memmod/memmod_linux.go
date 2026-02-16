@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -19,6 +20,7 @@ import (
 )
 
 type linuxDynAPI struct {
+	dlopen  uintptr
 	dlsym   uintptr
 	dlerror uintptr
 }
@@ -27,6 +29,11 @@ var (
 	linuxAPIOnce sync.Once
 	linuxAPI     linuxDynAPI
 	linuxAPIErr  error
+)
+
+const (
+	rtldNow    = 0x2
+	rtldGlobal = 0x100
 )
 
 type Module struct {
@@ -54,6 +61,7 @@ type symbolResolver struct {
 	modules  []runtimeELFModule
 	resolved map[string]uintptr
 	misses   map[string]error
+	opened   map[string]uintptr
 }
 
 func LoadLibrary(data []byte) (*Module, error) {
@@ -82,7 +90,7 @@ func LoadLibrary(data []byte) (*Module, error) {
 		}
 	}()
 
-	resolver := newSymbolResolver()
+	resolver := newSymbolResolver(f)
 	if err := applyDynamicRelocations(mapped, f, resolver); err != nil {
 		return nil, err
 	}
@@ -519,6 +527,11 @@ func resolveRelocationSymbol(symIndex uint32, dynSyms []elf.Symbol, loadBias uin
 	if !ok {
 		return 0, fmt.Errorf("relocation references invalid symbol index %d", symIndex)
 	}
+	bind := elf.ST_BIND(sym.Info)
+	if sym.Section == elf.SHN_UNDEF && bind == elf.STB_WEAK {
+		// Undefined weak symbols are optional and resolve to 0 by ELF rules.
+		return 0, nil
+	}
 	if sym.Section != elf.SHN_UNDEF && sym.Value != 0 {
 		return loadBias + uintptr(sym.Value), nil
 	}
@@ -616,10 +629,11 @@ func addELFSymbols(dst map[string]uintptr, symbols []elf.Symbol, loadBias uintpt
 	}
 }
 
-func newSymbolResolver() *symbolResolver {
+func newSymbolResolver(f *elf.File) *symbolResolver {
 	resolver := &symbolResolver{
 		resolved: make(map[string]uintptr),
 		misses:   make(map[string]error),
+		opened:   make(map[string]uintptr),
 	}
 	if modules, err := runtimeModules(); err == nil {
 		resolver.modules = modules
@@ -627,7 +641,184 @@ func newSymbolResolver() *symbolResolver {
 	if api, err := getLinuxDynAPI(); err == nil {
 		resolver.api = api
 	}
+	if f != nil {
+		resolver.primeDependencies(f)
+	}
 	return resolver
+}
+
+func (resolver *symbolResolver) primeDependencies(f *elf.File) {
+	libs := collectNeededLibraries(f)
+	libs = append(libs, commonLinuxDependencies()...)
+	for _, lib := range libs {
+		_ = resolver.ensureLibraryLoaded(lib)
+	}
+}
+
+func collectNeededLibraries(f *elf.File) []string {
+	if f == nil {
+		return nil
+	}
+	imports, err := f.ImportedLibraries()
+	if err != nil || len(imports) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(imports))
+	seen := make(map[string]struct{}, len(imports))
+	for _, lib := range imports {
+		lib = strings.TrimSpace(lib)
+		if lib == "" {
+			continue
+		}
+		if _, exists := seen[lib]; exists {
+			continue
+		}
+		seen[lib] = struct{}{}
+		out = append(out, lib)
+	}
+	return out
+}
+
+func commonLinuxDependencies() []string {
+	deps := []string{
+		"libc.so.6",
+		"libdl.so.2",
+		"libpthread.so.0",
+	}
+	switch runtime.GOARCH {
+	case "amd64":
+		deps = append(deps, "ld-linux-x86-64.so.2", "ld-musl-x86_64.so.1")
+	case "386":
+		deps = append(deps, "ld-linux.so.2", "ld-musl-i386.so.1")
+	case "arm64":
+		deps = append(deps, "ld-linux-aarch64.so.1", "ld-musl-aarch64.so.1")
+	}
+	return deps
+}
+
+func (resolver *symbolResolver) ensureLibraryLoaded(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	if resolver.hasModule(name) {
+		return nil
+	}
+	if resolver.api == nil || resolver.api.dlopen == 0 {
+		return errors.New("dlopen is unavailable")
+	}
+
+	var lastErr error
+	for _, candidate := range dlopenCandidates(name) {
+		if candidate == "" {
+			continue
+		}
+		if resolver.hasModule(candidate) {
+			return nil
+		}
+		if _, opened := resolver.opened[candidate]; opened {
+			continue
+		}
+
+		handle, err := openWithDlopen(resolver.api, candidate)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if handle == 0 {
+			continue
+		}
+		resolver.opened[candidate] = handle
+		resolver.opened[name] = handle
+		resolver.refreshModules()
+		if resolver.hasModule(name) || resolver.hasModule(candidate) {
+			return nil
+		}
+	}
+	if resolver.hasModule(name) {
+		return nil
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("dlopen(%s): returned nil handle", name)
+	}
+	return lastErr
+}
+
+func (resolver *symbolResolver) refreshModules() {
+	if modules, err := runtimeModules(); err == nil {
+		resolver.modules = modules
+	}
+}
+
+func (resolver *symbolResolver) hasModule(name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false
+	}
+	base := filepath.Base(name)
+	for _, module := range resolver.modules {
+		if module.path == name {
+			return true
+		}
+		if base != "" && filepath.Base(module.path) == base {
+			return true
+		}
+	}
+	return false
+}
+
+func dlopenCandidates(name string) []string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	out := make([]string, 0, 8)
+	seen := make(map[string]struct{}, 8)
+	add := func(v string) {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return
+		}
+		if _, exists := seen[v]; exists {
+			return
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+
+	add(name)
+	base := filepath.Base(name)
+	add(base)
+
+	switch base {
+	case "libc.so":
+		add("libc.so.6")
+	case "libdl.so":
+		add("libdl.so.2")
+	case "libpthread.so":
+		add("libpthread.so.0")
+	}
+	if idx := strings.Index(base, ".so."); idx > 0 {
+		add(base[:idx+3])
+	}
+
+	for _, dir := range linuxLibrarySearchDirs() {
+		add(filepath.Join(dir, base))
+	}
+	return out
+}
+
+func linuxLibrarySearchDirs() []string {
+	dirs := []string{"/lib", "/lib64", "/usr/lib", "/usr/lib64"}
+	switch runtime.GOARCH {
+	case "amd64":
+		dirs = append(dirs, "/lib/x86_64-linux-gnu", "/usr/lib/x86_64-linux-gnu")
+	case "386":
+		dirs = append(dirs, "/lib/i386-linux-gnu", "/usr/lib/i386-linux-gnu")
+	case "arm64":
+		dirs = append(dirs, "/lib/aarch64-linux-gnu", "/usr/lib/aarch64-linux-gnu")
+	}
+	return dirs
 }
 
 func (resolver *symbolResolver) Resolve(name string) (uintptr, error) {
@@ -647,6 +838,30 @@ func (resolver *symbolResolver) Resolve(name string) (uintptr, error) {
 		if addr, err := resolveWithDLSym(resolver.api, name); err == nil && addr != 0 {
 			resolver.resolved[name] = addr
 			return addr, nil
+		}
+	}
+
+	if resolver.api != nil && resolver.api.dlopen != 0 {
+		for _, dep := range commonLinuxDependencies() {
+			_ = resolver.ensureLibraryLoaded(dep)
+		}
+		if addr, err := resolveFromRuntimeModules(resolver.modules, name); err == nil && addr != 0 {
+			resolver.resolved[name] = addr
+			return addr, nil
+		}
+		if addr, err := resolveWithDLSym(resolver.api, name); err == nil && addr != 0 {
+			resolver.resolved[name] = addr
+			return addr, nil
+		}
+	}
+
+	if at := strings.IndexByte(name, '@'); at > 0 {
+		base := name[:at]
+		if base != "" && base != name {
+			if addr, err := resolver.Resolve(base); err == nil && addr != 0 {
+				resolver.resolved[name] = addr
+				return addr, nil
+			}
 		}
 	}
 
@@ -726,6 +941,30 @@ func resolveWithDLSym(api *linuxDynAPI, name string) (uintptr, error) {
 		return 0, fmt.Errorf("dlsym(%s): symbol address is nil", name)
 	}
 	return sym, nil
+}
+
+func openWithDlopen(api *linuxDynAPI, name string) (uintptr, error) {
+	if api == nil || api.dlopen == 0 {
+		return 0, errors.New("dlopen is unavailable")
+	}
+	cName, err := cStringBytes(name)
+	if err != nil {
+		return 0, err
+	}
+	if api.dlerror != 0 {
+		_ = cCall0(api.dlerror)
+	}
+	handle := cCall2(api.dlopen, cStringPtr(cName), uintptr(rtldNow|rtldGlobal))
+	runtime.KeepAlive(cName)
+	if api.dlerror != 0 {
+		if err := lastDLError(api); err != nil {
+			return 0, fmt.Errorf("dlopen(%s): %w", name, err)
+		}
+	}
+	if handle == 0 {
+		return 0, fmt.Errorf("dlopen(%s): symbol handle is nil", name)
+	}
+	return handle, nil
 }
 
 func mappedAddressInRange(mapping []byte, addr uintptr, size int) bool {
@@ -853,23 +1092,28 @@ func getLinuxDynAPI() (*linuxDynAPI, error) {
 }
 
 func initLinuxDynAPI() error {
-	libcPath, baseAddr, err := findRuntimeLibc()
+	modules, err := runtimeModules()
 	if err != nil {
 		return err
 	}
 
-	dlsymOff, err := findELFSymbolOffset(libcPath, "dlsym")
+	dlopenAddr, err := resolveRuntimeAPISymbol(modules, "dlopen")
 	if err != nil {
-		return fmt.Errorf("resolve libc symbol dlsym: %w", err)
+		return fmt.Errorf("resolve runtime symbol dlopen: %w", err)
 	}
-	dlerrorOff, err := findELFSymbolOffset(libcPath, "dlerror")
+	dlsymAddr, err := resolveRuntimeAPISymbol(modules, "dlsym")
 	if err != nil {
-		return fmt.Errorf("resolve libc symbol dlerror: %w", err)
+		return fmt.Errorf("resolve runtime symbol dlsym: %w", err)
+	}
+	dlerrorAddr, err := resolveRuntimeAPISymbol(modules, "dlerror")
+	if err != nil {
+		return fmt.Errorf("resolve runtime symbol dlerror: %w", err)
 	}
 
 	linuxAPI = linuxDynAPI{
-		dlsym:   baseAddr + dlsymOff,
-		dlerror: baseAddr + dlerrorOff,
+		dlopen:  dlopenAddr,
+		dlsym:   dlsymAddr,
+		dlerror: dlerrorAddr,
 	}
 	return nil
 }
@@ -881,28 +1125,15 @@ type procMapEntry struct {
 	path   string
 }
 
-func findRuntimeLibc() (string, uintptr, error) {
-	entries, err := readProcMaps()
-	if err != nil {
-		return "", 0, err
-	}
-
-	bestScore := -1
-	var best procMapEntry
-	for _, entry := range entries {
-		score := libcPathScore(entry.path)
-		if score > bestScore {
-			bestScore = score
-			best = entry
+func resolveRuntimeAPISymbol(modules []runtimeELFModule, symbol string) (uintptr, error) {
+	for _, module := range modules {
+		off, err := findELFSymbolOffset(module.path, symbol)
+		if err != nil || off == 0 {
+			continue
 		}
+		return module.base + off, nil
 	}
-	if bestScore < 0 || best.path == "" {
-		return "", 0, errors.New("failed to locate runtime libc mapping")
-	}
-	if best.start < best.offset {
-		return "", 0, fmt.Errorf("invalid libc mapping base for %s", best.path)
-	}
-	return best.path, best.start - best.offset, nil
+	return 0, fmt.Errorf("symbol %q not found in runtime modules", symbol)
 }
 
 func libcPathScore(path string) int {

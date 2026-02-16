@@ -41,9 +41,15 @@ func buildOneGoSharedLib(t *testing.T, outDir string, goos string, goarch string
 	)
 	if _, err := exec.LookPath("zig"); err == nil {
 		cmd := exec.Command("go", args...)
+		cc := "zig cc"
+		cxx := "zig c++"
+		if target, ok := zigTargetFor(goos, goarch); ok {
+			cc = "zig cc -target " + target
+			cxx = "zig c++ -target " + target
+		}
 		cmd.Env = overrideEnv(baseEnv, map[string]string{
-			"CC":  "zig cc",
-			"CXX": "zig c++",
+			"CC":  cc,
+			"CXX": cxx,
 		})
 		out, err = cmd.CombinedOutput()
 		if err == nil {
@@ -62,6 +68,29 @@ func buildOneGoSharedLib(t *testing.T, outDir string, goos string, goarch string
 
 	cleanupGoSharedSidecars(outputPath, ext)
 	return outputPath
+}
+
+func zigTargetFor(goos string, goarch string) (string, bool) {
+	switch {
+	case goos == "darwin" && goarch == "amd64":
+		return "x86_64-macos", true
+	case goos == "darwin" && goarch == "arm64":
+		return "aarch64-macos", true
+	case goos == "linux" && goarch == "386":
+		return "x86-linux-gnu", true
+	case goos == "linux" && goarch == "amd64":
+		return "x86_64-linux-gnu", true
+	case goos == "linux" && goarch == "arm64":
+		return "aarch64-linux-gnu", true
+	case goos == "windows" && goarch == "386":
+		return "x86-windows-gnu", true
+	case goos == "windows" && goarch == "amd64":
+		return "x86_64-windows-gnu", true
+	case goos == "windows" && goarch == "arm64":
+		return "aarch64-windows-gnu", true
+	default:
+		return "", false
+	}
 }
 
 func sharedLibExt(goos string) (string, error) {

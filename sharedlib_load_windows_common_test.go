@@ -30,7 +30,7 @@ func callWindowsExportFromDLL(t *testing.T, dllPath string, exportName string) {
 	}
 
 	// The export is a zero-argument function; ignore last-error semantics.
-	_, _, _ = syscall.Syscall(addr, 0, 0, 0, 0)
+	_, _, _ = syscall.SyscallN(addr)
 }
 
 func readMarkerWithWindowsFallback(t *testing.T, markerPath string) []byte {
