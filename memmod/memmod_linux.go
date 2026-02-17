@@ -34,6 +34,14 @@ var (
 const (
 	rtldNow    = 0x2
 	rtldGlobal = 0x100
+
+	// ELF dynamic tags used for runtime initialization hooks.
+	dynTagNull        = 0
+	dynTagInit        = 12
+	dynTagInitArray   = 25
+	dynTagInitArraySz = 27
+	dynTagPreinitArr  = 32
+	dynTagPreinitSz   = 33
 )
 
 type Module struct {
@@ -48,6 +56,14 @@ type mappedELF struct {
 	mapping  []byte
 	loadBias uintptr
 	progs    []*elf.Prog
+}
+
+type dynamicInitInfo struct {
+	init        uint64
+	initArray   uint64
+	initArraySz uint64
+	preinitArr  uint64
+	preinitSz   uint64
 }
 
 type runtimeELFModule struct {
@@ -96,6 +112,9 @@ func LoadLibrary(data []byte) (*Module, error) {
 	}
 
 	if err := applySegmentProtections(mapped); err != nil {
+		return nil, err
+	}
+	if err := runELFInitializers(mapped, f); err != nil {
 		return nil, err
 	}
 
@@ -590,6 +609,165 @@ func applySegmentProtections(mapped mappedELF) error {
 		}
 	}
 	return nil
+}
+
+func runELFInitializers(mapped mappedELF, f *elf.File) error {
+	info, err := parseDynamicInitInfo(f)
+	if err != nil {
+		return err
+	}
+
+	if err := callDynamicInitArray(mapped, f.Class, info.preinitArr, info.preinitSz, "DT_PREINIT_ARRAY"); err != nil {
+		return err
+	}
+	if err := callDynamicInitFn(mapped, uintptr(info.init), "DT_INIT"); err != nil {
+		return err
+	}
+	if err := callDynamicInitArray(mapped, f.Class, info.initArray, info.initArraySz, "DT_INIT_ARRAY"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func parseDynamicInitInfo(f *elf.File) (dynamicInitInfo, error) {
+	var info dynamicInitInfo
+	if f == nil {
+		return info, nil
+	}
+	sec := f.Section(".dynamic")
+	if sec == nil {
+		return info, nil
+	}
+	data, err := sec.Data()
+	if err != nil {
+		return info, fmt.Errorf("read .dynamic section: %w", err)
+	}
+	if len(data) == 0 {
+		return info, nil
+	}
+
+	switch f.Class {
+	case elf.ELFCLASS64:
+		const ent = 16
+		if len(data)%ent != 0 {
+			return info, fmt.Errorf("malformed .dynamic section: size %d is not a multiple of %d", len(data), ent)
+		}
+		for i := 0; i < len(data); i += ent {
+			tag := int64(binary.LittleEndian.Uint64(data[i : i+8]))
+			val := binary.LittleEndian.Uint64(data[i+8 : i+16])
+			if tag == dynTagNull {
+				break
+			}
+			switch tag {
+			case dynTagInit:
+				info.init = val
+			case dynTagInitArray:
+				info.initArray = val
+			case dynTagInitArraySz:
+				info.initArraySz = val
+			case dynTagPreinitArr:
+				info.preinitArr = val
+			case dynTagPreinitSz:
+				info.preinitSz = val
+			}
+		}
+	case elf.ELFCLASS32:
+		const ent = 8
+		if len(data)%ent != 0 {
+			return info, fmt.Errorf("malformed .dynamic section: size %d is not a multiple of %d", len(data), ent)
+		}
+		for i := 0; i < len(data); i += ent {
+			tag := int64(int32(binary.LittleEndian.Uint32(data[i : i+4])))
+			val := uint64(binary.LittleEndian.Uint32(data[i+4 : i+8]))
+			if tag == dynTagNull {
+				break
+			}
+			switch tag {
+			case dynTagInit:
+				info.init = val
+			case dynTagInitArray:
+				info.initArray = val
+			case dynTagInitArraySz:
+				info.initArraySz = val
+			case dynTagPreinitArr:
+				info.preinitArr = val
+			case dynTagPreinitSz:
+				info.preinitSz = val
+			}
+		}
+	default:
+		return info, fmt.Errorf("unsupported ELF class for .dynamic parsing: %s", f.Class)
+	}
+	return info, nil
+}
+
+func callDynamicInitFn(mapped mappedELF, fn uintptr, source string) error {
+	if fn == 0 {
+		return nil
+	}
+	resolved, ok := normalizeInitFnAddress(mapped, fn)
+	if !ok {
+		return fmt.Errorf("%s points outside mapped image: %#x", source, fn)
+	}
+	_ = cCall0(resolved)
+	return nil
+}
+
+func callDynamicInitArray(mapped mappedELF, class elf.Class, arrayVAddr uint64, arraySz uint64, source string) error {
+	if arrayVAddr == 0 || arraySz == 0 {
+		return nil
+	}
+
+	entrySize := 8
+	if class == elf.ELFCLASS32 {
+		entrySize = 4
+	}
+	if arraySz%uint64(entrySize) != 0 {
+		return fmt.Errorf("%s has malformed size %#x for entry size %d", source, arraySz, entrySize)
+	}
+	arrayLen, err := u64ToInt(arraySz)
+	if err != nil {
+		return fmt.Errorf("%s size does not fit in int: %w", source, err)
+	}
+
+	arrayAddr := mapped.loadBias + uintptr(arrayVAddr)
+	if !mappedAddressInRange(mapped.mapping, arrayAddr, arrayLen) {
+		return fmt.Errorf("%s range %#x..%#x is outside mapped image", source, arrayVAddr, arrayVAddr+arraySz)
+	}
+
+	count := int(arraySz / uint64(entrySize))
+	for i := 0; i < count; i++ {
+		entryAddr := arrayAddr + uintptr(i*entrySize)
+		var fn uintptr
+		if entrySize == 8 {
+			fn = uintptr(readU64(entryAddr))
+		} else {
+			fn = uintptr(readU32(entryAddr))
+		}
+		if fn == 0 || fn == ^uintptr(0) {
+			continue
+		}
+		resolved, ok := normalizeInitFnAddress(mapped, fn)
+		if !ok {
+			return fmt.Errorf("%s[%d] points outside mapped image: %#x", source, i, fn)
+		}
+		_ = cCall0(resolved)
+	}
+	return nil
+}
+
+func normalizeInitFnAddress(mapped mappedELF, fn uintptr) (uintptr, bool) {
+	if fn == 0 {
+		return 0, false
+	}
+	if mappedAddressInRange(mapped.mapping, fn, 1) {
+		return fn, true
+	}
+	rebased := mapped.loadBias + fn
+	if mappedAddressInRange(mapped.mapping, rebased, 1) {
+		return rebased, true
+	}
+	return 0, false
 }
 
 func buildExportedSymbolTable(f *elf.File, loadBias uintptr) map[string]uintptr {
