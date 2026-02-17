@@ -407,7 +407,19 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 		"__ZN11DiagnosticsC2Ev",
 	)
 	if diagnosticsCtor == 0 {
+		diagnosticsCtor = findFirstAvailableSymbol(uintptr(libdyld), slide, "",
+			"__ZN11DiagnosticsC1Ev",
+			"__ZN11DiagnosticsC2Ev",
+		)
+	}
+	if diagnosticsCtor == 0 {
 		diagnosticsCtor = findFirstMatchingSymbol(uintptr(dyld), slide, "/usr/lib/dyld",
+			"DiagnosticsC",
+			"Ev",
+		)
+	}
+	if diagnosticsCtor == 0 {
+		diagnosticsCtor = findFirstMatchingSymbol(uintptr(libdyld), slide, "",
 			"DiagnosticsC",
 			"Ev",
 		)
@@ -416,7 +428,17 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 		"__ZN11Diagnostics10clearErrorEv",
 	)
 	if diagnosticsClearError == 0 {
+		diagnosticsClearError = findFirstAvailableSymbol(uintptr(libdyld), slide, "",
+			"__ZN11Diagnostics10clearErrorEv",
+		)
+	}
+	if diagnosticsClearError == 0 {
 		diagnosticsClearError = findFirstMatchingSymbol(uintptr(dyld), slide, "/usr/lib/dyld",
+			"Diagnostics10clearErrorEv",
+		)
+	}
+	if diagnosticsClearError == 0 {
+		diagnosticsClearError = findFirstMatchingSymbol(uintptr(libdyld), slide, "",
 			"Diagnostics10clearErrorEv",
 		)
 	}
@@ -424,7 +446,17 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 		"__ZNK11Diagnostics8hasErrorEv",
 	)
 	if diagnosticsHasError == 0 {
+		diagnosticsHasError = findFirstAvailableSymbol(uintptr(libdyld), slide, "",
+			"__ZNK11Diagnostics8hasErrorEv",
+		)
+	}
+	if diagnosticsHasError == 0 {
 		diagnosticsHasError = findFirstMatchingSymbol(uintptr(dyld), slide, "/usr/lib/dyld",
+			"Diagnostics8hasErrorEv",
+		)
+	}
+	if diagnosticsHasError == 0 {
+		diagnosticsHasError = findFirstMatchingSymbol(uintptr(libdyld), slide, "",
 			"Diagnostics8hasErrorEv",
 		)
 	}
@@ -502,6 +534,7 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 
 	entryName, err := cStringBytes(fmt.Sprintf("memmod-%x-%x", uintptr(unsafe.Pointer(&buffer[0])), len(buffer)))
 	if err != nil {
+		setDarwinLoaderDetail("failed to build temporary loader name")
 		return 8
 	}
 
@@ -535,11 +568,22 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 	)
 	runtime.KeepAlive(entryName)
 	if call1(diagnosticsHasError, uintptr(diag)) != 0 {
+		if diagnosticsCtor == 0 {
+			setDarwinLoaderDetail("JustInTimeLoader::make returned diagnostics error (Diagnostics::ctor unresolved)")
+		} else {
+			setDarwinLoaderDetail("JustInTimeLoader::make returned diagnostics error")
+		}
 		return 8
 	}
 	if topLoader == 0 {
+		if diagnosticsCtor == 0 {
+			setDarwinLoaderDetail("JustInTimeLoader::make returned null loader (Diagnostics::ctor unresolved)")
+		} else {
+			setDarwinLoaderDetail("JustInTimeLoader::make returned null loader")
+		}
 		return 8
 	}
+	setDarwinLoaderDetail("")
 	*rtopLoader = topLoader
 	// Mark the top loader as lateLeaveMapped, matching the C loader path.
 	partialFlags := (*uint64)(unsafe.Pointer(topLoader + 16))
@@ -566,6 +610,7 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 	call1(diagnosticsClearError, uintptr(diag))
 	call4(loadDependents, topLoader, uintptr(diag), apis, uintptr(unsafe.Pointer(depOptions)))
 	if call1(diagnosticsHasError, uintptr(diag)) != 0 {
+		setDarwinLoaderDetail("Loader::loadDependents reported diagnostics error")
 		return 9
 	}
 
@@ -577,10 +622,12 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 			call6(applyFixups, ldr, uintptr(diag), apis, uintptr(unsafe.Pointer(&dcd)), 1, 0)
 		}
 		if call1(diagnosticsHasError, uintptr(diag)) != 0 {
+			setDarwinLoaderDetail("Loader::applyFixups reported diagnostics error")
 			return 9
 		}
 	}
 
+	setDarwinLoaderDetail("")
 	call2(incDlRefCount, apis, topLoader)
 	call2(runInitializers, topLoader, apis)
 
@@ -1536,8 +1583,14 @@ func loaderStatusError(code int) error {
 	case 7:
 		return errors.New("failed to allocate dyld scratch space")
 	case 8:
+		if detail := getDarwinLoaderDetail(); detail != "" {
+			return fmt.Errorf("failed to create top-level dyld loader: %s", detail)
+		}
 		return errors.New("failed to create top-level dyld loader")
 	case 9:
+		if detail := getDarwinLoaderDetail(); detail != "" {
+			return fmt.Errorf("failed to load dependents or apply fixups: %s", detail)
+		}
 		return errors.New("failed to load dependents or apply fixups")
 	case 10:
 		return errors.New("failed to find __TEXT segment in loaded image")
