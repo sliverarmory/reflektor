@@ -29,6 +29,8 @@ const (
 
 var (
 	errDarwinLibraryClosed = errors.New("library is closed")
+	darwinLoaderDetailMu   sync.Mutex
+	darwinLoaderDetail     string
 )
 
 type Module struct {
@@ -347,6 +349,7 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 	if apis == 0 {
 		return 3
 	}
+	setDarwinLoaderDetail("")
 
 	buffer := bufferRO
 	if out, rc := maybeDepackAP32(buffer); rc != 0 {
@@ -358,35 +361,110 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 	justInTimeLoaderMake2 := findFirstAvailableSymbol(uintptr(dyld), slide, "/usr/lib/dyld",
 		"__ZN5dyld416JustInTimeLoader4makeERNS_12RuntimeStateEPKN5dyld39MachOFileEPKcRKNS_6FileIDEybbbtPKN6mach_o6LayoutE",
 	)
+	if justInTimeLoaderMake2 == 0 {
+		justInTimeLoaderMake2 = findFirstMatchingSymbol(uintptr(dyld), slide, "/usr/lib/dyld",
+			"JustInTimeLoader4makeERNS_12RuntimeStateE",
+			"MachOFile",
+		)
+	}
 	loadDependents := findFirstAvailableSymbol(uintptr(dyld), slide, "/usr/lib/dyld",
 		"__ZN5dyld46Loader14loadDependentsER11DiagnosticsRNS_12RuntimeStateERKNS0_11LoadOptionsE",
 		"__ZN5dyld416JustInTimeLoader14loadDependentsER11DiagnosticsRNS_12RuntimeStateERKNS_6Loader11LoadOptionsE",
+		"__ZN5dyld414PrebuiltLoader14loadDependentsER11DiagnosticsRNS_12RuntimeStateERKNS_6Loader11LoadOptionsE",
 	)
+	if loadDependents == 0 {
+		loadDependents = findFirstMatchingSymbol(uintptr(dyld), slide, "/usr/lib/dyld",
+			"Loader14loadDependentsER11DiagnosticsRNS_12RuntimeStateE",
+		)
+	}
 	applyFixups := findFirstAvailableSymbol(uintptr(dyld), slide, "/usr/lib/dyld",
 		"__ZNK5dyld46Loader11applyFixupsER11DiagnosticsRNS_12RuntimeStateERNS_34DyldCacheDataConstLazyScopedWriterEbPN3lsl6VectorINSt3__14pairIPKS0_PKcEEEE",
 		"__ZNK5dyld416JustInTimeLoader11applyFixupsER11DiagnosticsRNS_12RuntimeStateERNS_34DyldCacheDataConstLazyScopedWriterEbPN3lsl6VectorINSt3__14pairIPKNS_6LoaderEPKcEEEE",
+		"__ZNK5dyld414PrebuiltLoader11applyFixupsER11DiagnosticsRNS_12RuntimeStateERNS_34DyldCacheDataConstLazyScopedWriterEbPN3lsl6VectorINSt3__14pairIPKNS_6LoaderEPKcEEEE",
 	)
+	if applyFixups == 0 {
+		applyFixups = findFirstMatchingSymbol(uintptr(dyld), slide, "/usr/lib/dyld",
+			"Loader11applyFixupsER11DiagnosticsRNS_12RuntimeStateE",
+		)
+	}
 	incDlRefCount := findFirstAvailableSymbol(uintptr(dyld), slide, "/usr/lib/dyld",
 		"__ZN5dyld412RuntimeState13incDlRefCountEPKNS_6LoaderE",
 	)
+	if incDlRefCount == 0 {
+		incDlRefCount = findFirstMatchingSymbol(uintptr(dyld), slide, "/usr/lib/dyld",
+			"RuntimeState13incDlRefCount",
+		)
+	}
 	runInitializers := findFirstAvailableSymbol(uintptr(dyld), slide, "/usr/lib/dyld",
 		"__ZNK5dyld46Loader38runInitializersBottomUpPlusUpwardLinksERNS_12RuntimeStateE",
+		"__ZNK5dyld46Loader15runInitializersERNS_12RuntimeStateE",
+		"__ZNK5dyld416JustInTimeLoader15runInitializersERNS_12RuntimeStateE",
+		"__ZNK5dyld414PrebuiltLoader15runInitializersERNS_12RuntimeStateE",
 	)
+	if runInitializers == 0 {
+		runInitializers = findFirstMatchingSymbol(uintptr(dyld), slide, "/usr/lib/dyld",
+			"runInitializers",
+			"RuntimeState",
+		)
+	}
 
 	diagnosticsCtor := findFirstAvailableSymbol(uintptr(dyld), slide, "/usr/lib/dyld",
 		"__ZN11DiagnosticsC1Ev",
 		"__ZN11DiagnosticsC2Ev",
 	)
+	if diagnosticsCtor == 0 {
+		diagnosticsCtor = findFirstMatchingSymbol(uintptr(dyld), slide, "/usr/lib/dyld",
+			"DiagnosticsC",
+			"Ev",
+		)
+	}
 	diagnosticsClearError := findFirstAvailableSymbol(uintptr(dyld), slide, "/usr/lib/dyld",
 		"__ZN11Diagnostics10clearErrorEv",
 	)
+	if diagnosticsClearError == 0 {
+		diagnosticsClearError = findFirstMatchingSymbol(uintptr(dyld), slide, "/usr/lib/dyld",
+			"Diagnostics10clearErrorEv",
+		)
+	}
 	diagnosticsHasError := findFirstAvailableSymbol(uintptr(dyld), slide, "/usr/lib/dyld",
 		"__ZNK11Diagnostics8hasErrorEv",
 	)
+	if diagnosticsHasError == 0 {
+		diagnosticsHasError = findFirstMatchingSymbol(uintptr(dyld), slide, "/usr/lib/dyld",
+			"Diagnostics8hasErrorEv",
+		)
+	}
 
-	if justInTimeLoaderMake2 == 0 || loadDependents == 0 || applyFixups == 0 || incDlRefCount == 0 || runInitializers == 0 || diagnosticsCtor == 0 || diagnosticsClearError == 0 || diagnosticsHasError == 0 {
+	missing := make([]string, 0, 8)
+	if justInTimeLoaderMake2 == 0 {
+		missing = append(missing, "JustInTimeLoader::make")
+	}
+	if loadDependents == 0 {
+		missing = append(missing, "Loader::loadDependents")
+	}
+	if applyFixups == 0 {
+		missing = append(missing, "Loader::applyFixups")
+	}
+	if incDlRefCount == 0 {
+		missing = append(missing, "RuntimeState::incDlRefCount")
+	}
+	if runInitializers == 0 {
+		missing = append(missing, "Loader::runInitializers")
+	}
+	if diagnosticsCtor == 0 {
+		missing = append(missing, "Diagnostics::ctor")
+	}
+	if diagnosticsClearError == 0 {
+		missing = append(missing, "Diagnostics::clearError")
+	}
+	if diagnosticsHasError == 0 {
+		missing = append(missing, "Diagnostics::hasError")
+	}
+	if len(missing) != 0 {
+		setDarwinLoaderDetail(strings.Join(missing, ", "))
 		return 4
 	}
+	setDarwinLoaderDetail("")
 
 	memoryManager := findFirstAvailableSymbol(uintptr(dyld), slide, "/usr/lib/dyld", "__ZN3lsl13MemoryManager13memoryManagerEv")
 	lockLock := findFirstAvailableSymbol(uintptr(dyld), slide, "/usr/lib/dyld", "__ZN3lsl4Lock4lockEv")
@@ -860,6 +938,138 @@ func findFirstAvailableSymbol(base uintptr, offset uint64, diskPath string, symb
 	return 0
 }
 
+func findFirstMatchingSymbol(base uintptr, offset uint64, diskPath string, required ...string) uintptr {
+	if len(required) == 0 {
+		return 0
+	}
+	if addr := findSymbolByContains(base, offset, required...); addr != 0 {
+		return addr
+	}
+	if diskPath == "" {
+		return 0
+	}
+	return findSymbolInMachOFileByContains(diskPath, offset, required...)
+}
+
+func findSymbolByContains(base uintptr, offset uint64, required ...string) uintptr {
+	mh := (*machHeader64)(unsafe.Pointer(base))
+	lc := base + unsafe.Sizeof(machHeader64{})
+
+	var (
+		symtab   *symtabCommand
+		linkedit *segmentCommand64
+		text     *segmentCommand64
+	)
+
+	for i := uint32(0); i < mh.NCmds; i++ {
+		cmd := (*loadCommand)(unsafe.Pointer(lc))
+		switch cmd.Cmd {
+		case lcSymtab:
+			symtab = (*symtabCommand)(unsafe.Pointer(lc))
+		case lcSegment64:
+			seg := (*segmentCommand64)(unsafe.Pointer(lc))
+			switch fixedCString(seg.SegName[:]) {
+			case "__LINKEDIT":
+				linkedit = seg
+			case "__TEXT":
+				text = seg
+			}
+		}
+		lc += uintptr(cmd.CmdSize)
+	}
+
+	if symtab == nil || linkedit == nil || text == nil {
+		return 0
+	}
+
+	fileSlide := int64(linkedit.VMAddr) - int64(text.VMAddr) - int64(linkedit.FileOff)
+	strtab := base + uintptr(fileSlide+int64(symtab.StrOff))
+	nlBase := base + uintptr(fileSlide+int64(symtab.SymOff))
+	nlSize := unsafe.Sizeof(nlist64{})
+
+	bestLen := math.MaxInt
+	bestAddr := uintptr(0)
+	for i := uint32(0); i < symtab.NSyms; i++ {
+		nl := (*nlist64)(unsafe.Pointer(nlBase + uintptr(i)*nlSize))
+		if nl.Strx == 0 || nl.Value == 0 {
+			continue
+		}
+		name := cStringAt(strtab + uintptr(nl.Strx))
+		if !isUsableSymbolCandidate(name) || !containsAll(name, required...) {
+			continue
+		}
+		if len(name) < bestLen {
+			bestLen = len(name)
+			bestAddr = uintptr(nl.Value + offset)
+		}
+	}
+	return bestAddr
+}
+
+func findSymbolInMachOFileByContains(path string, slide uint64, required ...string) uintptr {
+	file, closeFn, err := openCurrentArchMachOFile(path)
+	if err != nil || file == nil {
+		return 0
+	}
+	defer closeFn()
+
+	if file.Symtab == nil || len(file.Symtab.Syms) == 0 {
+		return 0
+	}
+	bestLen := math.MaxInt
+	bestAddr := uintptr(0)
+	for _, sym := range file.Symtab.Syms {
+		if sym.Value == 0 {
+			continue
+		}
+		if !isUsableSymbolCandidate(sym.Name) || !containsAll(sym.Name, required...) {
+			continue
+		}
+		if len(sym.Name) < bestLen {
+			bestLen = len(sym.Name)
+			bestAddr = uintptr(sym.Value + slide)
+		}
+	}
+	return bestAddr
+}
+
+func cStringAt(ptr uintptr) string {
+	if ptr == 0 {
+		return ""
+	}
+	buf := make([]byte, 0, 64)
+	for i := 0; i < 4096; i++ {
+		b := *(*byte)(unsafe.Pointer(ptr + uintptr(i)))
+		if b == 0 {
+			break
+		}
+		buf = append(buf, b)
+	}
+	return string(buf)
+}
+
+func isUsableSymbolCandidate(name string) bool {
+	if name == "" {
+		return false
+	}
+	if strings.Contains(name, "block_invoke") || strings.Contains(name, ".cold") {
+		return false
+	}
+	return true
+}
+
+func containsAll(name string, required ...string) bool {
+	for _, needle := range required {
+		if needle == "" {
+			continue
+		}
+		if !strings.Contains(name, needle) {
+			return false
+		}
+	}
+	return true
+}
+
 func findSymbolInMachOFile(path string, symbol string, slide uint64) uintptr {
 	file, closeFn, err := openCurrentArchMachOFile(path)
 	if err != nil || file == nil {
@@ -1303,6 +1513,18 @@ func cStringPtr(b []byte) uintptr {
 	return uintptr(unsafe.Pointer(&b[0]))
 }
 
+func setDarwinLoaderDetail(detail string) {
+	darwinLoaderDetailMu.Lock()
+	defer darwinLoaderDetailMu.Unlock()
+	darwinLoaderDetail = detail
+}
+
+func getDarwinLoaderDetail() string {
+	darwinLoaderDetailMu.Lock()
+	defer darwinLoaderDetailMu.Unlock()
+	return darwinLoaderDetail
+}
+
 func loaderStatusError(code int) error {
 	switch code {
 	case 2:
@@ -1310,6 +1532,9 @@ func loaderStatusError(code int) error {
 	case 3:
 		return errors.New("failed to resolve dyld runtime API section")
 	case 4:
+		if detail := getDarwinLoaderDetail(); detail != "" {
+			return fmt.Errorf("failed to resolve required dyld symbols: %s", detail)
+		}
 		return errors.New("failed to resolve required dyld symbols")
 	case 5:
 		return errors.New("failed to analyze Mach-O VM layout")
