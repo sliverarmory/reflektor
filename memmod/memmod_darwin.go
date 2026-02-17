@@ -534,7 +534,8 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 
 	diag := unsafe.Pointer(cursor)
 	cursor += 0x1000
-	if diagnosticsCtor != 0 {
+	diagnosticsReady := diagnosticsCtor != 0
+	if diagnosticsReady {
 		call1(diagnosticsCtor, uintptr(diag))
 	}
 
@@ -568,7 +569,9 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 		defer exitWritableDyldStateLock(memoryManagerInstance, lockLock, writeProtect, lockUnlock)
 	}
 
-	call1(diagnosticsClearError, uintptr(diag))
+	if diagnosticsReady {
+		call1(diagnosticsClearError, uintptr(diag))
+	}
 	*rtopLoader = 0
 
 	topLoader := call10(
@@ -585,29 +588,17 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 		0,
 	)
 	runtime.KeepAlive(entryName)
-	if call1(diagnosticsHasError, uintptr(diag)) != 0 {
+	if diagnosticsReady && call1(diagnosticsHasError, uintptr(diag)) != 0 {
 		msg := diagnosticsMessage(diag, diagnosticsErrorMessage)
-		if diagnosticsCtor == 0 {
-			if msg != "" {
-				setDarwinLoaderDetail(fmt.Sprintf("JustInTimeLoader::make returned diagnostics error (Diagnostics::ctor unresolved): %s", msg))
-			} else {
-				setDarwinLoaderDetail("JustInTimeLoader::make returned diagnostics error (Diagnostics::ctor unresolved)")
-			}
+		if msg != "" {
+			setDarwinLoaderDetail(fmt.Sprintf("JustInTimeLoader::make returned diagnostics error: %s", msg))
 		} else {
-			if msg != "" {
-				setDarwinLoaderDetail(fmt.Sprintf("JustInTimeLoader::make returned diagnostics error: %s", msg))
-			} else {
-				setDarwinLoaderDetail("JustInTimeLoader::make returned diagnostics error")
-			}
+			setDarwinLoaderDetail("JustInTimeLoader::make returned diagnostics error")
 		}
 		return 8
 	}
 	if topLoader == 0 {
-		if diagnosticsCtor == 0 {
-			setDarwinLoaderDetail("JustInTimeLoader::make returned null loader (Diagnostics::ctor unresolved)")
-		} else {
-			setDarwinLoaderDetail("JustInTimeLoader::make returned null loader")
-		}
+		setDarwinLoaderDetail("JustInTimeLoader::make returned null loader")
 		return 8
 	}
 	setDarwinLoaderDetail("")
@@ -634,9 +625,11 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 	depOptions.RpathStack = uintptr(unsafe.Pointer(loadChainCur))
 	depOptions.UseFallBackPaths = true
 
-	call1(diagnosticsClearError, uintptr(diag))
+	if diagnosticsReady {
+		call1(diagnosticsClearError, uintptr(diag))
+	}
 	call4(loadDependents, topLoader, uintptr(diag), apis, uintptr(unsafe.Pointer(depOptions)))
-	if call1(diagnosticsHasError, uintptr(diag)) != 0 {
+	if diagnosticsReady && call1(diagnosticsHasError, uintptr(diag)) != 0 {
 		if msg := diagnosticsMessage(diag, diagnosticsErrorMessage); msg != "" {
 			setDarwinLoaderDetail(fmt.Sprintf("Loader::loadDependents reported diagnostics error: %s", msg))
 		} else {
@@ -652,7 +645,7 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 			ldr := loadedElement(loaded, startLoaderCount+i)
 			call6(applyFixups, ldr, uintptr(diag), apis, uintptr(unsafe.Pointer(&dcd)), 1, 0)
 		}
-		if call1(diagnosticsHasError, uintptr(diag)) != 0 {
+		if diagnosticsReady && call1(diagnosticsHasError, uintptr(diag)) != 0 {
 			if msg := diagnosticsMessage(diag, diagnosticsErrorMessage); msg != "" {
 				setDarwinLoaderDetail(fmt.Sprintf("Loader::applyFixups reported diagnostics error: %s", msg))
 			} else {
