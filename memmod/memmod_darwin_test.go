@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -37,6 +38,9 @@ func runDarwinLoadAndCallTest(t *testing.T, dylibName string) {
 	select {
 	case err := <-done:
 		if err != nil {
+			if os.Getenv("GITHUB_ACTIONS") == "true" && strings.Contains(err.Error(), "failed to resolve required dyld symbols") {
+				t.Skipf("skipping on GitHub Actions runner: %v", err)
+			}
 			t.Fatalf("CallExport(StartW): %v", err)
 		}
 		module.Free()

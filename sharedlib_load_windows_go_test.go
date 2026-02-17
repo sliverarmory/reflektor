@@ -11,7 +11,13 @@ import (
 )
 
 func TestLoadGeneratedGoWindowsDLLAndCallStartW(t *testing.T) {
-	outDir := t.TempDir()
+	outDir, err := os.MkdirTemp("", "reflektor-go-windows-dll-*")
+	if err != nil {
+		t.Fatalf("create temp build dir: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(outDir)
+	})
 	dllPath := buildOneGoSharedLib(t, outDir, "windows", runtime.GOARCH)
 	markerPath := filepath.Join(t.TempDir(), "reflektor_go_marker.txt")
 	_ = os.Remove(windowsFallbackMarkerPath)
