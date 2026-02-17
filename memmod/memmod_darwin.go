@@ -361,12 +361,6 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 	justInTimeLoaderMake2 := findFirstAvailableSymbol(uintptr(dyld), slide, "/usr/lib/dyld",
 		"__ZN5dyld416JustInTimeLoader4makeERNS_12RuntimeStateEPKN5dyld39MachOFileEPKcRKNS_6FileIDEybbbtPKN6mach_o6LayoutE",
 	)
-	if justInTimeLoaderMake2 == 0 {
-		justInTimeLoaderMake2 = findFirstMatchingSymbol(uintptr(dyld), slide, "/usr/lib/dyld",
-			"JustInTimeLoader4makeERNS_12RuntimeStateE",
-			"MachOFile",
-		)
-	}
 	loadDependents := findFirstAvailableSymbol(uintptr(dyld), slide, "/usr/lib/dyld",
 		"__ZN5dyld46Loader14loadDependentsER11DiagnosticsRNS_12RuntimeStateERKNS0_11LoadOptionsE",
 		"__ZN5dyld416JustInTimeLoader14loadDependentsER11DiagnosticsRNS_12RuntimeStateERKNS_6Loader11LoadOptionsE",
