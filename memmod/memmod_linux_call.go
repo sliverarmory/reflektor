@@ -1,4 +1,4 @@
-//go:build linux && (386 || amd64 || arm64)
+//go:build linux && !cgo && (386 || amd64 || arm64)
 
 package memmod
 
