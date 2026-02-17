@@ -22,3 +22,12 @@ TEXT ·cCall2(SB), NOSPLIT, $0-32
 	CALL AX
 	MOVQ AX, ret+24(FP)
 	RET
+
+TEXT ·cCall3(SB), NOSPLIT, $0-40
+	MOVQ fn+0(FP), AX
+	MOVQ a0+8(FP), DI
+	MOVQ a1+16(FP), SI
+	MOVQ a2+24(FP), DX
+	CALL AX
+	MOVQ AX, ret+32(FP)
+	RET

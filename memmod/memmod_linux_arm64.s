@@ -22,3 +22,12 @@ TEXT ·cCall2(SB), NOSPLIT, $0-32
 	BL (R16)
 	MOVD R0, ret+24(FP)
 	RET
+
+TEXT ·cCall3(SB), NOSPLIT, $0-40
+	MOVD fn+0(FP), R16
+	MOVD a0+8(FP), R0
+	MOVD a1+16(FP), R1
+	MOVD a2+24(FP), R2
+	BL (R16)
+	MOVD R0, ret+32(FP)
+	RET

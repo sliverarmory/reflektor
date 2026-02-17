@@ -616,14 +616,16 @@ func runELFInitializers(mapped mappedELF, f *elf.File) error {
 	if err != nil {
 		return err
 	}
+	argc, argv, envp := linuxInitCallArgs()
+	skip := collectInitSkipAddrs(f, mapped.loadBias)
 
-	if err := callDynamicInitArray(mapped, f.Class, info.preinitArr, info.preinitSz, "DT_PREINIT_ARRAY"); err != nil {
+	if err := callDynamicInitArray(mapped, f.Class, info.preinitArr, info.preinitSz, "DT_PREINIT_ARRAY", argc, argv, envp, skip); err != nil {
 		return err
 	}
-	if err := callDynamicInitFn(mapped, uintptr(info.init), "DT_INIT"); err != nil {
+	if err := callDynamicInitFn(mapped, uintptr(info.init), "DT_INIT", argc, argv, envp, skip); err != nil {
 		return err
 	}
-	if err := callDynamicInitArray(mapped, f.Class, info.initArray, info.initArraySz, "DT_INIT_ARRAY"); err != nil {
+	if err := callDynamicInitArray(mapped, f.Class, info.initArray, info.initArraySz, "DT_INIT_ARRAY", argc, argv, envp, skip); err != nil {
 		return err
 	}
 	return nil
@@ -701,7 +703,7 @@ func parseDynamicInitInfo(f *elf.File) (dynamicInitInfo, error) {
 	return info, nil
 }
 
-func callDynamicInitFn(mapped mappedELF, fn uintptr, source string) error {
+func callDynamicInitFn(mapped mappedELF, fn uintptr, source string, argc uintptr, argv uintptr, envp uintptr, skip map[uintptr]struct{}) error {
 	if fn == 0 {
 		return nil
 	}
@@ -709,11 +711,14 @@ func callDynamicInitFn(mapped mappedELF, fn uintptr, source string) error {
 	if !ok {
 		return fmt.Errorf("%s points outside mapped image: %#x", source, fn)
 	}
-	_ = cCall0(resolved)
+	if _, blocked := skip[resolved]; blocked {
+		return nil
+	}
+	_ = cCall3(resolved, argc, argv, envp)
 	return nil
 }
 
-func callDynamicInitArray(mapped mappedELF, class elf.Class, arrayVAddr uint64, arraySz uint64, source string) error {
+func callDynamicInitArray(mapped mappedELF, class elf.Class, arrayVAddr uint64, arraySz uint64, source string, argc uintptr, argv uintptr, envp uintptr, skip map[uintptr]struct{}) error {
 	if arrayVAddr == 0 || arraySz == 0 {
 		return nil
 	}
@@ -751,9 +756,55 @@ func callDynamicInitArray(mapped mappedELF, class elf.Class, arrayVAddr uint64, 
 		if !ok {
 			return fmt.Errorf("%s[%d] points outside mapped image: %#x", source, i, fn)
 		}
-		_ = cCall0(resolved)
+		if _, blocked := skip[resolved]; blocked {
+			continue
+		}
+		_ = cCall3(resolved, argc, argv, envp)
 	}
 	return nil
+}
+
+func collectInitSkipAddrs(f *elf.File, loadBias uintptr) map[uintptr]struct{} {
+	if f == nil || f.Section(".go.buildinfo") == nil {
+		return nil
+	}
+
+	targets := map[string]struct{}{
+		"_rt0_386_linux_lib":   {},
+		"_rt0_amd64_linux_lib": {},
+		"_rt0_arm64_linux_lib": {},
+		"_rt0_386_lib":         {},
+		"_rt0_amd64_lib":       {},
+		"_rt0_arm64_lib":       {},
+	}
+
+	out := make(map[uintptr]struct{})
+	add := func(symbols []elf.Symbol) {
+		for _, sym := range symbols {
+			if sym.Value == 0 || sym.Section == elf.SHN_UNDEF {
+				continue
+			}
+			name := sym.Name
+			if at := strings.IndexByte(name, '@'); at > 0 {
+				name = name[:at]
+			}
+			if _, ok := targets[name]; !ok {
+				continue
+			}
+			out[loadBias+uintptr(sym.Value)] = struct{}{}
+		}
+	}
+
+	if dynSyms, err := f.DynamicSymbols(); err == nil {
+		add(dynSyms)
+	}
+	if syms, err := f.Symbols(); err == nil {
+		add(syms)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func normalizeInitFnAddress(mapped mappedELF, fn uintptr) (uintptr, bool) {

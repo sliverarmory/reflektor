@@ -28,13 +28,13 @@ func TestLoadGeneratedGoLinuxSOAndCallStartW(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadLibraryFile(%s): %v", soPath, err)
 	}
-	t.Cleanup(func() {
-		_ = lib.Close()
-	})
 
 	if err := lib.CallExport("StartW"); err != nil {
 		t.Fatalf("CallExport(StartW): %v", err)
 	}
+
+	// Intentionally do not unload the Go c-shared module in-test. Unmapping
+	// it while runtime-managed state is still live can crash the process.
 
 	got, err := os.ReadFile(markerPath)
 	if err != nil {

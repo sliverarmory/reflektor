@@ -10,3 +10,6 @@ func cCall1(fn, a0 uintptr) uintptr
 
 //go:noescape
 func cCall2(fn, a0, a1 uintptr) uintptr
+
+//go:noescape
+func cCall3(fn, a0, a1, a2 uintptr) uintptr
