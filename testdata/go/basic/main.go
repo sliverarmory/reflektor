@@ -7,11 +7,13 @@ package main
 
 #if defined(_WIN32)
 #define REFLEKTOR_DEFAULT_MARKER "C:\\Windows\\Temp\\reflektor_marker.txt"
+#define REFLEKTOR_EXPORT __declspec(dllexport)
 #else
 #define REFLEKTOR_DEFAULT_MARKER "/tmp/reflektor_marker.txt"
+#define REFLEKTOR_EXPORT __attribute__((visibility("default")))
 #endif
 
-void StartW(void) {
+REFLEKTOR_EXPORT void StartW(void) {
 	const char *marker = getenv("REFLEKTOR_MARKER");
 	if (marker == NULL || marker[0] == '\0') {
 		marker = REFLEKTOR_DEFAULT_MARKER;
@@ -27,7 +29,7 @@ void StartW(void) {
 	(void)fclose(f);
 }
 
-int StartWStatus(void) {
+REFLEKTOR_EXPORT int StartWStatus(void) {
 	StartW();
 	return 1337;
 }
