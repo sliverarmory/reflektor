@@ -460,6 +460,24 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 			"Diagnostics8hasErrorEv",
 		)
 	}
+	diagnosticsErrorMessage := findFirstAvailableSymbol(uintptr(dyld), slide, "/usr/lib/dyld",
+		"__ZNK11Diagnostics12errorMessageEv",
+	)
+	if diagnosticsErrorMessage == 0 {
+		diagnosticsErrorMessage = findFirstAvailableSymbol(uintptr(libdyld), slide, "",
+			"__ZNK11Diagnostics12errorMessageEv",
+		)
+	}
+	if diagnosticsErrorMessage == 0 {
+		diagnosticsErrorMessage = findFirstMatchingSymbol(uintptr(dyld), slide, "/usr/lib/dyld",
+			"Diagnostics12errorMessageEv",
+		)
+	}
+	if diagnosticsErrorMessage == 0 {
+		diagnosticsErrorMessage = findFirstMatchingSymbol(uintptr(libdyld), slide, "",
+			"Diagnostics12errorMessageEv",
+		)
+	}
 
 	missing := make([]string, 0, 8)
 	if justInTimeLoaderMake2 == 0 {
@@ -568,10 +586,19 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 	)
 	runtime.KeepAlive(entryName)
 	if call1(diagnosticsHasError, uintptr(diag)) != 0 {
+		msg := diagnosticsMessage(diag, diagnosticsErrorMessage)
 		if diagnosticsCtor == 0 {
-			setDarwinLoaderDetail("JustInTimeLoader::make returned diagnostics error (Diagnostics::ctor unresolved)")
+			if msg != "" {
+				setDarwinLoaderDetail(fmt.Sprintf("JustInTimeLoader::make returned diagnostics error (Diagnostics::ctor unresolved): %s", msg))
+			} else {
+				setDarwinLoaderDetail("JustInTimeLoader::make returned diagnostics error (Diagnostics::ctor unresolved)")
+			}
 		} else {
-			setDarwinLoaderDetail("JustInTimeLoader::make returned diagnostics error")
+			if msg != "" {
+				setDarwinLoaderDetail(fmt.Sprintf("JustInTimeLoader::make returned diagnostics error: %s", msg))
+			} else {
+				setDarwinLoaderDetail("JustInTimeLoader::make returned diagnostics error")
+			}
 		}
 		return 8
 	}
@@ -610,7 +637,11 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 	call1(diagnosticsClearError, uintptr(diag))
 	call4(loadDependents, topLoader, uintptr(diag), apis, uintptr(unsafe.Pointer(depOptions)))
 	if call1(diagnosticsHasError, uintptr(diag)) != 0 {
-		setDarwinLoaderDetail("Loader::loadDependents reported diagnostics error")
+		if msg := diagnosticsMessage(diag, diagnosticsErrorMessage); msg != "" {
+			setDarwinLoaderDetail(fmt.Sprintf("Loader::loadDependents reported diagnostics error: %s", msg))
+		} else {
+			setDarwinLoaderDetail("Loader::loadDependents reported diagnostics error")
+		}
 		return 9
 	}
 
@@ -622,7 +653,11 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 			call6(applyFixups, ldr, uintptr(diag), apis, uintptr(unsafe.Pointer(&dcd)), 1, 0)
 		}
 		if call1(diagnosticsHasError, uintptr(diag)) != 0 {
-			setDarwinLoaderDetail("Loader::applyFixups reported diagnostics error")
+			if msg := diagnosticsMessage(diag, diagnosticsErrorMessage); msg != "" {
+				setDarwinLoaderDetail(fmt.Sprintf("Loader::applyFixups reported diagnostics error: %s", msg))
+			} else {
+				setDarwinLoaderDetail("Loader::applyFixups reported diagnostics error")
+			}
 			return 9
 		}
 	}
@@ -1086,6 +1121,21 @@ func cStringAt(ptr uintptr) string {
 		buf = append(buf, b)
 	}
 	return string(buf)
+}
+
+func diagnosticsMessage(diag unsafe.Pointer, errorMessageFn uintptr) string {
+	if diag == nil || errorMessageFn == 0 {
+		return ""
+	}
+	msgPtr := call1(errorMessageFn, uintptr(diag))
+	if msgPtr == 0 {
+		return ""
+	}
+	msg := strings.TrimSpace(cStringAt(msgPtr))
+	if msg == "" {
+		return ""
+	}
+	return msg
 }
 
 func isUsableSymbolCandidate(name string) bool {
