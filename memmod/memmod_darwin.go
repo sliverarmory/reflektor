@@ -451,9 +451,6 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 	if runInitializers == 0 {
 		missing = append(missing, "Loader::runInitializers")
 	}
-	if diagnosticsCtor == 0 {
-		missing = append(missing, "Diagnostics::ctor")
-	}
 	if diagnosticsClearError == 0 {
 		missing = append(missing, "Diagnostics::clearError")
 	}
@@ -493,7 +490,9 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 
 	diag := unsafe.Pointer(cursor)
 	cursor += 0x1000
-	call1(diagnosticsCtor, uintptr(diag))
+	if diagnosticsCtor != 0 {
+		call1(diagnosticsCtor, uintptr(diag))
+	}
 
 	loadChainMain := (*loadChain)(unsafe.Pointer(cursor))
 	cursor += unsafe.Sizeof(loadChain{})
