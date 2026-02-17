@@ -35,7 +35,16 @@ jobs:
           version: 0.14.0
       - name: Run Darwin C and Go fixture tests
         run: |
-          go test ./... -run 'TestLoadGeneratedCDylibAndCallStartW|TestLoadGeneratedGoDylibAndCallStartW|TestLoadLibraryAndCallExport_Darwin' -count=1 -v
+          set -euo pipefail
+          go test ./... -run 'TestLoadGeneratedCDylibAndCallStartW|TestLoadGeneratedGoDylibAndCallStartW|TestLoadLibraryAndCallExport_Darwin' -count=1 -v | tee darwin-test.log
+          if grep -Eq '^--- SKIP: (TestLoadGeneratedCDylibAndCallStartW|TestLoadGeneratedGoDylibAndCallStartW|TestLoadLibraryAndCallExport_Darwin(AMD64|Arm64))' darwin-test.log; then
+            echo "Target Darwin loader tests were skipped; refusing to pass CI."
+            exit 1
+          fi
+          if grep -Fq 'skipping on GitHub Actions runner' darwin-test.log; then
+            echo "Found a CI skip guard in Darwin loader tests; refusing to pass CI."
+            exit 1
+          fi
 
   linux-native:
     name: linux-${{ matrix.goarch }}-native
