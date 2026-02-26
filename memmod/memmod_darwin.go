@@ -5,7 +5,6 @@ package memmod
 import (
 	"bytes"
 	"debug/macho"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
@@ -19,8 +18,6 @@ import (
 
 const (
 	syscallSharedRegionCheckNP = uintptr(294)
-	minAPLibSafeHeaderSize     = 24
-	aplibSafeTag               = 0x32335041 // 'AP32'
 	dyldScratchSize            = 0x4000
 
 	lcSegment64 = 0x19
@@ -352,11 +349,6 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 	setDarwinLoaderDetail("")
 
 	buffer := bufferRO
-	if out, rc := maybeDepackAP32(buffer); rc != 0 {
-		return rc
-	} else if out != nil {
-		buffer = out
-	}
 
 	justInTimeLoaderMake2 := findFirstAvailableSymbol(uintptr(dyld), slide, "/usr/lib/dyld",
 		"__ZN5dyld416JustInTimeLoader4makeERNS_12RuntimeStateEPKN5dyld39MachOFileEPKcRKNS_6FileIDEybbbtPKN6mach_o6LayoutE",
@@ -1277,234 +1269,6 @@ func exitWritableDyldStateLock(mm, lockFn, writeProtectFn, unlockFn uintptr) {
 	call1(unlockFn, mm)
 }
 
-func maybeDepackAP32(data []byte) ([]byte, int) {
-	if len(data) < minAPLibSafeHeaderSize {
-		return data, 0
-	}
-	if binary.LittleEndian.Uint32(data[0:4]) != aplibSafeTag {
-		return data, 0
-	}
-
-	headerSize := binary.LittleEndian.Uint32(data[4:8])
-	packedSize := binary.LittleEndian.Uint32(data[8:12])
-	origSize := binary.LittleEndian.Uint32(data[16:20])
-
-	if headerSize < minAPLibSafeHeaderSize || int(headerSize) > len(data) {
-		return nil, 14
-	}
-	if packedSize == 0 || int(headerSize+packedSize) > len(data) {
-		return nil, 14
-	}
-	if origSize == 0 {
-		return nil, 14
-	}
-
-	packed := data[headerSize : headerSize+packedSize]
-	out := make([]byte, origSize)
-	outLen, ok := apDepackSafe(packed, out)
-	if !ok || outLen != len(out) {
-		return nil, 15
-	}
-	return out, 0
-}
-
-func apDepackSafe(source []byte, destination []byte) (int, bool) {
-	if len(source) == 0 || len(destination) == 0 {
-		return 0, false
-	}
-
-	type apdsState struct {
-		source      []byte
-		srcPos      int
-		destination []byte
-		dstPos      int
-		tag         uint32
-		bitcount    uint32
-	}
-
-	getbit := func(ud *apdsState) (uint32, bool) {
-		if ud.bitcount == 0 {
-			if ud.srcPos >= len(ud.source) {
-				return 0, false
-			}
-			ud.tag = uint32(ud.source[ud.srcPos])
-			ud.srcPos++
-			ud.bitcount = 8
-		}
-		ud.bitcount--
-		bit := (ud.tag >> 7) & 0x01
-		ud.tag <<= 1
-		return bit, true
-	}
-
-	getgamma := func(ud *apdsState) (uint32, bool) {
-		v := uint32(1)
-		for {
-			bit, ok := getbit(ud)
-			if !ok {
-				return 0, false
-			}
-			if v&0x80000000 != 0 {
-				return 0, false
-			}
-			v = (v << 1) + bit
-
-			bit, ok = getbit(ud)
-			if !ok {
-				return 0, false
-			}
-			if bit == 0 {
-				break
-			}
-		}
-		return v, true
-	}
-
-	ud := apdsState{source: source, destination: destination}
-	if ud.srcPos >= len(ud.source) || ud.dstPos >= len(ud.destination) {
-		return 0, false
-	}
-	ud.destination[ud.dstPos] = ud.source[ud.srcPos]
-	ud.srcPos++
-	ud.dstPos++
-
-	R0 := uint32(math.MaxUint32)
-	LWM := uint32(0)
-	done := false
-
-	for !done {
-		bit, ok := getbit(&ud)
-		if !ok {
-			return 0, false
-		}
-		if bit == 1 {
-			bit, ok = getbit(&ud)
-			if !ok {
-				return 0, false
-			}
-			if bit == 1 {
-				bit, ok = getbit(&ud)
-				if !ok {
-					return 0, false
-				}
-				if bit == 1 {
-					offs := uint32(0)
-					for i := 0; i < 4; i++ {
-						bit, ok = getbit(&ud)
-						if !ok {
-							return 0, false
-						}
-						offs = (offs << 1) + bit
-					}
-					if offs != 0 {
-						if int(offs) > ud.dstPos || ud.dstPos >= len(ud.destination) {
-							return 0, false
-						}
-						ud.destination[ud.dstPos] = ud.destination[ud.dstPos-int(offs)]
-						ud.dstPos++
-					} else {
-						if ud.dstPos >= len(ud.destination) {
-							return 0, false
-						}
-						ud.destination[ud.dstPos] = 0
-						ud.dstPos++
-					}
-					LWM = 0
-				} else {
-					if ud.srcPos >= len(ud.source) {
-						return 0, false
-					}
-					offs := uint32(ud.source[ud.srcPos])
-					ud.srcPos++
-
-					length := uint32(2 + (offs & 1))
-					offs >>= 1
-					if offs != 0 {
-						if int(offs) > ud.dstPos || int(length) > len(ud.destination)-ud.dstPos {
-							return 0, false
-						}
-						for ; length > 0; length-- {
-							ud.destination[ud.dstPos] = ud.destination[ud.dstPos-int(offs)]
-							ud.dstPos++
-						}
-					} else {
-						done = true
-					}
-					R0 = offs
-					LWM = 1
-				}
-			} else {
-				offs, ok := getgamma(&ud)
-				if !ok {
-					return 0, false
-				}
-				if LWM == 0 && offs == 2 {
-					offs = R0
-					length, ok := getgamma(&ud)
-					if !ok {
-						return 0, false
-					}
-					if int(offs) > ud.dstPos || int(length) > len(ud.destination)-ud.dstPos {
-						return 0, false
-					}
-					for ; length > 0; length-- {
-						ud.destination[ud.dstPos] = ud.destination[ud.dstPos-int(offs)]
-						ud.dstPos++
-					}
-				} else {
-					if LWM == 0 {
-						offs -= 3
-					} else {
-						offs -= 2
-					}
-					if offs > 0x00fffffe {
-						return 0, false
-					}
-					if ud.srcPos >= len(ud.source) {
-						return 0, false
-					}
-					offs = (offs << 8) + uint32(ud.source[ud.srcPos])
-					ud.srcPos++
-
-					length, ok := getgamma(&ud)
-					if !ok {
-						return 0, false
-					}
-					if offs >= 32000 {
-						length++
-					}
-					if offs >= 1280 {
-						length++
-					}
-					if offs < 128 {
-						length += 2
-					}
-
-					if int(offs) > ud.dstPos || int(length) > len(ud.destination)-ud.dstPos {
-						return 0, false
-					}
-					for ; length > 0; length-- {
-						ud.destination[ud.dstPos] = ud.destination[ud.dstPos-int(offs)]
-						ud.dstPos++
-					}
-					R0 = offs
-				}
-				LWM = 1
-			}
-		} else {
-			if ud.srcPos >= len(ud.source) || ud.dstPos >= len(ud.destination) {
-				return 0, false
-			}
-			ud.destination[ud.dstPos] = ud.source[ud.srcPos]
-			ud.srcPos++
-			ud.dstPos++
-			LWM = 0
-		}
-	}
-
-	return ud.dstPos, true
-}
-
 func selectCurrentArchMachOSlice(data []byte) ([]byte, error) {
 	cpu, err := currentMachOCPU()
 	if err != nil {
@@ -1641,10 +1405,6 @@ func loaderStatusError(code int) error {
 		return errors.New("invalid loaded image slide")
 	case 12:
 		return errors.New("export symbol not found")
-	case 14:
-		return errors.New("invalid packed AP32 payload header")
-	case 15:
-		return errors.New("failed to depack AP32 payload")
 	default:
 		return fmt.Errorf("in-memory dyld loader failed with status %d", code)
 	}
