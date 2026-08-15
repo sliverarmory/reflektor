@@ -59,7 +59,7 @@ func buildOneRustSharedLib(t *testing.T, outDir string, goos string, goarch stri
 		t.Fatalf("empty Rust shared lib: %s", artifactPath)
 	}
 
-	assertRustSharedLibHasNoTLS(t, artifactPath, goos)
+	assertRustSharedLibIsLoadable(t, artifactPath, goos)
 	return artifactPath
 }
 
@@ -122,7 +122,7 @@ func assertRustHTTPMarker(t *testing.T, markerPath string) {
 	}
 }
 
-func assertRustSharedLibHasNoTLS(t *testing.T, path string, goos string) {
+func assertRustSharedLibIsLoadable(t *testing.T, path string, goos string) {
 	t.Helper()
 	switch goos {
 	case "darwin":
@@ -137,6 +137,9 @@ func assertRustSharedLibHasNoTLS(t *testing.T, path string, goos string) {
 			machoThreadLocalInitFunctionPtrs = 0x15
 		)
 		for _, section := range file.Sections {
+			if section.Name == "__la_symbol_ptr" && section.Size != 0 {
+				t.Fatalf("Rust Mach-O fixture contains unsupported lazy bindings in %s", section.Name)
+			}
 			sectionType := section.Flags & machoSectionTypeMask
 			if strings.HasPrefix(section.Name, "__thread") ||
 				(sectionType >= machoThreadLocalRegular && sectionType <= machoThreadLocalInitFunctionPtrs) {

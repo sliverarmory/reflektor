@@ -10,6 +10,12 @@ typedef uintptr_t (*reflektor_fn10_t)(
 	uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t
 );
 
+typedef void (*reflektor_void_fn0_t)(void);
+
+static void reflektor_call_void0(uintptr_t fn) {
+	((reflektor_void_fn0_t)fn)();
+}
+
 static uintptr_t reflektor_call10(
 	uintptr_t fn,
 	uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t a3, uintptr_t a4,
@@ -19,6 +25,10 @@ static uintptr_t reflektor_call10(
 }
 */
 import "C"
+
+func callVoid0(fn uintptr) {
+	C.reflektor_call_void0(C.uintptr_t(fn))
+}
 
 func call0(fn uintptr) uintptr {
 	return call10(fn, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)

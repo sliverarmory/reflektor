@@ -159,7 +159,7 @@ mod platform {
 #[cfg(target_os = "windows")]
 mod platform {
     use core::ffi::{c_char, c_void};
-    use core::mem;
+    use core::mem::{self, MaybeUninit};
     use core::ptr;
 
     type Bool = i32;
@@ -196,6 +196,7 @@ mod platform {
     static PATH: [u16; 2] = wide(b"/\0");
     static MARKER_ENV: &[u8] = b"REFLEKTOR_MARKER\0";
     static DEFAULT_MARKER: &[u8] = b"C:\\Windows\\Temp\\reflektor_rust_marker.txt\0";
+    const MARKER_PATH_CAPACITY: usize = 4096;
 
     #[link(name = "winhttp")]
     unsafe extern "system" {
@@ -368,17 +369,18 @@ mod platform {
     }
 
     pub fn write_marker(payload: &[u8]) {
-        let mut configured_path = [0u8; 4096];
+        let mut configured_path = MaybeUninit::<[u8; MARKER_PATH_CAPACITY]>::uninit();
+        let configured_path_ptr = configured_path.as_mut_ptr().cast::<u8>();
         // SAFETY: configured_path is writable for the supplied size, and all
         // kernel32 pointers remain valid for the duration of each call.
         unsafe {
             let configured_len = GetEnvironmentVariableA(
                 MARKER_ENV.as_ptr().cast::<c_char>(),
-                configured_path.as_mut_ptr().cast::<c_char>(),
-                configured_path.len() as Dword,
+                configured_path_ptr.cast::<c_char>(),
+                MARKER_PATH_CAPACITY as Dword,
             );
-            let path = if configured_len != 0 && configured_len < configured_path.len() as Dword {
-                configured_path.as_ptr()
+            let path = if configured_len != 0 && configured_len < MARKER_PATH_CAPACITY as Dword {
+                configured_path_ptr.cast_const()
             } else {
                 DEFAULT_MARKER.as_ptr()
             };

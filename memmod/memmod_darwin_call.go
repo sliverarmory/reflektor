@@ -14,6 +14,10 @@ func call0(fn uintptr) uintptr {
 	return call10(fn, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
 }
 
+func callVoid0(fn uintptr) {
+	_ = call0(fn)
+}
+
 func call1(fn, a0 uintptr) uintptr {
 	return call10(fn, a0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
 }

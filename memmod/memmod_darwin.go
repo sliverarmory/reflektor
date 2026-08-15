@@ -664,7 +664,9 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 		return 12
 	}
 
-	call0(addrEntry)
+	// Exported fixture entry points use the C void(void) ABI. Keep that call
+	// signature exact when cgo supplies the foreign-function bridge.
+	callVoid0(addrEntry)
 	// Keep mapped and scratch memory reachable until after entry returns.
 	runtime.KeepAlive(mapped.mapping)
 	runtime.KeepAlive(scratch)

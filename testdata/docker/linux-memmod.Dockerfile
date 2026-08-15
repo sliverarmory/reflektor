@@ -11,9 +11,9 @@ ARG ZIG_VERSION
 ARG RUST_VERSION
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV CARGO_HOME=/usr/local/cargo
-ENV RUSTUP_HOME=/usr/local/rustup
-ENV PATH=/usr/local/cargo/bin:${PATH}
+ENV CARGO_HOME=/opt/reflektor-cargo
+ENV RUSTUP_HOME=/opt/reflektor-rustup
+ENV PATH=/opt/reflektor-cargo/bin:${PATH}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
 	ca-certificates \
@@ -38,8 +38,14 @@ RUN set -eux; \
 	zig version
 
 RUN set -eux; \
+	case "${TARGETARCH}" in \
+		amd64) rust_host="x86_64-unknown-linux-gnu" ;; \
+		arm64) rust_host="aarch64-unknown-linux-gnu" ;; \
+		386) rust_host="i686-unknown-linux-gnu" ;; \
+		*) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+	esac; \
 	curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs -o /tmp/rustup-init.sh; \
-	sh /tmp/rustup-init.sh -y --profile minimal --default-toolchain "${RUST_VERSION}"; \
+	sh /tmp/rustup-init.sh -y --profile minimal --default-host "${rust_host}" --default-toolchain "${RUST_VERSION}"; \
 	rm -f /tmp/rustup-init.sh; \
 	rustc --version; \
 	cargo --version
