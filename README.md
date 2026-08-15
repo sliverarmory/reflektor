@@ -8,7 +8,7 @@ It exposes a stable root package (`reflektor`) so other projects can import it d
 
 | OS | Architectures | Shared Library Format | Status | Loader Notes |
 | --- | --- | --- | --- | --- |
-| Windows | `386`, `amd64`, `arm`, `arm64` | PE (`.dll`) | Supported | In-memory PE loader |
+| Windows | `386`, `amd64`, `arm64` | PE (`.dll`) | Supported | In-memory PE loader |
 | Darwin | `amd64`, `arm64` | Mach-O (`.dylib`, bundle) | Supported | Pure Go dyld4-based in-memory loader, no cgo, no temp-file legacy NS APIs. |
 | Linux | `386`, `amd64`, `arm64` | ELF (`.so`) | Supported | Pure Go in-memory ELF loader (maps PT_LOAD segments, applies relocations, resolves externals from runtime modules/`dlsym`); no `memfd`, no `/dev/shm`, no temp-file disk writes. |
 | Other | - | - | Unsupported | Returns an explicit unsupported-platform error. |
@@ -73,6 +73,8 @@ C test shared libraries are generated from:
 
 - `/Users/moloch/git/reflektor/testdata/c/basic.c`
 
+The Rust HTTPS fixture is built from `/Users/moloch/git/reflektor/testdata/rust`. It exports `StartW`, performs a bounded `GET https://example.com/` through libcurl on Darwin/Linux or WinHTTP on Windows, and records `ok:200` after receiving a non-empty successful response. The fixture is dependency-free Rust (`no_std`) so it does not require unsupported thread-local runtime state from the in-memory loaders.
+
 Build test shared libraries for the full matrix:
 
 ```bash
@@ -84,6 +86,8 @@ Run tests:
 ```bash
 go test ./...
 ```
+
+The Rust fixture test requires Cargo with Rust 1.94.0 and outbound HTTPS access. Linux also requires the libcurl development package so the fixture can link against the system TLS client.
 
 Linux cross-arch Docker harness:
 

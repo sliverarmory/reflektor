@@ -7,6 +7,8 @@ cd /workspace
 echo "runtime: $(uname -a)"
 echo "go: $(go version)"
 echo "zig: $(zig version)"
+echo "rustc: $(rustc --version)"
+echo "cargo: $(cargo --version)"
 
 export CGO_ENABLED=1
 export CC="zig cc"
@@ -16,11 +18,24 @@ export GOMODCACHE=/tmp/go-mod-cache
 export ZIG_GLOBAL_CACHE_DIR=/tmp/zig-global-cache
 export ZIG_LOCAL_CACHE_DIR=/tmp/zig-local-cache
 
-# Validate the linux memmod backend against the C shared library test case.
-go test ./memmod -run TestLoadLibraryAndCallExport_Linux -count=1 -v
+# Run every platform-applicable test. The cross-platform C build matrix has its
+# own CI job because it needs Darwin-aware binary inspection tools.
+go test ./... -skip '^TestBuildCSharedLibraryMatrix$' -count=1 -v | tee linux-test.log
 
-# Validate the root package linux shared-library load case too.
-go test ./... -run TestLoadGeneratedCLinuxSOAndCallStartW -count=1 -v
+for test_name in \
+  TestLoadGeneratedCLinuxSOAndCallStartW \
+  TestLoadGeneratedGoLinuxSOAndCallStartW \
+  TestLoadGeneratedRustHTTPSharedLibrary \
+  TestLoadLibraryAndCallExport_Linux; do
+  if ! grep -Fq -- "--- PASS: ${test_name} " linux-test.log; then
+    echo "Required linux/386 test did not pass: ${test_name}" >&2
+    exit 1
+  fi
+done
 
-# Validate the root package linux shared-library load case using a Go c-shared fixture.
-go test ./... -run TestLoadGeneratedGoLinuxSOAndCallStartW -count=1 -v
+unexpected_skips="$(grep -E '^--- SKIP:' linux-test.log | grep -Fv 'TestBuildCSharedLibraryMatrix' || true)"
+if [[ -n "${unexpected_skips}" ]]; then
+  echo "linux/386 tests were skipped; refusing to pass CI." >&2
+  echo "${unexpected_skips}" >&2
+  exit 1
+fi

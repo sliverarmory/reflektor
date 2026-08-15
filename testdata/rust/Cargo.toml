@@ -1,0 +1,19 @@
+[package]
+name = "reflektor-http-fixture"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+
+[lib]
+name = "reflektor_http_fixture"
+crate-type = ["cdylib"]
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+codegen-units = 1
+opt-level = "s"
+panic = "abort"
+strip = "symbols"

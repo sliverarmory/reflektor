@@ -16,8 +16,10 @@ jobs:
         include:
           - runner: macos-15-intel
             goarch: amd64
+            rust_target: x86_64-apple-darwin
           - runner: macos-15
             goarch: arm64
+            rust_target: aarch64-apple-darwin
     runs-on: ${{ matrix.runner }}
     defaults:
       run:
@@ -30,15 +32,34 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: dtolnay/rust-toolchain@1.94.0
+        with:
+          targets: ${{ matrix.rust_target }}
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.14.0
-      - name: Run Darwin C and Go fixture tests
+      - name: Run Darwin C, Go, and Rust fixture tests
         run: |
           set -euo pipefail
-          go test ./... -run 'TestLoadGeneratedCDylibAndCallStartW|TestLoadGeneratedGoDylibAndCallStartW|TestLoadLibraryAndCallExport_Darwin' -count=1 -v | tee darwin-test.log
-          if grep -Eq '^--- SKIP: (TestLoadGeneratedCDylibAndCallStartW|TestLoadGeneratedGoDylibAndCallStartW|TestLoadLibraryAndCallExport_Darwin(AMD64|Arm64))' darwin-test.log; then
-            echo "Target Darwin loader tests were skipped; refusing to pass CI."
+          go test ./... -skip '^TestBuildCSharedLibraryMatrix$' -count=1 -v | tee darwin-test.log
+          memmod_test="TestLoadLibraryAndCallExport_DarwinArm64"
+          if [[ "${GOARCH}" == "amd64" ]]; then
+            memmod_test="TestLoadLibraryAndCallExport_DarwinAMD64"
+          fi
+          for test_name in \
+            TestLoadGeneratedCDylibAndCallStartW \
+            TestLoadGeneratedGoDylibAndCallStartW \
+            TestLoadGeneratedRustHTTPSharedLibrary \
+            "${memmod_test}"; do
+            if ! grep -Fq -- "--- PASS: ${test_name} " darwin-test.log; then
+              echo "Required Darwin test did not pass: ${test_name}"
+              exit 1
+            fi
+          done
+          unexpected_skips="$(grep -E '^--- SKIP:' darwin-test.log | grep -Fv 'TestBuildCSharedLibraryMatrix' || true)"
+          if [[ -n "${unexpected_skips}" ]]; then
+            echo "Darwin tests were skipped; refusing to pass CI."
+            echo "${unexpected_skips}"
             exit 1
           fi
           if grep -Fq 'skipping on GitHub Actions runner' darwin-test.log; then
@@ -54,8 +75,10 @@ jobs:
         include:
           - runner: ubuntu-24.04
             goarch: amd64
+            rust_target: x86_64-unknown-linux-gnu
           - runner: ubuntu-24.04-arm
             goarch: arm64
+            rust_target: aarch64-unknown-linux-gnu
     runs-on: ${{ matrix.runner }}
     defaults:
       run:
@@ -71,12 +94,36 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: dtolnay/rust-toolchain@1.94.0
+        with:
+          targets: ${{ matrix.rust_target }}
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.14.0
-      - name: Run Linux C and Go fixture tests
+      - name: Install libcurl development files
         run: |
-          go test ./... -run 'TestLoadGeneratedCLinuxSOAndCallStartW|TestLoadGeneratedGoLinuxSOAndCallStartW|TestLoadLibraryAndCallExport_Linux' -count=1 -v
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libcurl4-openssl-dev
+      - name: Run Linux C, Go, and Rust fixture tests
+        run: |
+          set -euo pipefail
+          go test ./... -skip '^TestBuildCSharedLibraryMatrix$' -count=1 -v | tee linux-test.log
+          for test_name in \
+            TestLoadGeneratedCLinuxSOAndCallStartW \
+            TestLoadGeneratedGoLinuxSOAndCallStartW \
+            TestLoadGeneratedRustHTTPSharedLibrary \
+            TestLoadLibraryAndCallExport_Linux; do
+            if ! grep -Fq -- "--- PASS: ${test_name} " linux-test.log; then
+              echo "Required Linux test did not pass: ${test_name}"
+              exit 1
+            fi
+          done
+          unexpected_skips="$(grep -E '^--- SKIP:' linux-test.log | grep -Fv 'TestBuildCSharedLibraryMatrix' || true)"
+          if [[ -n "${unexpected_skips}" ]]; then
+            echo "Linux tests were skipped; refusing to pass CI."
+            echo "${unexpected_skips}"
+            exit 1
+          fi
 
   linux-386:
     name: linux-386-docker
@@ -88,7 +135,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
-      - name: Run linux/386 C and Go fixture tests in Docker
+      - name: Run linux/386 C, Go, and Rust fixture tests in Docker
         run: |
           docker build --platform linux/386 -f testdata/docker/linux-memmod.Dockerfile -t reflektor-linux-386-ci .
           docker run --rm --platform linux/386 reflektor-linux-386-ci
@@ -101,10 +148,13 @@ jobs:
         include:
           - runner: windows-2022
             goarch: amd64
+            rust_target: x86_64-pc-windows-msvc
           - runner: windows-2022
             goarch: 386
+            rust_target: i686-pc-windows-msvc
           - runner: windows-11-arm
             goarch: arm64
+            rust_target: aarch64-pc-windows-msvc
     runs-on: ${{ matrix.runner }}
     defaults:
       run:
@@ -117,9 +167,54 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: dtolnay/rust-toolchain@1.94.0
+        with:
+          targets: ${{ matrix.rust_target }}
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.14.0
-      - name: Run Windows C and Go fixture tests
+      - name: Run Windows C, Go, and Rust fixture tests
         run: |
-          go test ./... -run 'TestLoadGeneratedCWindowsDLLAndCallStartW|TestLoadGeneratedGoWindowsDLLAndCallStartW' -count=1 -v
+          set -euo pipefail
+          go test ./... -skip '^TestBuildCSharedLibraryMatrix$' -count=1 -v | tee windows-test.log
+          for test_name in \
+            TestLoadGeneratedCWindowsDLLAndCallStartW \
+            TestLoadGeneratedGoWindowsDLLAndCallStartW \
+            TestLoadGeneratedRustHTTPSharedLibrary; do
+            if ! grep -Fq -- "--- PASS: ${test_name} " windows-test.log; then
+              echo "Required Windows test did not pass: ${test_name}"
+              exit 1
+            fi
+          done
+          unexpected_skips="$(grep -E '^--- SKIP:' windows-test.log | grep -Fv 'TestBuildCSharedLibraryMatrix' || true)"
+          if [[ -n "${unexpected_skips}" ]]; then
+            echo "Windows tests were skipped; refusing to pass CI."
+            echo "${unexpected_skips}"
+            exit 1
+          fi
+
+  fixture-build-matrix:
+    name: fixture-build-matrix
+    # Apple's nm understands the Mach-O rows while the Xcode objdump also
+    # handles the ELF and PE artifacts produced by Zig.
+    runs-on: macos-15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.0
+      - name: Validate the complete C fixture build matrix
+        run: |
+          set -euo pipefail
+          go test . -run '^TestBuildCSharedLibraryMatrix$' -count=1 -v | tee fixture-build-test.log
+          if ! grep -Fq -- '--- PASS: TestBuildCSharedLibraryMatrix ' fixture-build-test.log; then
+            echo "The complete C fixture build matrix did not pass."
+            exit 1
+          fi
