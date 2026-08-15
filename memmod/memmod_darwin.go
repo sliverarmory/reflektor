@@ -558,7 +558,11 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 		enteredWritable = enterWritableDyldStateLock(memoryManagerInstance, lockLock, writeProtect, lockUnlock)
 	}
 	if enteredWritable {
-		defer exitWritableDyldStateLock(memoryManagerInstance, lockLock, writeProtect, lockUnlock)
+		defer func() {
+			if enteredWritable {
+				exitWritableDyldStateLock(memoryManagerInstance, lockLock, writeProtect, lockUnlock)
+			}
+		}()
 	}
 
 	if diagnosticsReady {
@@ -662,6 +666,13 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 	addrEntry := findSymbol(mapped.loadAddress, entrySymbol, uint64(imageSlide))
 	if addrEntry == 0 {
 		return 12
+	}
+
+	// Restore dyld's normal write-protected state before calling arbitrary
+	// library code. The export may create threads or enter dyld itself.
+	if enteredWritable {
+		exitWritableDyldStateLock(memoryManagerInstance, lockLock, writeProtect, lockUnlock)
+		enteredWritable = false
 	}
 
 	// Exported fixture entry points use the C void(void) ABI. Keep that call
