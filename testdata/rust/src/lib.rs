@@ -1,5 +1,8 @@
 #![no_std]
 
+#[cfg(all(target_os = "macos", not(target_pointer_width = "64")))]
+compile_error!("the macOS fixture supports only 64-bit Apple targets");
+
 use core::panic::PanicInfo;
 
 const MARKER_OK: &[u8] = b"ok:200";
@@ -13,11 +16,93 @@ fn panic(_info: &PanicInfo<'_>) -> ! {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn StartW() {
+    #[cfg(target_os = "macos")]
+    macos_thread::run();
+
+    #[cfg(not(target_os = "macos"))]
+    request_and_record();
+}
+
+fn request_and_record() {
     let result = platform::get_example_com();
     platform::write_marker(match result {
         Ok(()) => MARKER_OK,
         Err(stage) => stage,
     });
+}
+
+#[cfg(target_os = "macos")]
+mod macos_thread {
+    use core::ffi::{c_int, c_long, c_void};
+    use core::mem::MaybeUninit;
+    use core::ptr;
+
+    const REQUEST_STACK_SIZE: usize = 8 * 1024 * 1024;
+
+    // Darwin's 64-bit pthread_attr_t is an opaque long followed by 56 bytes.
+    // Both supported Apple targets are 64-bit.
+    #[repr(C)]
+    struct PthreadAttr {
+        signature: c_long,
+        opaque: [u8; 56],
+    }
+
+    type Pthread = *mut c_void;
+
+    const _: [(); 64] = [(); core::mem::size_of::<PthreadAttr>()];
+    const _: [(); 8] = [(); core::mem::align_of::<PthreadAttr>()];
+
+    #[link(name = "c")]
+    unsafe extern "C" {
+        fn pthread_attr_init(attr: *mut PthreadAttr) -> c_int;
+        fn pthread_attr_setstacksize(attr: *mut PthreadAttr, stack_size: usize) -> c_int;
+        fn pthread_attr_destroy(attr: *mut PthreadAttr) -> c_int;
+        fn pthread_create(
+            thread: *mut Pthread,
+            attr: *const PthreadAttr,
+            start: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
+            argument: *mut c_void,
+        ) -> c_int;
+        fn pthread_join(thread: Pthread, result: *mut *mut c_void) -> c_int;
+    }
+
+    unsafe extern "C" fn request_worker(_argument: *mut c_void) -> *mut c_void {
+        super::request_and_record();
+        ptr::null_mut()
+    }
+
+    pub fn run() {
+        // Go-created secondary threads have a comparatively small native stack
+        // on Intel macOS. libcurl may exhaust it, so execute the request on a
+        // joined pthread with the same stack size as a macOS main thread.
+        unsafe {
+            let mut attr = MaybeUninit::<PthreadAttr>::uninit();
+            if pthread_attr_init(attr.as_mut_ptr()) != 0 {
+                super::platform::write_marker(b"error:pthread-attr-init");
+                return;
+            }
+
+            let attr = attr.as_mut_ptr();
+            if pthread_attr_setstacksize(attr, REQUEST_STACK_SIZE) != 0 {
+                let _ = pthread_attr_destroy(attr);
+                super::platform::write_marker(b"error:pthread-stack-size");
+                return;
+            }
+
+            let mut thread = MaybeUninit::<Pthread>::uninit();
+            let create_result =
+                pthread_create(thread.as_mut_ptr(), attr, request_worker, ptr::null_mut());
+            let _ = pthread_attr_destroy(attr);
+            if create_result != 0 {
+                super::platform::write_marker(b"error:pthread-create");
+                return;
+            }
+
+            if pthread_join(thread.assume_init(), ptr::null_mut()) != 0 {
+                super::platform::write_marker(b"error:pthread-join");
+            }
+        }
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
