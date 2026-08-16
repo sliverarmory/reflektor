@@ -9,7 +9,7 @@ It exposes a stable root package (`reflektor`) so other projects can import it d
 | OS | Architectures | Shared Library Format | Status | Loader Notes |
 | --- | --- | --- | --- | --- |
 | Windows | `386`, `amd64`, `arm64` | PE (`.dll`) | Supported | In-memory PE loader |
-| Darwin | `amd64`, `arm64` | Mach-O (`.dylib`, bundle) | Supported | Pure Go dyld4-based in-memory loader, no cgo, no temp-file legacy NS APIs. |
+| Darwin | `amd64`, `arm64` | Mach-O (`.dylib`, bundle) | Supported | Dyld4 root-image loader with system dependencies registered through public dyld; supports no-cgo builds and avoids temp-file legacy NS APIs. |
 | Linux | `386`, `amd64`, `arm64` | ELF (`.so`) | Supported | Pure Go in-memory ELF loader (maps PT_LOAD segments, applies relocations, resolves externals from runtime modules/`dlsym`); no `memfd`, no `/dev/shm`, no temp-file disk writes. |
 | Other | - | - | Unsupported | Returns an explicit unsupported-platform error. |
 

@@ -11,9 +11,19 @@ typedef uintptr_t (*reflektor_fn10_t)(
 );
 
 typedef void (*reflektor_void_fn0_t)(void);
+typedef void *(*reflektor_dlopen_fn_t)(const char *, int);
+typedef const char *(*reflektor_dlerror_fn_t)(void);
 
 static void reflektor_call_void0(uintptr_t fn) {
 	((reflektor_void_fn0_t)fn)();
+}
+
+static uintptr_t reflektor_call_dlopen(uintptr_t fn, uintptr_t name, int flags) {
+	return (uintptr_t)((reflektor_dlopen_fn_t)fn)((const char *)name, flags);
+}
+
+static uintptr_t reflektor_call_dlerror(uintptr_t fn) {
+	return (uintptr_t)((reflektor_dlerror_fn_t)fn)();
 }
 
 static uintptr_t reflektor_call10(
@@ -28,6 +38,14 @@ import "C"
 
 func callVoid0(fn uintptr) {
 	C.reflektor_call_void0(C.uintptr_t(fn))
+}
+
+func callDlopen(fn, name uintptr, flags int) uintptr {
+	return uintptr(C.reflektor_call_dlopen(C.uintptr_t(fn), C.uintptr_t(name), C.int(flags)))
+}
+
+func callDlerror(fn uintptr) uintptr {
+	return uintptr(C.reflektor_call_dlerror(C.uintptr_t(fn)))
 }
 
 func call0(fn uintptr) uintptr {

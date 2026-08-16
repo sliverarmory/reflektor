@@ -19,15 +19,20 @@ import (
 const (
 	syscallSharedRegionCheckNP = uintptr(294)
 	dyldScratchSize            = 0x4000
+	rtldNow                    = 0x2
+	rtldGlobal                 = 0x8
+	rtldNoDelete               = 0x80
 
 	lcSegment64 = 0x19
 	lcSymtab    = 0x2
 )
 
 var (
-	errDarwinLibraryClosed = errors.New("library is closed")
-	darwinLoaderDetailMu   sync.Mutex
-	darwinLoaderDetail     string
+	errDarwinLibraryClosed  = errors.New("library is closed")
+	darwinLoaderDetailMu    sync.Mutex
+	darwinLoaderDetail      string
+	darwinDependencyHandles sync.Map
+	darwinLoaderTransaction sync.Mutex
 )
 
 type Module struct {
@@ -267,22 +272,22 @@ type loadChain struct {
 }
 
 type loadOptions struct {
-	Launching           bool
-	StaticLinkage       bool
-	CanBeMissing        bool
-	RtldLocal           bool
-	RtldNoDelete        bool
-	RtldNoLoad          bool
-	InsertedDylib       bool
-	CanBeDylib          bool
-	CanBeBundle         bool
-	CanBeExecutable     bool
-	ForceUnloadable     bool
-	UseFallBackPaths    bool
-	_                   [4]byte
-	RpathStack          uintptr
-	Finder              uintptr
-	PathNotFoundHandler uintptr
+	Launching               bool
+	StaticLinkage           bool
+	CanBeMissing            bool
+	RtldLocal               bool
+	RtldNoDelete            bool
+	RtldNoLoad              bool
+	InsertedDylib           bool
+	CanBeDylib              bool
+	CanBeBundle             bool
+	CanBeExecutable         bool
+	ForceUnloadable         bool
+	RequestorNeedsFallbacks bool
+	_                       [4]byte
+	RpathStack              uintptr
+	Finder                  uintptr
+	PathNotFoundHandler     uintptr
 }
 
 type loadedVector struct {
@@ -303,10 +308,108 @@ type mappedImage struct {
 	loadAddress uintptr
 }
 
+// preloadDarwinDependencies asks public dyld to load absolute system
+// dependencies before the private in-memory transaction starts. Public dyld
+// performs the complete registration, interposition, cache-patch, TLS, and
+// initializer lifecycle for those dependency graphs. The private loader then
+// only needs to bind the anonymous root image to already-registered libraries.
+func preloadDarwinDependencies(buffer []byte, libdyld uintptr, slide uint64) error {
+	file, err := macho.NewFile(bytes.NewReader(buffer))
+	if err != nil {
+		return fmt.Errorf("inspect Mach-O dependencies: %w", err)
+	}
+	defer file.Close()
+
+	imports, err := file.ImportedLibraries()
+	if err != nil {
+		return fmt.Errorf("read Mach-O dependencies: %w", err)
+	}
+
+	pending := make([]string, 0, len(imports))
+	seen := make(map[string]struct{}, len(imports))
+	for _, installName := range imports {
+		// System install names have process-independent resolution. Anonymous
+		// images have no meaningful @loader_path, @rpath would use the process'
+		// runpaths, and arbitrary absolute libraries may rely on root cycles.
+		// Leave all of those names to Loader::loadDependents.
+		if !isDarwinSystemInstallName(installName) {
+			continue
+		}
+		if _, ok := seen[installName]; ok {
+			continue
+		}
+		seen[installName] = struct{}{}
+		if _, pinned := darwinDependencyHandles.Load(installName); pinned {
+			continue
+		}
+		pending = append(pending, installName)
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+
+	dlopen := findFirstAvailableSymbol(libdyld, slide, "", "_dlopen")
+	if dlopen == 0 {
+		return errors.New("resolve public dyld symbol _dlopen")
+	}
+	dlerror := findFirstAvailableSymbol(libdyld, slide, "", "_dlerror")
+
+	// dlerror state is native-thread-local. Keep the clear, load, and error
+	// read on one OS thread while constructors are allowed to run freely.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	for _, installName := range pending {
+		if _, pinned := darwinDependencyHandles.Load(installName); pinned {
+			continue
+		}
+
+		name, err := cStringBytes(installName)
+		if err != nil {
+			return fmt.Errorf("encode dependency install name %q: %w", installName, err)
+		}
+		if dlerror != 0 {
+			_ = callDlerror(dlerror)
+		}
+		handle := callDlopen(dlopen, cStringPtr(name), rtldNow|rtldGlobal|rtldNoDelete)
+		runtime.KeepAlive(name)
+		if handle == 0 {
+			if dlerror != 0 {
+				if message := cStringAt(callDlerror(dlerror)); message != "" {
+					return fmt.Errorf("dlopen(%q): %s", installName, message)
+				}
+			}
+			return fmt.Errorf("dlopen(%q) returned a nil handle", installName)
+		}
+
+		// The mapped root is intentionally process-resident, so its dependency
+		// handles remain process-resident too and are never passed to dlclose.
+		darwinDependencyHandles.LoadOrStore(installName, handle)
+	}
+
+	return nil
+}
+
+func isDarwinSystemInstallName(installName string) bool {
+	return strings.HasPrefix(installName, "/usr/lib/") ||
+		strings.HasPrefix(installName, "/System/Library/")
+}
+
 func memmodLoader(bufferRO []byte, entrySymbol string) int {
 	if len(bufferRO) == 0 || entrySymbol == "" {
 		return 1
 	}
+
+	// The private dyld transaction reads and extends RuntimeState.loaded without
+	// going through dyld's public loader lock. Serialize complete transactions so
+	// concurrent Reflektor calls cannot snapshot and re-fix each other's roots.
+	darwinLoaderTransaction.Lock()
+	transactionLocked := true
+	defer func() {
+		if transactionLocked {
+			darwinLoaderTransaction.Unlock()
+		}
+	}()
 
 	sharedRegionStart, err := sharedRegionStartAddr()
 	if err != nil || sharedRegionStart == 0 {
@@ -340,6 +443,11 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 	dyld := findCacheImage(sharedRegionStart, header, "/usr/lib/dyld", slide)
 	if dyld == 0 {
 		return 2
+	}
+	setDarwinLoaderDetail("")
+	if err := preloadDarwinDependencies(bufferRO, uintptr(libdyld), slide); err != nil {
+		setDarwinLoaderDetail(err.Error())
+		return 13
 	}
 
 	apis := resolveDyldRuntimeAPIs(libdyld, slide)
@@ -599,9 +707,6 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 	}
 	setDarwinLoaderDetail("")
 	*rtopLoader = topLoader
-	// Mark the top loader as lateLeaveMapped, matching the C loader path.
-	partialFlags := (*uint64)(unsafe.Pointer(topLoader + 16))
-	*partialFlags |= 1 << 21
 
 	loadChainMain.Previous = 0
 	loadChainMain.Image = *(*uintptr)(unsafe.Pointer(apis + 24))
@@ -614,12 +719,15 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 	loadChainCur.Previous = uintptr(unsafe.Pointer(loadChainCaller))
 	loadChainCur.Image = topLoader
 
-	depOptions.StaticLinkage = false
+	// LC_LOAD_DYLIB dependencies use static linkage semantics. The root was
+	// already created with leaveMapped=true, so no private Loader flag writes
+	// are needed here (their offsets are dyld-version-specific).
+	depOptions.StaticLinkage = true
 	depOptions.RtldLocal = false
 	depOptions.RtldNoDelete = true
 	depOptions.CanBeDylib = true
 	depOptions.RpathStack = uintptr(unsafe.Pointer(loadChainCur))
-	depOptions.UseFallBackPaths = true
+	depOptions.RequestorNeedsFallbacks = false
 
 	if diagnosticsReady {
 		call1(diagnosticsClearError, uintptr(diag))
@@ -674,6 +782,10 @@ func memmodLoader(bufferRO []byte, entrySymbol string) int {
 		exitWritableDyldStateLock(memoryManagerInstance, lockLock, writeProtect, lockUnlock)
 		enteredWritable = false
 	}
+	// The loader transaction is complete. Do not retain Reflektor's mutex while
+	// running arbitrary export code, which may re-enter Reflektor.
+	transactionLocked = false
+	darwinLoaderTransaction.Unlock()
 
 	// Exported fixture entry points use the C void(void) ABI. Keep that call
 	// signature exact when cgo supplies the foreign-function bridge.
@@ -1418,6 +1530,11 @@ func loaderStatusError(code int) error {
 		return errors.New("invalid loaded image slide")
 	case 12:
 		return errors.New("export symbol not found")
+	case 13:
+		if detail := getDarwinLoaderDetail(); detail != "" {
+			return fmt.Errorf("failed to preload Mach-O dependencies: %s", detail)
+		}
+		return errors.New("failed to preload Mach-O dependencies")
 	default:
 		return fmt.Errorf("in-memory dyld loader failed with status %d", code)
 	}

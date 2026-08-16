@@ -18,6 +18,14 @@ func callVoid0(fn uintptr) {
 	_ = call0(fn)
 }
 
+func callDlopen(fn, name uintptr, flags int) uintptr {
+	return call2(fn, name, uintptr(flags))
+}
+
+func callDlerror(fn uintptr) uintptr {
+	return call0(fn)
+}
+
 func call1(fn, a0 uintptr) uintptr {
 	return call10(fn, a0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
 }
