@@ -45,7 +45,7 @@ lib, err := reflektor.LoadLibraryFile("./payload.dylib")
 
 ## CLI
 
-The CLI is in `/Users/moloch/git/reflektor/cli` and uses Cobra.
+The CLI is in `reflektor/cli` and uses Cobra.
 
 Build:
 
@@ -71,9 +71,9 @@ Usage:
 
 C test shared libraries are generated from:
 
-- `/Users/moloch/git/reflektor/testdata/c/basic.c`
+- `reflektor/testdata/c/basic.c`
 
-The Rust HTTPS fixture is built from `/Users/moloch/git/reflektor/testdata/rust`. It exports `StartW`, performs a bounded `GET https://example.com/` through libcurl on Darwin/Linux or WinHTTP on Windows, and records `ok:200` after receiving a non-empty successful response. The fixture is dependency-free Rust (`no_std`) so it does not require unsupported thread-local runtime state from the in-memory loaders.
+The Rust HTTPS fixture is built from `reflektor/testdata/rust`. It exports `StartW`, performs a bounded `GET https://example.com/` through libcurl on Darwin/Linux or WinHTTP on Windows, and records `ok:200` after receiving a non-empty successful response. The fixture is dependency-free Rust (`no_std`) so it does not require unsupported thread-local runtime state from the in-memory loaders.
 
 Build test shared libraries for the full matrix:
 
@@ -91,12 +91,12 @@ The Rust fixture test requires Cargo with Rust 1.94.0 and outbound HTTPS access.
 
 Linux cross-arch Docker harness:
 
-- `/Users/moloch/git/reflektor/testdata/docker/linux-memmod.Dockerfile`
-- `/Users/moloch/git/reflektor/testdata/docker/run-linux-memmod-matrix.sh`
+- `reflektor/testdata/docker/linux-memmod.Dockerfile`
+- `reflektor/testdata/docker/run-linux-memmod-matrix.sh`
 
 ## Repository Layout
 
-- `/Users/moloch/git/reflektor/reflektor.go`: root importable package (`reflektor`).
-- `/Users/moloch/git/reflektor/memmod`: OS-specific loader backends.
-- `/Users/moloch/git/reflektor/cli`: CLI entrypoint.
-- `/Users/moloch/git/reflektor/testdata`: portable shared-library fixtures and build/test harnesses.
+- `reflektor/reflektor.go`: root importable package (`reflektor`).
+- `reflektor/memmod`: OS-specific loader backends.
+- `reflektor/cli`: CLI entrypoint.
+- `reflektor/testdata`: portable shared-library fixtures and build/test harnesses.
