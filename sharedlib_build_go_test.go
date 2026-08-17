@@ -39,6 +39,21 @@ func buildOneGoSharedLib(t *testing.T, outDir string, goos string, goarch string
 	var (
 		out []byte
 	)
+	if goos == runtime.GOOS && goarch == runtime.GOARCH {
+		// Build native fixtures with the platform compiler. Apart from matching
+		// the production ABI most closely, this keeps a cross-linker defect from
+		// masquerading as a loader failure. In particular, Zig/LLD's linux/386
+		// Go c-shared output crashes even when loaded by the native dlopen.
+		cmd := exec.Command("go", args...)
+		cmd.Env = withoutEnv(baseEnv, "CC", "CXX")
+		out, err = cmd.CombinedOutput()
+		if err == nil {
+			cleanupGoSharedSidecars(outputPath, ext)
+			return outputPath
+		}
+		t.Logf("go build with native compiler failed for %s/%s, retrying with zig cc: %v\n%s", goos, goarch, err, out)
+	}
+
 	if _, err := exec.LookPath("zig"); err == nil {
 		cmd := exec.Command("go", args...)
 		cc := "zig cc"
@@ -136,6 +151,26 @@ func overrideEnv(base []string, overrides map[string]string) []string {
 
 	for key, value := range overrides {
 		out = append(out, key+"="+value)
+	}
+	return out
+}
+
+func withoutEnv(base []string, keys ...string) []string {
+	remove := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		remove[key] = struct{}{}
+	}
+
+	out := make([]string, 0, len(base))
+	for _, kv := range base {
+		eq := strings.IndexByte(kv, '=')
+		if eq <= 0 {
+			continue
+		}
+		if _, drop := remove[kv[:eq]]; drop {
+			continue
+		}
+		out = append(out, kv)
 	}
 	return out
 }
