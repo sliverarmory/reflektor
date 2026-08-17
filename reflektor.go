@@ -53,7 +53,8 @@ func (library *Library) CallExport(name string) error {
 	return nil
 }
 
-// Close releases library resources.
+// Close releases library resources. Go c-shared images remain mapped until
+// process exit because a started Go runtime cannot be unloaded safely.
 func (library *Library) Close() error {
 	library.mu.Lock()
 	defer library.mu.Unlock()
