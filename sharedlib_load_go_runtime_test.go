@@ -13,8 +13,13 @@ import (
 )
 
 const goRuntimeHelperLibraryEnv = "REFLEKTOR_GO_HELPER_LIBRARY"
+const goRuntimeHelperRecursiveEnv = "REFLEKTOR_GO_HELPER_RECURSIVE"
 
 func runGoRuntimeFixtureSubprocess(t *testing.T, libraryPath string) {
+	runGoRuntimeFixtureSubprocessMode(t, libraryPath, false)
+}
+
+func runGoRuntimeFixtureSubprocessMode(t *testing.T, libraryPath string, recursive bool) {
 	t.Helper()
 
 	stateDir := t.TempDir()
@@ -28,13 +33,18 @@ func runGoRuntimeFixtureSubprocess(t *testing.T, libraryPath string) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestGoRuntimeFixtureSubprocess$", "-test.count=1")
+	recursiveValue := ""
+	if recursive {
+		recursiveValue = "1"
+	}
 	cmd.Env = overrideEnv(os.Environ(), map[string]string{
-		goRuntimeHelperLibraryEnv: libraryPath,
-		"REFLEKTOR_MARKER":        markerPath,
-		"REFLEKTOR_READY":         readyPath,
-		"REFLEKTOR_RELEASE":       releasePath,
-		"REFLEKTOR_CLOSED":        closedPath,
-		"REFLEKTOR_AFTER_CLOSE":   afterClosePath,
+		goRuntimeHelperLibraryEnv:   libraryPath,
+		goRuntimeHelperRecursiveEnv: recursiveValue,
+		"REFLEKTOR_MARKER":          markerPath,
+		"REFLEKTOR_READY":           readyPath,
+		"REFLEKTOR_RELEASE":         releasePath,
+		"REFLEKTOR_CLOSED":          closedPath,
+		"REFLEKTOR_AFTER_CLOSE":     afterClosePath,
 	})
 	var output bytes.Buffer
 	cmd.Stdout = &output
@@ -98,7 +108,13 @@ func TestGoRuntimeFixtureSubprocess(t *testing.T) {
 		return
 	}
 
-	library, err := reflektor.LoadLibraryFile(libraryPath)
+	var library *reflektor.Library
+	var err error
+	if os.Getenv(goRuntimeHelperRecursiveEnv) == "1" {
+		library, err = reflektor.LoadLibraryFileRecursive(libraryPath)
+	} else {
+		library, err = reflektor.LoadLibraryFile(libraryPath)
+	}
 	if err != nil {
 		t.Fatalf("LoadLibraryFile(%s): %v", libraryPath, err)
 	}

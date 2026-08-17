@@ -41,7 +41,7 @@ jobs:
       - name: Run Darwin C, Go, and Rust fixture tests
         run: |
           set -euo pipefail
-          go test ./... -skip '^TestBuildCSharedLibraryMatrix$' -count=1 -v | tee darwin-test.log
+          go test ./... -skip '^TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix)$' -count=1 -v | tee darwin-test.log
           memmod_test="TestLoadLibraryAndCallExport_DarwinArm64"
           if [[ "${GOARCH}" == "amd64" ]]; then
             memmod_test="TestLoadLibraryAndCallExport_DarwinAMD64"
@@ -50,13 +50,17 @@ jobs:
             TestLoadGeneratedCDylibAndCallStartW \
             TestLoadGeneratedGoDylibAndCallStartW \
             TestLoadGeneratedRustHTTPSharedLibrary \
+            TestLoadGeneratedCSharedLibraryRecursiveMode \
+            TestLoadGeneratedGoSharedLibraryRecursiveMode \
+            TestLoadGeneratedRustSharedLibraryRecursiveMode \
+            TestLoadLibraryRecursiveDependencies \
             "${memmod_test}"; do
             if ! grep -Fq -- "--- PASS: ${test_name} " darwin-test.log; then
               echo "Required Darwin test did not pass: ${test_name}"
               exit 1
             fi
           done
-          unexpected_skips="$(grep -E '^--- SKIP:' darwin-test.log | grep -Fv 'TestBuildCSharedLibraryMatrix' || true)"
+          unexpected_skips="$(grep -E '^--- SKIP:' darwin-test.log | grep -Ev 'TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix)' || true)"
           if [[ -n "${unexpected_skips}" ]]; then
             echo "Darwin tests were skipped; refusing to pass CI."
             echo "${unexpected_skips}"
@@ -107,18 +111,22 @@ jobs:
       - name: Run Linux C, Go, and Rust fixture tests
         run: |
           set -euo pipefail
-          go test ./... -skip '^TestBuildCSharedLibraryMatrix$' -count=1 -v | tee linux-test.log
+          go test ./... -skip '^TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix)$' -count=1 -v | tee linux-test.log
           for test_name in \
             TestLoadGeneratedCLinuxSOAndCallStartW \
             TestLoadGeneratedGoLinuxSOAndCallStartW \
             TestLoadGeneratedRustHTTPSharedLibrary \
+            TestLoadGeneratedCSharedLibraryRecursiveMode \
+            TestLoadGeneratedGoSharedLibraryRecursiveMode \
+            TestLoadGeneratedRustSharedLibraryRecursiveMode \
+            TestLoadLibraryRecursiveDependencies \
             TestLoadLibraryAndCallExport_Linux; do
             if ! grep -Fq -- "--- PASS: ${test_name} " linux-test.log; then
               echo "Required Linux test did not pass: ${test_name}"
               exit 1
             fi
           done
-          unexpected_skips="$(grep -E '^--- SKIP:' linux-test.log | grep -Fv 'TestBuildCSharedLibraryMatrix' || true)"
+          unexpected_skips="$(grep -E '^--- SKIP:' linux-test.log | grep -Ev 'TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix)' || true)"
           if [[ -n "${unexpected_skips}" ]]; then
             echo "Linux tests were skipped; refusing to pass CI."
             echo "${unexpected_skips}"
@@ -176,17 +184,21 @@ jobs:
       - name: Run Windows C, Go, and Rust fixture tests
         run: |
           set -euo pipefail
-          go test ./... -skip '^TestBuildCSharedLibraryMatrix$' -count=1 -v | tee windows-test.log
+          go test ./... -skip '^TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix)$' -count=1 -v | tee windows-test.log
           for test_name in \
             TestLoadGeneratedCWindowsDLLAndCallStartW \
             TestLoadGeneratedGoWindowsDLLAndCallStartW \
-            TestLoadGeneratedRustHTTPSharedLibrary; do
+            TestLoadGeneratedRustHTTPSharedLibrary \
+            TestLoadGeneratedCSharedLibraryRecursiveMode \
+            TestLoadGeneratedGoSharedLibraryRecursiveMode \
+            TestLoadGeneratedRustSharedLibraryRecursiveMode \
+            TestLoadLibraryRecursiveDependencies; do
             if ! grep -Fq -- "--- PASS: ${test_name} " windows-test.log; then
               echo "Required Windows test did not pass: ${test_name}"
               exit 1
             fi
           done
-          unexpected_skips="$(grep -E '^--- SKIP:' windows-test.log | grep -Fv 'TestBuildCSharedLibraryMatrix' || true)"
+          unexpected_skips="$(grep -E '^--- SKIP:' windows-test.log | grep -Ev 'TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix)' || true)"
           if [[ -n "${unexpected_skips}" ]]; then
             echo "Windows tests were skipped; refusing to pass CI."
             echo "${unexpected_skips}"
@@ -213,8 +225,12 @@ jobs:
       - name: Validate the complete C fixture build matrix
         run: |
           set -euo pipefail
-          go test . -run '^TestBuildCSharedLibraryMatrix$' -count=1 -v | tee fixture-build-test.log
+          go test . -run '^TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix)$' -count=1 -v | tee fixture-build-test.log
           if ! grep -Fq -- '--- PASS: TestBuildCSharedLibraryMatrix ' fixture-build-test.log; then
             echo "The complete C fixture build matrix did not pass."
+            exit 1
+          fi
+          if ! grep -Fq -- '--- PASS: TestBuildRecursiveCSharedLibraryMatrix ' fixture-build-test.log; then
+            echo "The complete recursive C fixture build matrix did not pass."
             exit 1
           fi
