@@ -103,6 +103,11 @@ func TestRecursiveFixtureSubprocess(t *testing.T) {
 			t.Errorf("close recursive fixture: %v", closeErr)
 		}
 	}()
+	// Byte mode temporarily uses the graph directory as its synthetic origin.
+	// Move out before renaming it; Windows does not allow renaming the process CWD.
+	if err := os.Chdir(filepath.Dir(hiddenDir)); err != nil {
+		t.Fatalf("leave recursive graph directory before hiding it: %v", err)
+	}
 
 	assertRecursiveDependenciesNotNativeLoaded(t, filepath.Dir(rootPath))
 	if err := os.Rename(filepath.Dir(rootPath), hiddenDir); err != nil {
