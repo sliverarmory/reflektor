@@ -47,6 +47,24 @@ You can also load from a path:
 lib, err := reflektor.LoadLibraryFile("./payload.dylib")
 ```
 
+To read and map a library's non-system dependencies through Reflektor as well,
+use recursive mode:
+
+```go
+lib, err := reflektor.LoadLibraryFileRecursive("./payload.dylib")
+```
+
+The byte-oriented equivalent resolves relative dependency names from the
+current working directory:
+
+```go
+lib, err := reflektor.LoadLibraryRecursive(payload)
+```
+
+Both recursive APIs read the complete custom dependency graph before the root
+export is invoked. `LoadLibraryFileRecursive` is preferred for libraries that
+use origin-relative names such as `$ORIGIN`, `@loader_path`, or `@rpath`.
+
 ## CLI
 
 The CLI is in `reflektor/cli` and uses Cobra.
@@ -70,12 +88,36 @@ Usage:
 - `CallExport` is designed for zero-argument exports.
 - Reflektor normalizes common symbol naming differences where possible (for example underscore-prefixed forms).
 - The root `reflektor.Library` interface is intentionally small: `CallExport()` and `Close()`.
+- Recursive mode maps file-backed application dependencies from their bytes and
+  resolves imports within the in-memory graph. Platform runtime libraries remain
+  delegated to the native loader: Darwin shared-cache libraries, Windows
+  System32/API-set libraries, and Linux libraries in trusted system roots. Those
+  libraries require OS-managed TLS, symbol versioning, loader registration, and
+  other facilities that cannot be reproduced by simply reading a file—and some
+  Darwin shared-cache images do not exist as standalone readable files.
+- Linux custom images reject general ELF TLS, IFUNC/IRELATIVE, and RELR with
+  explicit errors; those features remain available through the system-library
+  carveout. Windows custom dependency cycles and delay-load import tables are
+  also rejected explicitly. Darwin and Linux graph cycles are deduplicated.
+- After the first export call, Darwin recursive mappings remain process-resident
+  because dyld retains their loader records. Reusing a Darwin install-name in a
+  later load follows dyld's first-loaded identity semantics.
+- `LoadLibrary` and `LoadLibraryFile` retain their original behavior and API.
 
 ## Test Data And Validation
 
 C test shared libraries are generated from:
 
 - `reflektor/testdata/c/basic.c`
+- `reflektor/testdata/c/recursive_leaf.c`
+- `reflektor/testdata/c/recursive_middle.c`
+- `reflektor/testdata/c/recursive_root.c`
+
+The recursive C fixture is a transitive root -> middle -> leaf graph. Its test
+checks that the graph is absent from Linux `/proc/self/maps` or the Windows
+loader module registry, then renames the dependency directory before calling
+`StartW`. On Darwin the rename happens before the lazy dyld transaction. These
+checks prove the custom dependencies came from bytes captured by Reflektor.
 
 The Rust HTTPS fixture is built from `reflektor/testdata/rust`. It exports `StartW`, performs a bounded `GET https://example.com/` through libcurl on Darwin/Linux or WinHTTP on Windows, and records `ok:200` after receiving a non-empty successful response. The fixture is dependency-free Rust (`no_std`) so it does not require unsupported thread-local runtime state from the in-memory loaders.
 

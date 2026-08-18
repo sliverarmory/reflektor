@@ -11,6 +11,11 @@ func LoadLibrary(data []byte) (*Module, error) {
 	return nil, errors.New("memmod is only supported on windows, darwin, and linux")
 }
 
+func LoadLibraryRecursive(data []byte, origin string, reader DependencyReader) (*Module, error) {
+	_, _, _ = data, origin, reader
+	return nil, errors.New("memmod is only supported on windows, darwin, and linux")
+}
+
 func (module *Module) Free() {}
 
 func (module *Module) CallExport(name string) error {

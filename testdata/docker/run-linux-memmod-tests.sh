@@ -20,12 +20,16 @@ export ZIG_LOCAL_CACHE_DIR=/tmp/zig-local-cache
 
 # Run every platform-applicable test. The cross-platform C build matrix has its
 # own CI job because it needs Darwin-aware binary inspection tools.
-go test ./... -skip '^TestBuildCSharedLibraryMatrix$' -count=1 -v | tee linux-test.log
+go test ./... -skip '^TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix)$' -count=1 -v | tee linux-test.log
 
 for test_name in \
   TestLoadGeneratedCLinuxSOAndCallStartW \
   TestLoadGeneratedGoLinuxSOAndCallStartW \
   TestLoadGeneratedRustHTTPSharedLibrary \
+  TestLoadGeneratedCSharedLibraryRecursiveMode \
+  TestLoadGeneratedGoSharedLibraryRecursiveMode \
+  TestLoadGeneratedRustSharedLibraryRecursiveMode \
+  TestLoadLibraryRecursiveDependencies \
   TestLoadLibraryAndCallExport_Linux; do
   if ! grep -Fq -- "--- PASS: ${test_name} " linux-test.log; then
     echo "Required linux/386 test did not pass: ${test_name}" >&2
@@ -33,7 +37,7 @@ for test_name in \
   fi
 done
 
-unexpected_skips="$(grep -E '^--- SKIP:' linux-test.log | grep -Fv 'TestBuildCSharedLibraryMatrix' || true)"
+unexpected_skips="$(grep -E '^--- SKIP:' linux-test.log | grep -Ev 'TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix)' || true)"
 if [[ -n "${unexpected_skips}" ]]; then
   echo "linux/386 tests were skipped; refusing to pass CI." >&2
   echo "${unexpected_skips}" >&2

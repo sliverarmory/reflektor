@@ -22,6 +22,8 @@ import (
 type linuxDynAPI struct {
 	dlopen  uintptr
 	dlsym   uintptr
+	dlvsym  uintptr
+	dlclose uintptr
 	dlerror uintptr
 }
 
@@ -50,6 +52,7 @@ type Module struct {
 	loadBias  uintptr
 	symbols   map[string]uintptr
 	goRuntime bool
+	recursive *linuxRecursiveGroup
 	closed    bool
 }
 
@@ -76,11 +79,12 @@ type runtimeELFModule struct {
 }
 
 type symbolResolver struct {
-	api      *linuxDynAPI
-	modules  []runtimeELFModule
-	resolved map[string]uintptr
-	misses   map[string]error
-	opened   map[string]uintptr
+	api           *linuxDynAPI
+	modules       []runtimeELFModule
+	resolved      map[string]uintptr
+	misses        map[string]error
+	opened        map[string]uintptr
+	resolveSymbol func(elf.Symbol) (uintptr, error)
 }
 
 var linuxGoTLSSlots = struct {
@@ -231,6 +235,14 @@ func (module *Module) Free() {
 		return
 	}
 	module.closed = true
+	if module.recursive != nil {
+		module.recursive.free()
+		module.recursive = nil
+		module.mapping = nil
+		module.symbols = nil
+		module.loadBias = 0
+		return
+	}
 	if module.goRuntime {
 		// A Go c-shared runtime owns process-lifetime threads and cannot be
 		// unloaded safely. Close the Reflektor handle while leaving its mapping
@@ -663,10 +675,6 @@ func resolveRelocationSymbol(symIndex uint32, dynSyms []elf.Symbol, loadBias uin
 		return 0, fmt.Errorf("relocation references invalid symbol index %d", symIndex)
 	}
 	bind := elf.ST_BIND(sym.Info)
-	if sym.Section == elf.SHN_UNDEF && bind == elf.STB_WEAK {
-		// Undefined weak symbols are optional and resolve to 0 by ELF rules.
-		return 0, nil
-	}
 	if sym.Section != elf.SHN_UNDEF && sym.Value != 0 {
 		return loadBias + uintptr(sym.Value), nil
 	}
@@ -674,9 +682,17 @@ func resolveRelocationSymbol(symIndex uint32, dynSyms []elf.Symbol, loadBias uin
 		return 0, fmt.Errorf("relocation symbol index %d is undefined and unnamed", symIndex)
 	}
 
-	addr, err := resolver.Resolve(sym.Name)
+	addr, err := resolver.ResolveSymbol(sym)
 	if err != nil {
+		if bind == elf.STB_WEAK {
+			// Undefined weak symbols are optional, but they still bind to an
+			// available definition before falling back to zero.
+			return 0, nil
+		}
 		return 0, fmt.Errorf("resolve external symbol %q: %w", sym.Name, err)
+	}
+	if addr == 0 && bind == elf.STB_WEAK {
+		return 0, nil
 	}
 	if addr == 0 {
 		return 0, fmt.Errorf("resolved external symbol %q to nil address", sym.Name)
@@ -1163,6 +1179,18 @@ func (resolver *symbolResolver) Resolve(name string) (uintptr, error) {
 	return 0, err
 }
 
+func (resolver *symbolResolver) ResolveSymbol(sym elf.Symbol) (uintptr, error) {
+	if resolver.resolveSymbol != nil {
+		return resolver.resolveSymbol(sym)
+	}
+	if sym.Section == elf.SHN_UNDEF && elf.ST_BIND(sym.Info) == elf.STB_WEAK {
+		// Preserve the legacy loader's weak-import behavior. Recursive loads use
+		// resolveSymbol above and attempt graph lookup before resolving to zero.
+		return 0, nil
+	}
+	return resolver.Resolve(sym.Name)
+}
+
 func resolveFromRuntimeModules(modules []runtimeELFModule, name string) (uintptr, error) {
 	for _, module := range modules {
 		off, err := findELFSymbolOffset(module.path, name)
@@ -1402,10 +1430,14 @@ func initLinuxDynAPI() error {
 	if err != nil {
 		return fmt.Errorf("resolve runtime symbol dlerror: %w", err)
 	}
+	dlvsymAddr, _ := resolveRuntimeAPISymbol(modules, "dlvsym")
+	dlcloseAddr, _ := resolveRuntimeAPISymbol(modules, "dlclose")
 
 	linuxAPI = linuxDynAPI{
 		dlopen:  dlopenAddr,
 		dlsym:   dlsymAddr,
+		dlvsym:  dlvsymAddr,
+		dlclose: dlcloseAddr,
 		dlerror: dlerrorAddr,
 	}
 	return nil
