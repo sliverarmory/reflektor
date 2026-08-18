@@ -6,6 +6,8 @@ Reflektor is a Go library and CLI for loading shared libraries from bytes and in
 
 It exposes a stable root package (`reflektor`) so other projects can import it directly, while platform-specific loading is handled behind `memmod`.
 
+<br clear="right">
+
 ## Platform Support
 
 | OS | Architectures | Shared Library Format | Status | Loader Notes |
