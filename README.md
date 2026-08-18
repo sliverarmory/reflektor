@@ -1,5 +1,7 @@
 # Reflektor
 
+<img align="right" src=".github/images/reflektor.png" alt="Reflektor" width="300">
+
 Reflektor is a Go library and CLI for loading shared libraries from bytes and invoking exported functions.
 
 It exposes a stable root package (`reflektor`) so other projects can import it directly, while platform-specific loading is handled behind `memmod`.
