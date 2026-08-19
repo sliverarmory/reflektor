@@ -31,6 +31,13 @@ for test_name in \
   TestLoadGeneratedRustSharedLibraryRecursiveMode \
   TestLoadLibraryRecursiveDependencies \
   TestCallExportWithArgs \
+  TestNativePackageCallExport \
+  TestNativePackageRejectsGoCSharedImage \
+  TestNativePackageLinuxDependencyGraphIsIsolated \
+  TestNativePackageCallExportWithArgsLinux \
+  TestNativePackageRustCallExportWithArgsLinux \
+  TestNativePackageELFLifecycleLinux \
+  TestNativePackageCSharedConsumerLinux \
   TestLoadLibraryAndCallExport_Linux; do
   if ! grep -Fq -- "--- PASS: ${test_name} " linux-test.log; then
     echo "Required linux/386 test did not pass: ${test_name}" >&2
@@ -45,8 +52,15 @@ if [[ -n "${unexpected_skips}" ]]; then
   exit 1
 fi
 
-CGO_ENABLED=0 go test . -run '^TestCallExportWith(Args|PuregoCallback)$' -count=1 -v | tee linux-nocgo-test.log
-for test_name in TestCallExportWithArgs TestCallExportWithPuregoCallback; do
+CGO_ENABLED=0 go test . -run '^(TestCallExportWith(Args|PuregoCallback)|TestNativePackage(CallExport|CallExportWithArgsLinux|RustCallExportWithArgsLinux|ELFLifecycleLinux|LinuxDependencyGraphIsIsolated))$' -count=1 -v | tee linux-nocgo-test.log
+for test_name in \
+  TestCallExportWithArgs \
+  TestCallExportWithPuregoCallback \
+  TestNativePackageCallExport \
+  TestNativePackageLinuxDependencyGraphIsIsolated \
+  TestNativePackageCallExportWithArgsLinux \
+  TestNativePackageRustCallExportWithArgsLinux \
+  TestNativePackageELFLifecycleLinux; do
   if ! grep -Fq -- "--- PASS: ${test_name} " linux-nocgo-test.log; then
     echo "Required CGO-free linux/386 test did not pass: ${test_name}" >&2
     exit 1

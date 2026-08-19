@@ -33,41 +33,6 @@ __attribute__((visibility("default"))) uintptr_t ReflektorCArgs3(uintptr_t a0, u
 }
 `
 
-const linuxCallArgsRustSource = `
-#![no_std]
-
-use core::panic::PanicInfo;
-
-#[panic_handler]
-fn panic(_info: &PanicInfo<'_>) -> ! {
-    loop {
-        core::hint::spin_loop();
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn ReflektorRustArgs0() -> usize {
-    0x1234
-}
-
-#[no_mangle]
-pub extern "C" fn ReflektorRustArgs1(a0: usize) -> usize {
-    a0 ^ 0x55
-}
-
-#[no_mangle]
-pub extern "C" fn ReflektorRustArgs2(a0: usize, a1: usize) -> usize {
-    a0.wrapping_add(a1.wrapping_mul(3)).wrapping_add(7)
-}
-
-#[no_mangle]
-pub extern "C" fn ReflektorRustArgs3(a0: usize, a1: usize, a2: usize) -> usize {
-    a0.wrapping_add(a1.wrapping_mul(3))
-        .wrapping_add(a2.wrapping_mul(5))
-        .wrapping_add(11)
-}
-`
-
 func TestCallExportWithArgsLinuxNativeFixtures(t *testing.T) {
 	fixtures := []struct {
 		name   string
@@ -209,7 +174,11 @@ func buildLinuxCallArgsRustFixture(t *testing.T) string {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "call_args.rs")
 	output := filepath.Join(dir, "libreflektor_call_args_rust.so")
-	if err := os.WriteFile(source, []byte(linuxCallArgsRustSource), 0o600); err != nil {
+	sourceData, err := os.ReadFile(filepath.Join("..", "testdata", "rust", "native_args.rs"))
+	if err != nil {
+		t.Fatalf("read Rust call-arguments fixture source: %v", err)
+	}
+	if err := os.WriteFile(source, sourceData, 0o600); err != nil {
 		t.Fatalf("write Rust call-arguments fixture: %v", err)
 	}
 

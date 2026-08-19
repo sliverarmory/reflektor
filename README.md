@@ -85,6 +85,26 @@ Both recursive APIs read the complete custom dependency graph before the root
 export is invoked. `LoadLibraryFileRecursive` is preferred for libraries that
 use origin-relative names such as `$ORIGIN`, `@loader_path`, or `@rpath`.
 
+## Native-only Package
+
+Hosts that load only native C or Rust extensions can use the tag-free
+`github.com/sliverarmory/reflektor/native` package:
+
+```go
+import "github.com/sliverarmory/reflektor/native"
+
+lib, err := native.LoadLibrary(payload)
+```
+
+It exposes the same `CallExport`, `CallExportWithArgs`, and `Close` lifecycle
+for byte-backed native images. On Linux, its import graph deliberately excludes
+the root loader's Go c-shared TLS reservation. Linux `amd64` and `arm64` use
+the PureGo call bridge in both CGO modes, while Linux `386` uses Reflektor's
+integer-only `runtime.cgocall` dispatcher. Valid Go c-shared payloads are
+rejected before mapping with `native.ErrGoSharedLibraryUnsupported`; use the
+root `reflektor` package when Go c-shared loading is required. File and
+recursive loading remain root-package features.
+
 ## CLI
 
 The CLI is in `reflektor/cli` and uses Cobra.
@@ -111,11 +131,10 @@ Usage:
 - `CallExportWithArgs` supports native C and Rust images. Go c-shared images
   return `ErrGoExportArgumentsUnsupported`; their zero-argument exports remain
   available through `CallExport`.
-- On Linux, the `CGO_ENABLED=0` argument-call bridge uses purego's runtime
-  integration so C-to-Go callbacks are safe. Consequently, hosts importing
-  Reflektor are dynamically linked against the platform's glibc loader even if
-  they use only the legacy APIs; this is not a fully static or musl-portable
-  build mode.
+- On Linux, the runtime-aware foreign-call bridges keep C-to-Go callbacks safe.
+  Consequently, `CGO_ENABLED=0` hosts importing either Reflektor package are
+  dynamically linked against the platform's glibc loader; this is not a fully
+  static or musl-portable build mode.
 - Reflektor normalizes common symbol naming differences where possible (for example underscore-prefixed forms).
 - The root `reflektor.Library` API remains intentionally small:
   `CallExport()`, `CallExportWithArgs()`, and `Close()`.
@@ -177,6 +196,7 @@ Linux cross-arch Docker harness:
 ## Repository Layout
 
 - `reflektor/reflektor.go`: root importable package (`reflektor`).
+- `reflektor/native`: tag-free native C/Rust-only package.
 - `reflektor/memmod`: OS-specific loader backends.
 - `reflektor/cli`: CLI entrypoint.
 - `reflektor/testdata`: portable shared-library fixtures and build/test harnesses.
