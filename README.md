@@ -199,4 +199,5 @@ Linux cross-arch Docker harness:
 - `reflektor/native`: tag-free native C/Rust-only package.
 - `reflektor/memmod`: OS-specific loader backends.
 - `reflektor/cli`: CLI entrypoint.
+- `reflektor/integration`: external-package loader and native API tests.
 - `reflektor/testdata`: portable shared-library fixtures and build/test harnesses.

@@ -52,7 +52,7 @@ if [[ -n "${unexpected_skips}" ]]; then
   exit 1
 fi
 
-CGO_ENABLED=0 go test . -run '^(TestCallExportWith(Args|PuregoCallback)|TestNativePackage(CallExport|CallExportWithArgsLinux|RustCallExportWithArgsLinux|ELFLifecycleLinux|LinuxDependencyGraphIsIsolated))$' -count=1 -v | tee linux-nocgo-test.log
+CGO_ENABLED=0 go test ./integration -run '^(TestCallExportWith(Args|PuregoCallback)|TestNativePackage(CallExport|CallExportWithArgsLinux|RustCallExportWithArgsLinux|ELFLifecycleLinux|LinuxDependencyGraphIsIsolated))$' -count=1 -v | tee linux-nocgo-test.log
 for test_name in \
   TestCallExportWithArgs \
   TestCallExportWithPuregoCallback \

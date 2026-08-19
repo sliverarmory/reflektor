@@ -87,11 +87,11 @@ func TestBuildCSharedLibraryMatrix(t *testing.T) {
 }
 
 func buildOneSharedLib(t *testing.T, outDir string, goos string, goarch string) string {
-	return buildCSharedLib(t, outDir, goos, goarch, "basic", filepath.Join("testdata", "c", "basic.c"))
+	return buildCSharedLib(t, outDir, goos, goarch, "basic", filepath.Join("..", "testdata", "c", "basic.c"))
 }
 
 func buildArgumentSharedLib(t *testing.T, outDir string, goos string, goarch string) string {
-	return buildCSharedLib(t, outDir, goos, goarch, "args", filepath.Join("testdata", "c", "args.c"))
+	return buildCSharedLib(t, outDir, goos, goarch, "args", filepath.Join("..", "testdata", "c", "args.c"))
 }
 
 func buildCSharedLib(t *testing.T, outDir string, goos string, goarch string, baseName string, sourcePath string) string {

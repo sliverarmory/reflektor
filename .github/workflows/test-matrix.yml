@@ -75,7 +75,7 @@ jobs:
             echo "Found a CI skip guard in Darwin loader tests; refusing to pass CI."
             exit 1
           fi
-          CGO_ENABLED=0 go test . -run '^TestCallExportWith(Args|PuregoCallback)$' -count=1 -v | tee darwin-nocgo-test.log
+          CGO_ENABLED=0 go test ./integration -run '^TestCallExportWith(Args|PuregoCallback)$' -count=1 -v | tee darwin-nocgo-test.log
           for test_name in TestCallExportWithArgs TestCallExportWithPuregoCallback; do
             if ! grep -Fq -- "--- PASS: ${test_name} " darwin-nocgo-test.log; then
               echo "Required CGO-free Darwin test did not pass: ${test_name}"
@@ -161,7 +161,7 @@ jobs:
             echo "${unexpected_skips}"
             exit 1
           fi
-          CGO_ENABLED=0 go test . -run '^(TestCallExportWith(Args|PuregoCallback)|TestNativePackage(CallExport|CallExportWithArgsLinux|RustCallExportWithArgsLinux|ELFLifecycleLinux|LinuxDependencyGraphIsIsolated))$' -count=1 -v | tee linux-nocgo-test.log
+          CGO_ENABLED=0 go test ./integration -run '^(TestCallExportWith(Args|PuregoCallback)|TestNativePackage(CallExport|CallExportWithArgsLinux|RustCallExportWithArgsLinux|ELFLifecycleLinux|LinuxDependencyGraphIsIsolated))$' -count=1 -v | tee linux-nocgo-test.log
           for test_name in \
             TestCallExportWithArgs \
             TestCallExportWithPuregoCallback \
@@ -175,7 +175,7 @@ jobs:
               exit 1
             fi
           done
-          CGO_ENABLED=1 go test -race . -run '^TestNativePackageCallExportWithArgsLinux$' -count=1 -v | tee linux-native-race-test.log
+          CGO_ENABLED=1 go test -race ./integration -run '^TestNativePackageCallExportWithArgsLinux$' -count=1 -v | tee linux-native-race-test.log
           if ! grep -Fq -- '--- PASS: TestNativePackageCallExportWithArgsLinux ' linux-native-race-test.log; then
             echo "Required race-enabled native-package Linux test did not pass"
             exit 1
@@ -277,7 +277,7 @@ jobs:
       - name: Validate the complete C fixture build matrix
         run: |
           set -euo pipefail
-          go test . -run '^TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix)$' -count=1 -v | tee fixture-build-test.log
+          go test ./integration -run '^TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix)$' -count=1 -v | tee fixture-build-test.log
           if ! grep -Fq -- '--- PASS: TestBuildCSharedLibraryMatrix ' fixture-build-test.log; then
             echo "The complete C fixture build matrix did not pass."
             exit 1

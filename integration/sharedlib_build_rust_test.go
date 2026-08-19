@@ -24,7 +24,7 @@ func buildOneRustSharedLib(t *testing.T, outDir string, goos string, goarch stri
 		t.Fatalf("unsupported Rust shared-library target %s/%s", goos, goarch)
 	}
 
-	manifestPath, err := filepath.Abs(filepath.Join("testdata", "rust", "Cargo.toml"))
+	manifestPath, err := filepath.Abs(filepath.Join("..", "testdata", "rust", "Cargo.toml"))
 	if err != nil {
 		t.Fatalf("resolve Rust fixture manifest: %v", err)
 	}

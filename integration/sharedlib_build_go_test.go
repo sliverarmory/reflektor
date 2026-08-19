@@ -19,7 +19,7 @@ func buildOneGoSharedLib(t *testing.T, outDir string, goos string, goarch string
 	}
 
 	outputPath := filepath.Join(outDir, fmt.Sprintf("basic_go_%s-%s.%s", goos, goarch, ext))
-	sourcePath := "./testdata/go/basic"
+	sourcePath := "../testdata/go/basic"
 
 	args := []string{
 		"build",

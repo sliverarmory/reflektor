@@ -71,7 +71,7 @@ func buildNativeConsumerSharedLibrary(t *testing.T) string {
 		"-buildmode=c-shared",
 		"-trimpath",
 		"-o", outputPath,
-		"./testdata/go/native_consumer",
+		"../testdata/go/native_consumer",
 	)
 	cmd.Env = withoutEnv(overrideEnv(os.Environ(), map[string]string{
 		"GOOS":        "linux",

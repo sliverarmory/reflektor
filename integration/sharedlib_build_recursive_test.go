@@ -83,39 +83,39 @@ func buildRecursiveSharedLibs(t *testing.T, outDir string, goos string, goarch s
 		buildRecursiveFixture(t, common, []string{
 			"-dynamiclib", "-fPIC",
 			"-Wl,-install_name,@rpath/libreflektor_leaf.dylib",
-			"-o", leaf, filepath.Join("testdata", "c", "recursive_leaf.c"),
+			"-o", leaf, filepath.Join("..", "testdata", "c", "recursive_leaf.c"),
 		})
 		buildRecursiveFixture(t, common, []string{
 			"-dynamiclib", "-fPIC",
 			"-Wl,-install_name,@rpath/libreflektor_middle.dylib",
 			"-Wl,-rpath,@loader_path",
-			"-o", middle, filepath.Join("testdata", "c", "recursive_middle.c"),
+			"-o", middle, filepath.Join("..", "testdata", "c", "recursive_middle.c"),
 			"-L" + outDir, "-lreflektor_leaf",
 		})
 		buildRecursiveFixture(t, common, []string{
 			"-dynamiclib", "-fPIC",
 			"-Wl,-rpath,@loader_path",
-			"-o", root, filepath.Join("testdata", "c", "recursive_root.c"),
+			"-o", root, filepath.Join("..", "testdata", "c", "recursive_root.c"),
 			"-L" + outDir, "-lreflektor_middle",
 		})
 	case "linux":
 		buildRecursiveFixture(t, common, []string{
 			"-shared", "-fPIC", "-Wl,-z,now", "-Wl,-z,defs",
 			"-Wl,-soname,libreflektor_leaf.so",
-			"-o", leaf, filepath.Join("testdata", "c", "recursive_leaf.c"),
+			"-o", leaf, filepath.Join("..", "testdata", "c", "recursive_leaf.c"),
 		})
 		buildRecursiveFixture(t, common, []string{
 			"-shared", "-fPIC", "-Wl,-z,now", "-Wl,-z,defs",
 			"-Wl,-soname,libreflektor_middle.so",
 			"-Wl,--enable-new-dtags", "-Wl,-rpath,$ORIGIN",
-			"-o", middle, filepath.Join("testdata", "c", "recursive_middle.c"),
+			"-o", middle, filepath.Join("..", "testdata", "c", "recursive_middle.c"),
 			"-L" + outDir, "-Wl,--no-as-needed", "-lreflektor_leaf",
 		})
 		buildRecursiveFixture(t, common, []string{
 			"-shared", "-fPIC", "-Wl,-z,now", "-Wl,-z,defs",
 			"-Wl,-soname,reflektor_recursive_root.so",
 			"-Wl,--enable-new-dtags", "-Wl,-rpath,$ORIGIN",
-			"-o", root, filepath.Join("testdata", "c", "recursive_root.c"),
+			"-o", root, filepath.Join("..", "testdata", "c", "recursive_root.c"),
 			"-L" + outDir, "-Wl,--no-as-needed", "-lreflektor_middle",
 		})
 	case "windows":
@@ -123,14 +123,14 @@ func buildRecursiveSharedLibs(t *testing.T, outDir string, goos string, goarch s
 		middleImport := filepath.Join(outDir, "libreflektor_middle.lib")
 		buildRecursiveFixture(t, common, []string{
 			"-shared", "-Wl,--out-implib," + leafImport,
-			"-o", leaf, filepath.Join("testdata", "c", "recursive_leaf.c"),
+			"-o", leaf, filepath.Join("..", "testdata", "c", "recursive_leaf.c"),
 		})
 		buildRecursiveFixture(t, common, []string{
 			"-shared", "-Wl,--out-implib," + middleImport,
-			"-o", middle, filepath.Join("testdata", "c", "recursive_middle.c"), leafImport,
+			"-o", middle, filepath.Join("..", "testdata", "c", "recursive_middle.c"), leafImport,
 		})
 		buildRecursiveFixture(t, common, []string{
-			"-shared", "-o", root, filepath.Join("testdata", "c", "recursive_root.c"), middleImport,
+			"-shared", "-o", root, filepath.Join("..", "testdata", "c", "recursive_root.c"), middleImport,
 		})
 	default:
 		t.Fatalf("unsupported recursive shared-library OS %s", goos)

@@ -28,7 +28,7 @@ func TestNativePackageLinuxDependencyGraphIsIsolated(t *testing.T) {
 	for _, cgoEnabled := range []string{"0", "1"} {
 		cgoEnabled := cgoEnabled
 		t.Run("cgo-"+cgoEnabled, func(t *testing.T) {
-			cmd := exec.Command("go", "list", "-deps", "./native")
+			cmd := exec.Command("go", "list", "-deps", "../native")
 			cmd.Env = overrideEnv(os.Environ(), map[string]string{
 				"GOOS":        "linux",
 				"GOARCH":      runtime.GOARCH,
@@ -60,7 +60,7 @@ func TestNativePackageLinuxDependencyGraphIsIsolated(t *testing.T) {
 func assertNativeLinuxBridgeFiles(t *testing.T, cgoEnabled string, modulePath string) {
 	t.Helper()
 
-	cmd := exec.Command("go", "list", "-json", "./native", "./native/internal/linuxmem")
+	cmd := exec.Command("go", "list", "-json", "../native", "../native/internal/linuxmem")
 	cmd.Env = overrideEnv(os.Environ(), map[string]string{
 		"GOOS":        "linux",
 		"GOARCH":      runtime.GOARCH,
@@ -338,7 +338,7 @@ func buildNativeRustArgumentFixture(t *testing.T) string {
 	}
 
 	output := filepath.Join(t.TempDir(), "libreflektor_native_args_rust.so")
-	source := filepath.Join("testdata", "rust", "native_args.rs")
+	source := filepath.Join("..", "testdata", "rust", "native_args.rs")
 	cmd := exec.Command("rustc",
 		"--crate-name", "reflektor_native_args",
 		"--crate-type", "cdylib",
@@ -373,7 +373,7 @@ func buildNativeLifecycleFixture(t *testing.T) string {
 		"-Wl,-z,now", "-Wl,-z,defs",
 		"-O2", "-g0",
 		"-o", output,
-		filepath.Join("testdata", "c", "native_lifecycle.c"),
+		filepath.Join("..", "testdata", "c", "native_lifecycle.c"),
 	)
 	cmd.Env = append(
 		os.Environ(),

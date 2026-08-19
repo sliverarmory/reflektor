@@ -7,6 +7,7 @@ on:
       - "feat/**"
     paths:
       - "*.go"
+      - "integration/**"
       - "cli/**"
       - "memmod/**"
       - "native/**"
@@ -17,6 +18,7 @@ on:
   pull_request:
     paths:
       - "*.go"
+      - "integration/**"
       - "cli/**"
       - "memmod/**"
       - "native/**"
