@@ -58,6 +58,7 @@ jobs:
             TestNativePackageCallExport \
             TestNativePackageRejectsGoCSharedImage \
             TestNativePackageRejectsGoCSharedInLaterFatSlice \
+            TestDarwinLoaderTransactionsUnderSchedulerPressure \
             "${memmod_test}"; do
             if ! grep -Fq -- "--- PASS: ${test_name} " darwin-test.log; then
               echo "Required Darwin test did not pass: ${test_name}"
@@ -81,6 +82,15 @@ jobs:
               exit 1
             fi
           done
+          CGO_ENABLED=0 go test ./memmod -run '^TestDarwinLoaderTransactionsUnderSchedulerPressure$' -count=1 -v | tee darwin-memmod-nocgo-test.log
+          if ! grep -Fq -- '--- PASS: TestDarwinLoaderTransactionsUnderSchedulerPressure ' darwin-memmod-nocgo-test.log; then
+            echo "Required CGO-free Darwin loader thread-affinity test did not pass"
+            exit 1
+          fi
+          if grep -Fq -- '--- SKIP:' darwin-memmod-nocgo-test.log; then
+            echo "CGO-free Darwin loader thread-affinity test was skipped; refusing to pass CI."
+            exit 1
+          fi
 
   linux-native:
     name: linux-${{ matrix.goarch }}-native
