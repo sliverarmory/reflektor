@@ -1,0 +1,373 @@
+name: Sliver End-to-End
+
+on:
+  push:
+    branches:
+      - main
+      - "feat/**"
+    paths:
+      - "*.go"
+      - "cli/**"
+      - "memmod/**"
+      - "native/**"
+      - "go.mod"
+      - "go.sum"
+      - "test/sliver-e2e/**"
+      - ".github/workflows/sliver-e2e.yml"
+  pull_request:
+    paths:
+      - "*.go"
+      - "cli/**"
+      - "memmod/**"
+      - "native/**"
+      - "go.mod"
+      - "go.sum"
+      - "test/sliver-e2e/**"
+      - ".github/workflows/sliver-e2e.yml"
+  workflow_dispatch:
+    inputs:
+      sliver_ref:
+        description: Immutable 40-hex BishopFox/sliver commit with native-package integration
+        required: false
+        default: ada79c8ecdad89b495b2d9e840551abd01b80ca0
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  # Bootstrap against the immutable native-package commit while the Sliver PR
+  # is in flight. Replace this fallback with its immutable merge commit after
+  # BishopFox/sliver#2336 lands; never use a feature branch name here.
+  SLIVER_REF: ${{ inputs.sliver_ref || 'ada79c8ecdad89b495b2d9e840551abd01b80ca0' }}
+
+jobs:
+  prepare:
+    name: prepare-current-reflektor-overlay
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out Reflektor
+        uses: actions/checkout@v4
+
+      - name: Reject mutable Sliver refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "${SLIVER_REF}" =~ ^[[:xdigit:]]{40}$ ]]; then
+            echo "sliver_ref must be an immutable 40-hex commit: ${SLIVER_REF}" >&2
+            exit 1
+          fi
+
+      - name: Check out pinned Sliver
+        uses: actions/checkout@v4
+        with:
+          repository: BishopFox/sliver
+          ref: ${{ env.SLIVER_REF }}
+          path: sliver-e2e-checkout
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Regenerate Sliver's embedded implant vendor from this checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual_ref="$(git -C sliver-e2e-checkout rev-parse HEAD)"
+          if [[ "${actual_ref}" != "${SLIVER_REF,,}" ]]; then
+            echo "Sliver checkout mismatch: got ${actual_ref}, want ${SLIVER_REF}" >&2
+            exit 1
+          fi
+          ./test/sliver-e2e/overlay.sh prepare "${GITHUB_WORKSPACE}" "${GITHUB_WORKSPACE}/sliver-e2e-checkout"
+
+      - name: Package prepared Sliver source
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar --exclude='.git' -C sliver-e2e-checkout -czf "${RUNNER_TEMP}/sliver-e2e.tar.gz" .
+
+      - name: Upload prepared Sliver source
+        uses: actions/upload-artifact@v4
+        with:
+          name: sliver-e2e-source
+          path: ${{ runner.temp }}/sliver-e2e.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  darwin:
+    name: sliver-darwin-${{ matrix.goarch }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            goarch: amd64
+          - runner: macos-15
+            goarch: arm64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out Reflektor
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download prepared Sliver source
+        uses: actions/download-artifact@v4
+        with:
+          name: sliver-e2e-source
+          path: ${{ runner.temp }}/sliver-e2e-artifact
+
+      - name: Extract and verify current Reflektor overlay
+        run: |
+          set -euo pipefail
+          mkdir -p sliver-e2e-checkout
+          tar -xzf "${RUNNER_TEMP}/sliver-e2e-artifact/sliver-e2e.tar.gz" -C sliver-e2e-checkout
+          ./test/sliver-e2e/overlay.sh verify "${GITHUB_WORKSPACE}" "${GITHUB_WORKSPACE}/sliver-e2e-checkout"
+
+      - name: Download Sliver build assets
+        working-directory: sliver-e2e-checkout
+        run: go run -buildvcs=false -mod=vendor ./util/cmd/assets
+
+      - name: Build Sliver server and integration driver
+        working-directory: sliver-e2e-checkout
+        env:
+          GOARCH: ${{ matrix.goarch }}
+          GOOS: darwin
+        run: |
+          set -euo pipefail
+          CGO_ENABLED=0 go build -buildvcs=false -mod=vendor -trimpath -tags go_sqlite,server -o "${RUNNER_TEMP}/sliver-server" ./server
+          CGO_ENABLED=0 go build -buildvcs=false -mod=vendor -trimpath -tags client,go_sqlite -o "${RUNNER_TEMP}/sliver-reflektor-e2e" ./test/reflektor
+
+      - name: Build current Reflektor root-loader CLI with cgo
+        env:
+          CGO_ENABLED: "1"
+          GOARCH: ${{ matrix.goarch }}
+          GOOS: darwin
+        run: go build -buildvcs=false -trimpath -o "${RUNNER_TEMP}/reflektor" ./cli
+
+      - name: Exercise real Sliver implant and native extension lifecycle
+        run: >-
+          "${RUNNER_TEMP}/sliver-reflektor-e2e"
+          -repo "${GITHUB_WORKSPACE}/sliver-e2e-checkout"
+          -server "${RUNNER_TEMP}/sliver-server"
+          -reflektor "${RUNNER_TEMP}/reflektor"
+          -target-os darwin
+          -target-arch ${{ matrix.goarch }}
+
+  linux-native:
+    name: sliver-linux-${{ matrix.goarch }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            goarch: amd64
+          - runner: ubuntu-24.04-arm
+            goarch: arm64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out Reflektor
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download prepared Sliver source
+        uses: actions/download-artifact@v4
+        with:
+          name: sliver-e2e-source
+          path: ${{ runner.temp }}/sliver-e2e-artifact
+
+      - name: Extract and verify current Reflektor overlay
+        run: |
+          set -euo pipefail
+          mkdir -p sliver-e2e-checkout
+          tar -xzf "${RUNNER_TEMP}/sliver-e2e-artifact/sliver-e2e.tar.gz" -C sliver-e2e-checkout
+          ./test/sliver-e2e/overlay.sh verify "${GITHUB_WORKSPACE}" "${GITHUB_WORKSPACE}/sliver-e2e-checkout"
+
+      - name: Download Sliver build assets
+        working-directory: sliver-e2e-checkout
+        run: go run -buildvcs=false -mod=vendor ./util/cmd/assets
+
+      - name: Build Sliver server and integration driver
+        working-directory: sliver-e2e-checkout
+        env:
+          GOARCH: ${{ matrix.goarch }}
+          GOOS: linux
+        run: |
+          set -euo pipefail
+          CGO_ENABLED=0 go build -buildvcs=false -mod=vendor -trimpath -tags go_sqlite,server -o "${RUNNER_TEMP}/sliver-server" ./server
+          CGO_ENABLED=0 go build -buildvcs=false -mod=vendor -trimpath -tags client,go_sqlite -o "${RUNNER_TEMP}/sliver-reflektor-e2e" ./test/reflektor
+
+      - name: Build current Reflektor root-loader CLI with cgo
+        env:
+          CGO_ENABLED: "1"
+          GOARCH: ${{ matrix.goarch }}
+          GOOS: linux
+        run: go build -buildvcs=false -trimpath -o "${RUNNER_TEMP}/reflektor" ./cli
+
+      - name: Exercise real Sliver implant and native extension lifecycle
+        run: >-
+          "${RUNNER_TEMP}/sliver-reflektor-e2e"
+          -repo "${GITHUB_WORKSPACE}/sliver-e2e-checkout"
+          -server "${RUNNER_TEMP}/sliver-server"
+          -reflektor "${RUNNER_TEMP}/reflektor"
+          -target-os linux
+          -target-arch ${{ matrix.goarch }}
+
+  linux-386:
+    name: sliver-linux-386-docker
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      CONTAINER_NAME: reflektor-sliver-linux-386-${{ github.run_id }}-${{ github.run_attempt }}
+      IMAGE_NAME: reflektor-sliver-linux-386:${{ github.run_id }}-${{ github.run_attempt }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out Reflektor
+        uses: actions/checkout@v4
+
+      - name: Download prepared Sliver source
+        uses: actions/download-artifact@v4
+        with:
+          name: sliver-e2e-source
+          path: ${{ runner.temp }}/sliver-e2e-artifact
+
+      - name: Extract and verify current Reflektor overlay
+        run: |
+          set -euo pipefail
+          mkdir -p sliver-e2e-checkout
+          tar -xzf "${RUNNER_TEMP}/sliver-e2e-artifact/sliver-e2e.tar.gz" -C sliver-e2e-checkout
+          ./test/sliver-e2e/overlay.sh verify "${GITHUB_WORKSPACE}" "${GITHUB_WORKSPACE}/sliver-e2e-checkout"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build linux/386 Sliver E2E image
+        run: |
+          set -euo pipefail
+          go_version="$(awk '$1 == "go" { print $2; exit }' go.mod)"
+          docker buildx build \
+            --load \
+            --platform linux/386 \
+            --build-arg "GO_VERSION=${go_version}" \
+            --file test/sliver-e2e/Dockerfile.linux-386 \
+            --tag "${IMAGE_NAME}" \
+            .
+
+      - name: Exercise real Sliver implant and native extension lifecycle
+        run: docker run --name "${CONTAINER_NAME}" --platform linux/386 "${IMAGE_NAME}"
+
+      - name: Clean up linux/386 Docker resources
+        if: ${{ always() }}
+        run: |
+          docker rm --force "${CONTAINER_NAME}" 2>/dev/null || true
+          docker image rm --force "${IMAGE_NAME}" 2>/dev/null || true
+
+  windows:
+    name: sliver-windows-${{ matrix.goarch }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            goarch: amd64
+            server_arch: amd64
+          - runner: windows-2022
+            goarch: 386
+            server_arch: amd64
+          - runner: windows-11-arm
+            goarch: arm64
+            server_arch: amd64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out Reflektor
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download prepared Sliver source
+        uses: actions/download-artifact@v4
+        with:
+          name: sliver-e2e-source
+          path: ${{ runner.temp }}/sliver-e2e-artifact
+
+      - name: Extract and verify current Reflektor overlay
+        run: |
+          set -euo pipefail
+          mkdir -p sliver-e2e-checkout
+          tar -xzf "${RUNNER_TEMP}/sliver-e2e-artifact/sliver-e2e.tar.gz" -C sliver-e2e-checkout
+          ./test/sliver-e2e/overlay.sh verify "${GITHUB_WORKSPACE}" "${GITHUB_WORKSPACE}/sliver-e2e-checkout"
+
+      - name: Download Sliver build assets
+        working-directory: sliver-e2e-checkout
+        run: go run -buildvcs=false -mod=vendor ./util/cmd/assets
+
+      - name: Build Sliver server
+        working-directory: sliver-e2e-checkout
+        env:
+          CGO_ENABLED: "0"
+          GOARCH: ${{ matrix.server_arch }}
+          GOOS: windows
+        run: go build -buildvcs=false -mod=vendor -trimpath -tags go_sqlite,server -o "${RUNNER_TEMP}/sliver-server.exe" ./server
+
+      - name: Build Sliver integration driver
+        working-directory: sliver-e2e-checkout
+        env:
+          CGO_ENABLED: "0"
+          GOARCH: ${{ matrix.goarch }}
+          GOOS: windows
+        run: go build -buildvcs=false -mod=vendor -trimpath -tags client,go_sqlite -o "${RUNNER_TEMP}/sliver-reflektor-e2e.exe" ./test/reflektor
+
+      - name: Build current Reflektor root-loader CLI without cgo
+        env:
+          CGO_ENABLED: "0"
+          GOARCH: ${{ matrix.goarch }}
+          GOOS: windows
+        run: go build -buildvcs=false -trimpath -o "${RUNNER_TEMP}/reflektor.exe" ./cli
+
+      - name: Exercise real Sliver implant and native extension lifecycle
+        run: >-
+          "${RUNNER_TEMP}/sliver-reflektor-e2e.exe"
+          -repo "${GITHUB_WORKSPACE}/sliver-e2e-checkout"
+          -server "${RUNNER_TEMP}/sliver-server.exe"
+          -reflektor "${RUNNER_TEMP}/reflektor.exe"
+          -target-os windows
+          -target-arch ${{ matrix.goarch }}
