@@ -3,6 +3,7 @@ package reflektor_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -117,6 +118,12 @@ func TestGoRuntimeFixtureSubprocess(t *testing.T) {
 	}
 	if err != nil {
 		t.Fatalf("LoadLibraryFile(%s): %v", libraryPath, err)
+	}
+	if _, err := library.CallExportWithArgs("StartW"); !errors.Is(err, reflektor.ErrGoExportArgumentsUnsupported) {
+		t.Fatalf("zero-argument CallExportWithArgs on Go c-shared image: got=%v want ErrGoExportArgumentsUnsupported", err)
+	}
+	if _, err := library.CallExportWithArgs("StartW", 1, 2, 3); !errors.Is(err, reflektor.ErrGoExportArgumentsUnsupported) {
+		t.Fatalf("argument-bearing CallExportWithArgs on Go c-shared image: got=%v want ErrGoExportArgumentsUnsupported", err)
 	}
 	if err := library.CallExport("StartW"); err != nil {
 		t.Fatalf("CallExport(StartW): %v", err)

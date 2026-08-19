@@ -30,6 +30,7 @@ for test_name in \
   TestLoadGeneratedGoSharedLibraryRecursiveMode \
   TestLoadGeneratedRustSharedLibraryRecursiveMode \
   TestLoadLibraryRecursiveDependencies \
+  TestCallExportWithArgs \
   TestLoadLibraryAndCallExport_Linux; do
   if ! grep -Fq -- "--- PASS: ${test_name} " linux-test.log; then
     echo "Required linux/386 test did not pass: ${test_name}" >&2
@@ -43,3 +44,11 @@ if [[ -n "${unexpected_skips}" ]]; then
   echo "${unexpected_skips}" >&2
   exit 1
 fi
+
+CGO_ENABLED=0 go test . -run '^TestCallExportWith(Args|PuregoCallback)$' -count=1 -v | tee linux-nocgo-test.log
+for test_name in TestCallExportWithArgs TestCallExportWithPuregoCallback; do
+  if ! grep -Fq -- "--- PASS: ${test_name} " linux-nocgo-test.log; then
+    echo "Required CGO-free linux/386 test did not pass: ${test_name}" >&2
+    exit 1
+  fi
+done

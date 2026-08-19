@@ -45,6 +45,14 @@ type recursiveImport struct {
 	module *Module
 }
 
+// resolvedWindowsExport retains the custom module that owns an export address.
+// System-loader exports have a nil owner. Keeping this metadata through PE
+// forwarder chains lets callers apply module-specific invocation constraints.
+type resolvedWindowsExport struct {
+	address uintptr
+	owner   *Module
+}
+
 // LoadLibraryRecursive loads a PE image and recursively memory-loads non-system
 // dependencies returned by reader. Windows system modules retain the legacy
 // LOAD_LIBRARY_SEARCH_SYSTEM32 behavior.
@@ -188,13 +196,14 @@ func (module *Module) buildImportTableRecursive() error {
 		}
 
 		for *thunkRef != 0 {
+			var resolved resolvedWindowsExport
 			if IMAGE_SNAP_BY_ORDINAL(*thunkRef) {
 				ordinal := uint16(IMAGE_ORDINAL(*thunkRef))
-				*funcRef, err = dependency.procAddressByOrdinal(ordinal, make(map[string]struct{}))
+				resolved, err = dependency.procAddressByOrdinal(ordinal, make(map[string]struct{}))
 			} else {
 				thunkData := (*IMAGE_IMPORT_BY_NAME)(a2p(module.codeBase + *thunkRef))
 				functionName := windows.BytePtrToString(&thunkData.Name[0])
-				*funcRef, err = dependency.procAddressByName(functionName, make(map[string]struct{}))
+				resolved, err = dependency.procAddressByName(functionName, make(map[string]struct{}))
 			}
 			if err != nil {
 				if dependency.handle != 0 {
@@ -202,6 +211,7 @@ func (module *Module) buildImportTableRecursive() error {
 				}
 				return fmt.Errorf("resolve import from %q: %w", name, err)
 			}
+			*funcRef = resolved.address
 			thunkRef = (*uintptr)(a2p(uintptr(unsafe.Pointer(thunkRef)) + unsafe.Sizeof(*thunkRef)))
 			funcRef = (*uintptr)(a2p(uintptr(unsafe.Pointer(funcRef)) + unsafe.Sizeof(*funcRef)))
 		}
@@ -253,93 +263,95 @@ func (session *recursiveLoadSession) resolveImport(importer *Module, name string
 	return recursiveImport{module: module}, nil
 }
 
-func (dependency recursiveImport) procAddressByName(name string, chain map[string]struct{}) (uintptr, error) {
+func (dependency recursiveImport) procAddressByName(name string, chain map[string]struct{}) (resolvedWindowsExport, error) {
 	if dependency.handle != 0 {
-		return windows.GetProcAddress(dependency.handle, name)
+		address, err := windows.GetProcAddress(dependency.handle, name)
+		return resolvedWindowsExport{address: address}, err
 	}
 	return dependency.module.recursiveProcAddressByName(name, chain)
 }
 
-func (dependency recursiveImport) procAddressByOrdinal(ordinal uint16, chain map[string]struct{}) (uintptr, error) {
+func (dependency recursiveImport) procAddressByOrdinal(ordinal uint16, chain map[string]struct{}) (resolvedWindowsExport, error) {
 	if dependency.handle != 0 {
-		return windows.GetProcAddressByOrdinal(dependency.handle, uintptr(ordinal))
+		address, err := windows.GetProcAddressByOrdinal(dependency.handle, uintptr(ordinal))
+		return resolvedWindowsExport{address: address}, err
 	}
 	return dependency.module.recursiveProcAddressByOrdinal(ordinal, chain)
 }
 
-func (module *Module) recursiveProcAddressByName(name string, chain map[string]struct{}) (uintptr, error) {
+func (module *Module) recursiveProcAddressByName(name string, chain map[string]struct{}) (resolvedWindowsExport, error) {
 	directory := module.headerDirectory(IMAGE_DIRECTORY_ENTRY_EXPORT)
 	if directory.Size == 0 {
-		return 0, errors.New("No export table found")
+		return resolvedWindowsExport{}, errors.New("No export table found")
 	}
 	if module.nameExports == nil {
-		return 0, errors.New("No functions exported by name")
+		return resolvedWindowsExport{}, errors.New("No functions exported by name")
 	}
 	idx, ok := module.nameExports[name]
 	if !ok {
-		return 0, errors.New("Function not found by name")
+		return resolvedWindowsExport{}, errors.New("Function not found by name")
 	}
 	return module.recursiveProcAddressByIndex(uint32(idx), name, chain)
 }
 
-func (module *Module) recursiveProcAddressByOrdinal(ordinal uint16, chain map[string]struct{}) (uintptr, error) {
+func (module *Module) recursiveProcAddressByOrdinal(ordinal uint16, chain map[string]struct{}) (resolvedWindowsExport, error) {
 	directory := module.headerDirectory(IMAGE_DIRECTORY_ENTRY_EXPORT)
 	if directory.Size == 0 {
-		return 0, errors.New("No export table found")
+		return resolvedWindowsExport{}, errors.New("No export table found")
 	}
 	exports := (*IMAGE_EXPORT_DIRECTORY)(a2p(module.codeBase + uintptr(directory.VirtualAddress)))
 	if uint32(ordinal) < exports.Base {
-		return 0, errors.New("Ordinal number too low")
+		return resolvedWindowsExport{}, errors.New("Ordinal number too low")
 	}
 	return module.recursiveProcAddressByIndex(uint32(ordinal)-exports.Base, "#"+strconv.FormatUint(uint64(ordinal), 10), chain)
 }
 
-func (module *Module) recursiveProcAddressByIndex(idx uint32, symbol string, chain map[string]struct{}) (uintptr, error) {
+func (module *Module) recursiveProcAddressByIndex(idx uint32, symbol string, chain map[string]struct{}) (resolvedWindowsExport, error) {
 	directory := module.headerDirectory(IMAGE_DIRECTORY_ENTRY_EXPORT)
 	exports := (*IMAGE_EXPORT_DIRECTORY)(a2p(module.codeBase + uintptr(directory.VirtualAddress)))
 	if idx >= exports.NumberOfFunctions {
-		return 0, errors.New("Ordinal number too high")
+		return resolvedWindowsExport{}, errors.New("Ordinal number too high")
 	}
 
 	cacheKey := strconv.FormatUint(uint64(idx), 10)
 	module.recursiveMu.Lock()
-	if address, ok := module.forwarders[cacheKey]; ok {
+	if resolved, ok := module.forwarders[cacheKey]; ok {
 		module.recursiveMu.Unlock()
-		return address, nil
+		return resolved, nil
 	}
 	module.recursiveMu.Unlock()
 
 	rva := *(*uint32)(a2p(module.codeBase + uintptr(exports.AddressOfFunctions) + uintptr(idx)*4))
 	if !rvaWithinDirectory(rva, directory) {
-		return module.codeBase + uintptr(rva), nil
+		return resolvedWindowsExport{address: module.codeBase + uintptr(rva), owner: module}, nil
 	}
 	forwarder := windows.BytePtrToString((*byte)(a2p(module.codeBase + uintptr(rva))))
 	chainKey := strings.ToLower(module.recursivePath) + "!" + symbol
 	if _, ok := chain[chainKey]; ok {
-		return 0, fmt.Errorf("recursive export forwarder cycle at %s", chainKey)
+		return resolvedWindowsExport{}, fmt.Errorf("recursive export forwarder cycle at %s", chainKey)
 	}
 	chain[chainKey] = struct{}{}
 	defer delete(chain, chainKey)
 
 	moduleName, targetName, ordinal, byOrdinal, err := parseExportForwarder(forwarder)
 	if err != nil {
-		return 0, err
+		return resolvedWindowsExport{}, err
 	}
 	dependency, err := module.recursive.resolveImport(module, moduleName)
 	if err != nil {
-		return 0, fmt.Errorf("resolve forwarded module %q: %w", moduleName, err)
+		return resolvedWindowsExport{}, fmt.Errorf("resolve forwarded module %q: %w", moduleName, err)
 	}
-	var address uintptr
+	var resolved resolvedWindowsExport
 	if byOrdinal {
-		address, err = dependency.procAddressByOrdinal(ordinal, chain)
+		resolved, err = dependency.procAddressByOrdinal(ordinal, chain)
 	} else {
-		address, err = dependency.procAddressByName(targetName, chain)
+		resolved, err = dependency.procAddressByName(targetName, chain)
 	}
 	if err != nil {
 		if dependency.handle != 0 {
 			_ = windows.FreeLibrary(dependency.handle)
 		}
-		return 0, fmt.Errorf("resolve forwarded export %q: %w", forwarder, err)
+		return resolvedWindowsExport{}, fmt.Errorf("resolve forwarded export %q: %w", forwarder, err)
 	}
 	if dependency.handle != 0 {
 		module.recursiveMu.Lock()
@@ -348,11 +360,11 @@ func (module *Module) recursiveProcAddressByIndex(idx uint32, symbol string, cha
 	}
 	module.recursiveMu.Lock()
 	if module.forwarders == nil {
-		module.forwarders = make(map[string]uintptr)
+		module.forwarders = make(map[string]resolvedWindowsExport)
 	}
-	module.forwarders[cacheKey] = address
+	module.forwarders[cacheKey] = resolved
 	module.recursiveMu.Unlock()
-	return address, nil
+	return resolved, nil
 }
 
 func (module *Module) resolveRecursiveForwarders() error {

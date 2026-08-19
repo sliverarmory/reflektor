@@ -17,6 +17,14 @@ import (
 
 var ErrLibraryClosed = errors.New("reflektor: library is closed")
 
+// ErrGoExportArgumentsUnsupported reports that CallExportWithArgs was used on
+// a Go c-shared image. Use CallExport for its zero-argument exports instead.
+var ErrGoExportArgumentsUnsupported = memmod.ErrGoExportArgumentsUnsupported
+
+// MaxExportArguments is the maximum number of machine-word arguments accepted
+// by CallExportWithArgs on every supported platform.
+const MaxExportArguments = memmod.MaxExportArguments
+
 var memoryOriginSequence atomic.Uint64
 
 const maxRecursiveDependencyFileSize = int64(512 << 20)
@@ -313,6 +321,26 @@ func (library *Library) CallExport(name string) error {
 		return fmt.Errorf("reflektor: call export %q: %w", name, err)
 	}
 	return nil
+}
+
+// CallExportWithArgs resolves an export, calls it with up to three machine-word
+// arguments, and returns the value from the platform's primary return register.
+// Go c-shared images must continue to use CallExport because their runtime
+// exports require isolated zero-argument invocation.
+//
+//go:uintptrescapes
+func (library *Library) CallExportWithArgs(name string, args ...uintptr) (uintptr, error) {
+	library.mu.RLock()
+	defer library.mu.RUnlock()
+
+	if library.closed || library.module == nil {
+		return 0, ErrLibraryClosed
+	}
+	result, err := library.module.CallExportWithArgs(name, args...)
+	if err != nil {
+		return 0, fmt.Errorf("reflektor: call export %q with arguments: %w", name, err)
+	}
+	return result, nil
 }
 
 // Close releases library resources. Go c-shared images remain mapped until

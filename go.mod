@@ -3,6 +3,7 @@ module github.com/sliverarmory/reflektor
 go 1.26.6
 
 require (
+	github.com/ebitengine/purego v0.10.1
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/sys v0.41.0
 )

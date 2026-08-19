@@ -46,7 +46,7 @@ type Module struct {
 	recursiveOwner bool
 	recursivePath  string
 	recursiveMu    sync.Mutex
-	forwarders     map[string]uintptr
+	forwarders     map[string]resolvedWindowsExport
 	recursiveRange bool
 }
 
@@ -739,7 +739,8 @@ func (module *Module) freeSelf() {
 // ProcAddressByName returns function address by exported name.
 func (module *Module) ProcAddressByName(name string) (uintptr, error) {
 	if module.recursive != nil {
-		return module.recursiveProcAddressByName(name, make(map[string]struct{}))
+		resolved, err := module.recursiveProcAddressByName(name, make(map[string]struct{}))
+		return resolved.address, err
 	}
 	directory := module.headerDirectory(IMAGE_DIRECTORY_ENTRY_EXPORT)
 	if directory.Size == 0 {
@@ -762,7 +763,8 @@ func (module *Module) ProcAddressByName(name string) (uintptr, error) {
 // ProcAddressByOrdinal returns function address by exported ordinal.
 func (module *Module) ProcAddressByOrdinal(ordinal uint16) (uintptr, error) {
 	if module.recursive != nil {
-		return module.recursiveProcAddressByOrdinal(ordinal, make(map[string]struct{}))
+		resolved, err := module.recursiveProcAddressByOrdinal(ordinal, make(map[string]struct{}))
+		return resolved.address, err
 	}
 	directory := module.headerDirectory(IMAGE_DIRECTORY_ENTRY_EXPORT)
 	if directory.Size == 0 {
