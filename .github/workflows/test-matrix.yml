@@ -55,6 +55,9 @@ jobs:
             TestLoadGeneratedRustSharedLibraryRecursiveMode \
             TestLoadLibraryRecursiveDependencies \
             TestCallExportWithArgs \
+            TestNativePackageCallExport \
+            TestNativePackageRejectsGoCSharedImage \
+            TestNativePackageRejectsGoCSharedInLaterFatSlice \
             "${memmod_test}"; do
             if ! grep -Fq -- "--- PASS: ${test_name} " darwin-test.log; then
               echo "Required Darwin test did not pass: ${test_name}"
@@ -129,6 +132,13 @@ jobs:
             TestLoadGeneratedRustSharedLibraryRecursiveMode \
             TestLoadLibraryRecursiveDependencies \
             TestCallExportWithArgs \
+            TestNativePackageCallExport \
+            TestNativePackageRejectsGoCSharedImage \
+            TestNativePackageLinuxDependencyGraphIsIsolated \
+            TestNativePackageCallExportWithArgsLinux \
+            TestNativePackageRustCallExportWithArgsLinux \
+            TestNativePackageELFLifecycleLinux \
+            TestNativePackageCSharedConsumerLinux \
             TestLoadLibraryAndCallExport_Linux; do
             if ! grep -Fq -- "--- PASS: ${test_name} " linux-test.log; then
               echo "Required Linux test did not pass: ${test_name}"
@@ -141,13 +151,25 @@ jobs:
             echo "${unexpected_skips}"
             exit 1
           fi
-          CGO_ENABLED=0 go test . -run '^TestCallExportWith(Args|PuregoCallback)$' -count=1 -v | tee linux-nocgo-test.log
-          for test_name in TestCallExportWithArgs TestCallExportWithPuregoCallback; do
+          CGO_ENABLED=0 go test . -run '^(TestCallExportWith(Args|PuregoCallback)|TestNativePackage(CallExport|CallExportWithArgsLinux|RustCallExportWithArgsLinux|ELFLifecycleLinux|LinuxDependencyGraphIsIsolated))$' -count=1 -v | tee linux-nocgo-test.log
+          for test_name in \
+            TestCallExportWithArgs \
+            TestCallExportWithPuregoCallback \
+            TestNativePackageCallExport \
+            TestNativePackageLinuxDependencyGraphIsIsolated \
+            TestNativePackageCallExportWithArgsLinux \
+            TestNativePackageRustCallExportWithArgsLinux \
+            TestNativePackageELFLifecycleLinux; do
             if ! grep -Fq -- "--- PASS: ${test_name} " linux-nocgo-test.log; then
               echo "Required CGO-free Linux test did not pass: ${test_name}"
               exit 1
             fi
           done
+          CGO_ENABLED=1 go test -race . -run '^TestNativePackageCallExportWithArgsLinux$' -count=1 -v | tee linux-native-race-test.log
+          if ! grep -Fq -- '--- PASS: TestNativePackageCallExportWithArgsLinux ' linux-native-race-test.log; then
+            echo "Required race-enabled native-package Linux test did not pass"
+            exit 1
+          fi
 
   linux-386:
     name: linux-386-docker
@@ -210,6 +232,8 @@ jobs:
             TestLoadGeneratedRustSharedLibraryRecursiveMode \
             TestLoadLibraryRecursiveDependencies \
             TestCallExportWithArgs \
+            TestNativePackageCallExport \
+            TestNativePackageRejectsGoCSharedImage \
             TestCallExportWithGoCallbackWindows; do
             if ! grep -Fq -- "--- PASS: ${test_name} " windows-test.log; then
               echo "Required Windows test did not pass: ${test_name}"
@@ -252,3 +276,32 @@ jobs:
             echo "The complete recursive C fixture build matrix did not pass."
             exit 1
           fi
+
+  native-tag-free-build-matrix:
+    name: native-tag-free-build-matrix
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build native package without cgo or build tags
+        run: |
+          set -euo pipefail
+          while read -r goos goarch; do
+            echo "Building ./native for ${goos}/${goarch} with CGO_ENABLED=0"
+            CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go build -trimpath ./native
+          done <<'TARGETS'
+          darwin amd64
+          darwin arm64
+          linux 386
+          linux amd64
+          linux arm64
+          windows 386
+          windows amd64
+          windows arm64
+          TARGETS
