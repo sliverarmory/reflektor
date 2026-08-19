@@ -893,7 +893,7 @@ func resolveWithLinuxHandle(api *linuxDynAPI, handle uintptr, name string, versi
 		return 0, err
 	}
 	if api.dlerror != 0 {
-		_ = cCall0(api.dlerror)
+		_ = callExportFunction(api.dlerror)
 	}
 
 	var address uintptr
@@ -905,10 +905,10 @@ func resolveWithLinuxHandle(api *linuxDynAPI, handle uintptr, name string, versi
 		if err != nil {
 			return 0, err
 		}
-		address = cCall3(api.dlvsym, handle, cStringPtr(nameBytes), cStringPtr(versionBytes))
+		address = callExportFunction(api.dlvsym, handle, cStringPtr(nameBytes), cStringPtr(versionBytes))
 		runtime.KeepAlive(versionBytes)
 	} else {
-		address = cCall2(api.dlsym, handle, cStringPtr(nameBytes))
+		address = callExportFunction(api.dlsym, handle, cStringPtr(nameBytes))
 	}
 	runtime.KeepAlive(nameBytes)
 	if api.dlerror != 0 {
@@ -927,11 +927,11 @@ func closeWithDL(api *linuxDynAPI, handle uintptr) {
 		return
 	}
 	if api.dlerror != 0 {
-		_ = cCall0(api.dlerror)
+		_ = callExportFunction(api.dlerror)
 	}
-	_ = cCall1(api.dlclose, handle)
+	_ = callExportFunction(api.dlclose, handle)
 	if api.dlerror != 0 {
-		_ = cCall0(api.dlerror)
+		_ = callExportFunction(api.dlerror)
 	}
 }
 

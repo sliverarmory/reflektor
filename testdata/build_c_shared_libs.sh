@@ -4,6 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_FILE="${SCRIPT_DIR}/c/basic.c"
+ARGS_SOURCE_FILE="${SCRIPT_DIR}/c/args.c"
 RECURSIVE_LEAF_SOURCE="${SCRIPT_DIR}/c/recursive_leaf.c"
 RECURSIVE_MIDDLE_SOURCE="${SCRIPT_DIR}/c/recursive_middle.c"
 RECURSIVE_ROOT_SOURCE="${SCRIPT_DIR}/c/recursive_root.c"
@@ -28,7 +29,9 @@ build_one() {
   local arch="$2"
   local target="$3"
   local ext="$4"
-  local out="${OUT_DIR}/basic_${os}-${arch}.${ext}"
+  local base_name="$5"
+  local source_file="$6"
+  local out="${OUT_DIR}/${base_name}_${os}-${arch}.${ext}"
   local -a args=("-target" "${target}")
 
   case "${os}" in
@@ -47,9 +50,9 @@ build_one() {
       ;;
   esac
 
-  zig cc "${args[@]}" -o "${out}" "${SOURCE_FILE}"
+  zig cc "${args[@]}" -o "${out}" "${source_file}"
   if [[ "${os}" == "windows" ]]; then
-    rm -f "${OUT_DIR}/basic.lib" "${out%.dll}.pdb"
+    rm -f "${OUT_DIR}/${base_name}.lib" "${out%.dll}.pdb"
   fi
   echo "${out}"
 }
@@ -116,14 +119,18 @@ build_recursive_one() {
   echo "${root}"
 }
 
-build_one "darwin"  "amd64" "x86_64-macos"       "dylib"
-build_one "darwin"  "arm64" "aarch64-macos"      "dylib"
-build_one "linux"   "386"   "x86-linux-gnu"      "so"
-build_one "linux"   "amd64" "x86_64-linux-gnu"   "so"
-build_one "linux"   "arm64" "aarch64-linux-gnu"  "so"
-build_one "windows" "386"   "x86-windows-gnu"    "dll"
-build_one "windows" "amd64" "x86_64-windows-gnu" "dll"
-build_one "windows" "arm64" "aarch64-windows-gnu" "dll"
+for fixture in "basic:${SOURCE_FILE}" "args:${ARGS_SOURCE_FILE}"; do
+  base_name="${fixture%%:*}"
+  source_file="${fixture#*:}"
+  build_one "darwin"  "amd64" "x86_64-macos"        "dylib" "${base_name}" "${source_file}"
+  build_one "darwin"  "arm64" "aarch64-macos"       "dylib" "${base_name}" "${source_file}"
+  build_one "linux"   "386"   "x86-linux-gnu"       "so"    "${base_name}" "${source_file}"
+  build_one "linux"   "amd64" "x86_64-linux-gnu"    "so"    "${base_name}" "${source_file}"
+  build_one "linux"   "arm64" "aarch64-linux-gnu"   "so"    "${base_name}" "${source_file}"
+  build_one "windows" "386"   "x86-windows-gnu"     "dll"   "${base_name}" "${source_file}"
+  build_one "windows" "amd64" "x86_64-windows-gnu"  "dll"   "${base_name}" "${source_file}"
+  build_one "windows" "arm64" "aarch64-windows-gnu" "dll"   "${base_name}" "${source_file}"
+done
 
 build_recursive_one "darwin"  "amd64" "x86_64-macos"        "dylib"
 build_recursive_one "darwin"  "arm64" "aarch64-macos"       "dylib"

@@ -54,6 +54,7 @@ jobs:
             TestLoadGeneratedGoSharedLibraryRecursiveMode \
             TestLoadGeneratedRustSharedLibraryRecursiveMode \
             TestLoadLibraryRecursiveDependencies \
+            TestCallExportWithArgs \
             "${memmod_test}"; do
             if ! grep -Fq -- "--- PASS: ${test_name} " darwin-test.log; then
               echo "Required Darwin test did not pass: ${test_name}"
@@ -70,6 +71,13 @@ jobs:
             echo "Found a CI skip guard in Darwin loader tests; refusing to pass CI."
             exit 1
           fi
+          CGO_ENABLED=0 go test . -run '^TestCallExportWith(Args|PuregoCallback)$' -count=1 -v | tee darwin-nocgo-test.log
+          for test_name in TestCallExportWithArgs TestCallExportWithPuregoCallback; do
+            if ! grep -Fq -- "--- PASS: ${test_name} " darwin-nocgo-test.log; then
+              echo "Required CGO-free Darwin test did not pass: ${test_name}"
+              exit 1
+            fi
+          done
 
   linux-native:
     name: linux-${{ matrix.goarch }}-native
@@ -120,6 +128,7 @@ jobs:
             TestLoadGeneratedGoSharedLibraryRecursiveMode \
             TestLoadGeneratedRustSharedLibraryRecursiveMode \
             TestLoadLibraryRecursiveDependencies \
+            TestCallExportWithArgs \
             TestLoadLibraryAndCallExport_Linux; do
             if ! grep -Fq -- "--- PASS: ${test_name} " linux-test.log; then
               echo "Required Linux test did not pass: ${test_name}"
@@ -132,6 +141,13 @@ jobs:
             echo "${unexpected_skips}"
             exit 1
           fi
+          CGO_ENABLED=0 go test . -run '^TestCallExportWith(Args|PuregoCallback)$' -count=1 -v | tee linux-nocgo-test.log
+          for test_name in TestCallExportWithArgs TestCallExportWithPuregoCallback; do
+            if ! grep -Fq -- "--- PASS: ${test_name} " linux-nocgo-test.log; then
+              echo "Required CGO-free Linux test did not pass: ${test_name}"
+              exit 1
+            fi
+          done
 
   linux-386:
     name: linux-386-docker
@@ -192,7 +208,9 @@ jobs:
             TestLoadGeneratedCSharedLibraryRecursiveMode \
             TestLoadGeneratedGoSharedLibraryRecursiveMode \
             TestLoadGeneratedRustSharedLibraryRecursiveMode \
-            TestLoadLibraryRecursiveDependencies; do
+            TestLoadLibraryRecursiveDependencies \
+            TestCallExportWithArgs \
+            TestCallExportWithGoCallbackWindows; do
             if ! grep -Fq -- "--- PASS: ${test_name} " windows-test.log; then
               echo "Required Windows test did not pass: ${test_name}"
               exit 1

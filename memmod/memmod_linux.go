@@ -299,6 +299,49 @@ func (module *Module) CallExport(name string) error {
 	return nil
 }
 
+// CallExportWithArgs resolves and calls an exported native C/Rust function
+// with up to MaxExportArguments machine-word arguments and returns the value
+// from the platform's primary return register. Go c-shared callers must use
+// CallExport instead.
+//
+//go:uintptrescapes
+func (module *Module) CallExportWithArgs(name string, args ...uintptr) (uintptr, error) {
+	if err := validateExportArguments(args); err != nil {
+		return 0, err
+	}
+	if module.goRuntime {
+		return 0, ErrGoExportArgumentsUnsupported
+	}
+
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return 0, errors.New("export name cannot be empty")
+	}
+
+	candidates := []string{name}
+	if strings.HasPrefix(name, "_") {
+		candidates = append(candidates, strings.TrimPrefix(name, "_"))
+	} else {
+		candidates = append(candidates, "_"+name)
+	}
+
+	var (
+		addr uintptr
+		err  error
+	)
+	for _, candidate := range candidates {
+		addr, err = module.ProcAddressByName(candidate)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		return 0, fmt.Errorf("resolve export %q: %w", name, err)
+	}
+
+	return callExportFunction(addr, args...), nil
+}
+
 func (module *Module) ProcAddressByName(name string) (uintptr, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -1249,9 +1292,9 @@ func resolveWithDLSym(api *linuxDynAPI, name string) (uintptr, error) {
 		return 0, err
 	}
 	if api.dlerror != 0 {
-		_ = cCall0(api.dlerror)
+		_ = callExportFunction(api.dlerror)
 	}
-	sym := cCall2(api.dlsym, 0, cStringPtr(cName))
+	sym := callExportFunction(api.dlsym, 0, cStringPtr(cName))
 	runtime.KeepAlive(cName)
 	if api.dlerror != 0 {
 		if err := lastDLError(api); err != nil {
@@ -1273,9 +1316,9 @@ func openWithDlopen(api *linuxDynAPI, name string) (uintptr, error) {
 		return 0, err
 	}
 	if api.dlerror != 0 {
-		_ = cCall0(api.dlerror)
+		_ = callExportFunction(api.dlerror)
 	}
-	handle := cCall2(api.dlopen, cStringPtr(cName), uintptr(rtldNow|rtldGlobal))
+	handle := callExportFunction(api.dlopen, cStringPtr(cName), uintptr(rtldNow|rtldGlobal))
 	runtime.KeepAlive(cName)
 	if api.dlerror != 0 {
 		if err := lastDLError(api); err != nil {
@@ -1395,7 +1438,7 @@ func lastDLError(api *linuxDynAPI) error {
 	if api == nil || api.dlerror == 0 {
 		return nil
 	}
-	msg := cStringFromPtr(cCall0(api.dlerror))
+	msg := cStringFromPtr(callExportFunction(api.dlerror))
 	if msg == "" {
 		return nil
 	}

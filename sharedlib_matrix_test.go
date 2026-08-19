@@ -39,6 +39,7 @@ func TestBuildCSharedLibraryMatrix(t *testing.T) {
 		target := target
 		t.Run(fmt.Sprintf("%s-%s", target.goos, target.goarch), func(t *testing.T) {
 			path := buildOneSharedLib(t, outDir, target.goos, target.goarch)
+			argumentPath := buildArgumentSharedLib(t, outDir, target.goos, target.goarch)
 			info, err := os.Stat(path)
 			if err != nil {
 				t.Fatalf("stat %s: %v", path, err)
@@ -58,15 +59,27 @@ func TestBuildCSharedLibraryMatrix(t *testing.T) {
 				if !strings.Contains(exportOut, "StartW") {
 					t.Fatalf("expected exported symbol StartW in %s", path)
 				}
+				argumentExports := runCmd(t, "objdump", "-p", argumentPath)
+				if !strings.Contains(argumentExports, "ReflektorArgsRun") {
+					t.Fatalf("expected exported symbol ReflektorArgsRun in %s", argumentPath)
+				}
 			case "darwin":
 				nmOut := runCmd(t, "nm", path)
 				if !strings.Contains(nmOut, "_StartW") {
 					t.Fatalf("expected exported symbol _StartW in %s", path)
 				}
+				argumentExports := runCmd(t, "nm", argumentPath)
+				if !strings.Contains(argumentExports, "_ReflektorArgsRun") {
+					t.Fatalf("expected exported symbol _ReflektorArgsRun in %s", argumentPath)
+				}
 			default:
 				nmOut := runCmd(t, "nm", path)
 				if !strings.Contains(nmOut, " StartW") && !strings.Contains(nmOut, "\tStartW") {
 					t.Fatalf("expected exported symbol StartW in %s", path)
+				}
+				argumentExports := runCmd(t, "nm", argumentPath)
+				if !strings.Contains(argumentExports, " ReflektorArgsRun") && !strings.Contains(argumentExports, "\tReflektorArgsRun") {
+					t.Fatalf("expected exported symbol ReflektorArgsRun in %s", argumentPath)
 				}
 			}
 		})
@@ -74,6 +87,14 @@ func TestBuildCSharedLibraryMatrix(t *testing.T) {
 }
 
 func buildOneSharedLib(t *testing.T, outDir string, goos string, goarch string) string {
+	return buildCSharedLib(t, outDir, goos, goarch, "basic", filepath.Join("testdata", "c", "basic.c"))
+}
+
+func buildArgumentSharedLib(t *testing.T, outDir string, goos string, goarch string) string {
+	return buildCSharedLib(t, outDir, goos, goarch, "args", filepath.Join("testdata", "c", "args.c"))
+}
+
+func buildCSharedLib(t *testing.T, outDir string, goos string, goarch string, baseName string, sourcePath string) string {
 	t.Helper()
 
 	var (
@@ -102,8 +123,7 @@ func buildOneSharedLib(t *testing.T, outDir string, goos string, goarch string) 
 		t.Fatalf("unsupported target %s/%s", goos, goarch)
 	}
 
-	outputPath := filepath.Join(outDir, fmt.Sprintf("basic_%s-%s.%s", goos, goarch, ext))
-	sourcePath := filepath.Join("testdata", "c", "basic.c")
+	outputPath := filepath.Join(outDir, fmt.Sprintf("%s_%s-%s.%s", baseName, goos, goarch, ext))
 
 	args := []string{"cc", "-target", zigTarget, "-O2", "-g0"}
 	switch goos {
@@ -133,7 +153,7 @@ func buildOneSharedLib(t *testing.T, outDir string, goos string, goarch string) 
 	if goos == "windows" {
 		base := strings.TrimSuffix(outputPath, ".dll")
 		_ = os.Remove(base + ".pdb")
-		_ = os.Remove(filepath.Join(outDir, "basic.lib"))
+		_ = os.Remove(filepath.Join(outDir, baseName+".lib"))
 	}
 	return outputPath
 }

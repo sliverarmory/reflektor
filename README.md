@@ -41,6 +41,26 @@ if err := lib.CallExport("StartW"); err != nil {
 }
 ```
 
+Native C and Rust exports can also receive up to three machine-word arguments
+and return a machine-word value:
+
+```go
+result, err := lib.CallExportWithArgs(
+    "Run",
+    uintptr(unsafe.Pointer(unsafe.SliceData(input))),
+    uintptr(uint32(len(input))),
+    callbackPointer,
+)
+runtime.KeepAlive(input)
+```
+
+This matches extension entry points such as
+`Run(char *buffer, uint32_t size, callback_fn callback)`. Convert a Go pointer
+to `uintptr` directly in the method call, as above, and keep the pointed-to
+object alive until the export returns. CGO-free Darwin and Linux callers can
+create C-callable Go callbacks with `purego.NewCallback`; Windows callers can
+use `syscall.NewCallback`.
+
 You can also load from a path:
 
 ```go
@@ -85,9 +105,20 @@ Usage:
 
 ## Behavior Notes
 
-- `CallExport` is designed for zero-argument exports.
+- `CallExport` preserves the original zero-argument API. `CallExportWithArgs`
+  accepts zero through three `uintptr` arguments and returns the platform's
+  primary machine-word return value.
+- `CallExportWithArgs` supports native C and Rust images. Go c-shared images
+  return `ErrGoExportArgumentsUnsupported`; their zero-argument exports remain
+  available through `CallExport`.
+- On Linux, the `CGO_ENABLED=0` argument-call bridge uses purego's runtime
+  integration so C-to-Go callbacks are safe. Consequently, hosts importing
+  Reflektor are dynamically linked against the platform's glibc loader even if
+  they use only the legacy APIs; this is not a fully static or musl-portable
+  build mode.
 - Reflektor normalizes common symbol naming differences where possible (for example underscore-prefixed forms).
-- The root `reflektor.Library` interface is intentionally small: `CallExport()` and `Close()`.
+- The root `reflektor.Library` API remains intentionally small:
+  `CallExport()`, `CallExportWithArgs()`, and `Close()`.
 - Recursive mode maps file-backed application dependencies from their bytes and
   resolves imports within the in-memory graph. Platform runtime libraries remain
   delegated to the native loader: Darwin shared-cache libraries, Windows
@@ -101,13 +132,16 @@ Usage:
   also rejected explicitly. Darwin and Linux graph cycles are deduplicated.
 - After the first export call, Darwin recursive mappings remain process-resident
   because dyld retains their loader records. Reusing a Darwin install-name in a
-  later load follows dyld's first-loaded identity semantics.
+  later load follows dyld's first-loaded identity semantics. Calls made through
+  the same `Library` reuse one mapped root, so an initializer and later
+  argument-bearing exports share module state.
 - `LoadLibrary` and `LoadLibraryFile` retain their original behavior and API.
 
 ## Test Data And Validation
 
 C test shared libraries are generated from:
 
+- `reflektor/testdata/c/args.c`
 - `reflektor/testdata/c/basic.c`
 - `reflektor/testdata/c/recursive_leaf.c`
 - `reflektor/testdata/c/recursive_middle.c`
