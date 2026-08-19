@@ -327,13 +327,15 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: sliver-e2e-source
-          path: ${{ runner.temp }}/sliver-e2e-artifact
+          # Keep this path relative on Windows. Git Bash passes RUNNER_TEMP as
+          # D:\\..., which GNU tar interprets as a remote-host archive path.
+          path: sliver-e2e-artifact
 
       - name: Extract and verify current Reflektor overlay
         run: |
           set -euo pipefail
           mkdir -p sliver-e2e-checkout
-          tar -xzf "${RUNNER_TEMP}/sliver-e2e-artifact/sliver-e2e.tar.gz" -C sliver-e2e-checkout
+          tar -xzf sliver-e2e-artifact/sliver-e2e.tar.gz -C sliver-e2e-checkout
           ./test/sliver-e2e/overlay.sh verify "${GITHUB_WORKSPACE}" "${GITHUB_WORKSPACE}/sliver-e2e-checkout"
 
       - name: Download Sliver build assets
