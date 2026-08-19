@@ -79,16 +79,27 @@ verify_source_tree() {
 	local vendor_file=""
 	local relative=""
 	local count=0
+	local source_is_git=0
 
 	[[ -d "$source_root/$subtree" ]] || die "Reflektor source subtree is missing: $subtree"
 	[[ -d "$vendor_root/$subtree" ]] || die "Sliver vendor subtree is missing: $subtree"
+	if git -C "$source_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+		source_is_git=1
+	fi
 
 	while IFS= read -r source_file; do
 		is_vendored_source "$source_file" || continue
 		relative="${source_file#"$source_root/"}"
 		vendor_file="$vendor_root/$relative"
 		[[ -f "$vendor_file" ]] || die "vendored Reflektor source is missing: $relative"
-		cmp -s -- "$source_file" "$vendor_file" || die "vendored Reflektor source differs: $relative"
+		if [[ "$source_is_git" == "1" ]]; then
+			# Compare the committed blob, not a checkout that Git may have
+			# rewritten to CRLF on Windows runners.
+			git -C "$source_root" cat-file blob "HEAD:$relative" | cmp -s -- - "$vendor_file" ||
+				die "vendored Reflektor source differs: $relative"
+		else
+			cmp -s -- "$source_file" "$vendor_file" || die "vendored Reflektor source differs: $relative"
+		fi
 		count=$((count + 1))
 	done < <(find "$source_root/$subtree" -type f -print | LC_ALL=C sort)
 
