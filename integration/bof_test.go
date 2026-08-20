@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"debug/elf"
 	"debug/pe"
+	"encoding/binary"
 	"fmt"
 	"os"
 	"os/exec"
@@ -225,6 +226,9 @@ func validateBOFObject(t *testing.T, path string, target bofTarget) {
 		if target.goarch != "386" {
 			validateParsedWindowsUnwindFixture(t, file, target.goarch)
 		}
+		if target.goarch == "arm64" {
+			validateWindowsARM64ImplicitADRP(t, file)
+		}
 	default:
 		t.Fatalf("unknown BOF fixture format %q", target.format)
 	}
@@ -232,6 +236,36 @@ func validateBOFObject(t *testing.T, path string, target bofTarget) {
 	if strings.TrimSpace(runCmd(t, "file", path)) == "" {
 		t.Fatal("file produced no object description")
 	}
+}
+
+func validateWindowsARM64ImplicitADRP(t *testing.T, file *pe.File) {
+	t.Helper()
+	for _, section := range file.Sections {
+		data, err := section.Data()
+		if err != nil {
+			t.Fatalf("read ARM64 COFF section %q: %v", section.Name, err)
+		}
+		for _, relocation := range section.Relocs {
+			if relocation.Type != 0x0004 || uint64(relocation.SymbolTableIndex) >= uint64(len(file.COFFSymbols)) {
+				continue
+			}
+			symbol := &file.COFFSymbols[relocation.SymbolTableIndex]
+			name, err := symbol.FullName(file.StringTable)
+			if err != nil {
+				t.Fatalf("read ARM64 COFF relocation symbol: %v", err)
+			}
+			if name != ".rdata" || int(relocation.VirtualAddress)+4 > len(data) {
+				continue
+			}
+			word := binary.LittleEndian.Uint32(data[relocation.VirtualAddress:])
+			value := uint64(((word >> 29) & 0x3) | ((word >> 3) & 0x1ffffc))
+			addend := int64(value<<43) >> 43
+			if addend != 0 {
+				return
+			}
+		}
+	}
+	t.Fatal("ARM64 COFF fixture has no PAGEBASE_REL21 section-symbol relocation with a non-zero byte addend")
 }
 
 func validateWindowsUnwindFixture(t *testing.T, path, goarch string) {

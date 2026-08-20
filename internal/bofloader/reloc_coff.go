@@ -248,7 +248,15 @@ func applyCOFFARM64Relocation(object *objectFile, relocation objectRelocation, l
 	case coffARM64Branch14:
 		return applyARM64Branch14(location, coffLinkedAddress(linked, true), place, relocation.hasAdd, relocation.addend)
 	case coffARM64PageBaseRel21:
-		return applyARM64ADRP(location, coffLinkedAddress(linked, false), place, relocation.hasAdd, relocation.addend, true)
+		// COFF stores the implicit ADRP addend as an unscaled byte offset.
+		// The shared helper's implicit path treats it as a page count, so decode
+		// the COFF addend before calling it. This matches link.exe/lld and
+		// is required for section-symbol references such as .rdata+0x269.
+		addend := relocation.addend
+		if !relocation.hasAdd {
+			addend = decodeARM64ADRImmediate(binary.LittleEndian.Uint32(location))
+		}
+		return applyARM64ADRP(location, coffLinkedAddress(linked, false), place, true, addend, true)
 	case coffARM64Rel21:
 		return applyARM64ADR(location, coffLinkedAddress(linked, false), place, relocation.hasAdd, relocation.addend)
 	case coffARM64PageOffset12A:

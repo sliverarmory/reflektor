@@ -37,6 +37,10 @@ func resolveSymbol(symbol string) (uintptr, error) {
 			return address, nil
 		}
 	}
+	compatibilityAddress, compatibilityHandled, compatibilityErr := resolveWindowsCRTCompatibility(libraryName, functionName)
+	if compatibilityHandled && compatibilityErr == nil {
+		return compatibilityAddress, nil
+	}
 	// A few widely distributed BOF headers contain incorrect DLL qualifiers
 	// (for example KERNEL32$OpenProcessToken). Keep fallback resolution inside
 	// trusted System32 modules so those objects remain loadable without allowing
@@ -44,6 +48,9 @@ func resolveSymbol(symbol string) (uintptr, error) {
 	address, fallbackErr := resolveUnqualifiedWindowsSymbol(functionName)
 	if fallbackErr == nil {
 		return address, nil
+	}
+	if compatibilityErr != nil {
+		fallbackErr = errors.Join(compatibilityErr, fallbackErr)
 	}
 	return 0, fmt.Errorf("resolve %s!%s: %w", libraryName, functionName, fallbackErr)
 }

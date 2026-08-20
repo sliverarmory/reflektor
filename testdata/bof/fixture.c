@@ -27,8 +27,6 @@ char bof_pic_global[] = "bof-pic-defined-global";
 void go(char *buffer, int32_t length) {
     static char success[] = "bof-e2e-ok";
     static char failure[] = "bof-e2e-invalid-arguments";
-	static char printf_value[] = "callback-ok";
-	static char printf_format[] = "bof-printf=%d:%s";
     datap parser;
     int32_t text_length = 0;
     char *text;
@@ -48,6 +46,8 @@ void go(char *buffer, int32_t length) {
         return;
     }
     BeaconOutput(0, success, (int32_t)(sizeof(success) - 1));
-	BeaconPrintf(0, printf_format, 7, printf_value);
-	BeaconOutput(0, bof_pic_global, (int32_t)(sizeof(bof_pic_global) - 1));
+    // Keep these as literals so ARM64/COFF emits a section-symbol ADRP
+    // relocation with a non-zero implicit byte addend.
+    BeaconPrintf(0, "bof-printf=%d:%s", 7, "callback-ok");
+    BeaconOutput(0, bof_pic_global, (int32_t)(sizeof(bof_pic_global) - 1));
 }

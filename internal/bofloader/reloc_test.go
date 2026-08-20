@@ -213,6 +213,46 @@ func TestARM64RelocationEncoders(t *testing.T) {
 	})
 }
 
+func TestCOFFARM64SectionSymbolUsesByteAddend(t *testing.T) {
+	pageBase := make([]byte, 4)
+	// COFF encodes a section-relative byte addend in the ADRP immediate.
+	// This is the shape emitted for a reference to .rdata+0x269.
+	binary.LittleEndian.PutUint32(pageBase, encodeARM64ADRImmediate(0x90000000, 0x269))
+	linked := linkedSymbol{
+		symbol:  objectSymbol{name: ".rdata", section: 1},
+		address: 0x12345000,
+	}
+	if err := applyCOFFARM64Relocation(
+		&objectFile{imageBase: 0x12300000},
+		objectRelocation{typeID: coffARM64PageBaseRel21},
+		pageBase,
+		0x12300000,
+		linked,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := decodeARM64ADRImmediate(binary.LittleEndian.Uint32(pageBase)), int64(0x45); got != want {
+		t.Fatalf("ADRP pages = %#x, want %#x", got, want)
+	}
+
+	pageOffset := make([]byte, 4)
+	binary.LittleEndian.PutUint32(pageOffset, 0x91000000|(0x269<<10)) // ADD x0, x0, #0x269
+	if err := applyCOFFARM64Relocation(
+		&objectFile{imageBase: 0x12300000},
+		objectRelocation{typeID: coffARM64PageOffset12A},
+		pageOffset,
+		0x12300004,
+		linked,
+	); err != nil {
+		t.Fatal(err)
+	}
+	page := uint64(0x12300000) + uint64(decodeARM64ADRImmediate(binary.LittleEndian.Uint32(pageBase))<<12)
+	offset := uint64((binary.LittleEndian.Uint32(pageOffset) >> 10) & 0xfff)
+	if got, want := page+offset, linked.address+0x269; got != want {
+		t.Fatalf("ADRP+ADD address = %#x, want %#x", got, want)
+	}
+}
+
 func TestApplyRelocationsRejectsBoundsAndDiscardedSymbols(t *testing.T) {
 	baseObject := objectFile{
 		format: "elf",
