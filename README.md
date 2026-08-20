@@ -85,6 +85,58 @@ Both recursive APIs read the complete custom dependency graph before the root
 export is invoked. `LoadLibraryFileRecursive` is preferred for libraries that
 use origin-relative names such as `$ORIGIN`, `@loader_path`, or `@rpath`.
 
+## Beacon Object Files
+
+BOF loading is an opt-in capability. Build the importing program with the
+`bof` tag; ordinary builds retain the API but `LoadBOF` and `LoadBOFFile`
+return `ErrBOFDisabled`:
+
+```bash
+CGO_ENABLED=0 go build -tags bof ./...
+```
+
+`LoadBOF` accepts the native relocatable-object convention used by each host:
+
+| Host | BOF object format | Entry ABI |
+| --- | --- | --- |
+| Windows `386`, `amd64`, `arm64` | COFF (`.o`) | `go(char *, int32)` using the Windows ABI |
+| Linux `386`, `amd64`, `arm64` | ELF `ET_REL` (`.o`) | `go(char *, int32)` using the host ABI |
+| Darwin `amd64`, `arm64` | constrained ELF `ET_REL` (`.o`) | `go(char *, int32)` using the host ABI |
+
+The Darwin profile deliberately uses ELF as its container so the same bounded
+relocation engine works without CGO; compile freestanding objects with
+`x86_64-linux-none` or `aarch64-linux-none` while using only host-compatible
+types and imported Beacon/system functions. Darwin/arm64 objects must also be
+compiled with Zig's `-mcpu=baseline+reserve_x18` because Apple reserves that platform register.
+Windows COFF machine code is not portable to Linux or Darwin.
+
+```go
+var arguments reflektor.BOFArguments
+_ = arguments.AddString("example")
+
+bof, err := reflektor.LoadBOF(objectBytes)
+if err != nil {
+    return err
+}
+defer bof.Close()
+
+records, err := bof.Execute(arguments.Bytes())
+```
+
+The loader supplies the Beacon data, format, and output callbacks, preserves
+each output record's channel, uses page-level W^X protections, and serializes
+execution around the process-wide native callback bridge. A BOF is still
+arbitrary native code in the current process: malformed code can corrupt or
+terminate the host, so untrusted objects need a subprocess boundary.
+Object images are capped at 64 MiB and packed argument buffers at 16 MiB.
+Callback capture is synchronous: a BOF that starts native worker threads must
+join them before its entry point returns.
+
+`BeaconPrintf` and `BeaconFormatPrintf` accept at most ten machine-word
+arguments and implement bounded string, character, integer, and pointer
+conversions. Floating-point conversions are rejected on 64-bit Unix because
+its variadic ABI does not expose those values to the fixed callback bridge.
+
 ## Native-only Package
 
 Hosts that load only native C or Rust extensions can use the tag-free
@@ -196,6 +248,8 @@ Linux cross-arch Docker harness:
 ## Repository Layout
 
 - `reflektor/reflektor.go`: root importable package (`reflektor`).
+- `reflektor/bof.go`: build-tag-neutral BOF API and argument encoder.
+- `reflektor/internal/bofloader`: `bof`-tagged COFF/ELF loader and Beacon bridge.
 - `reflektor/native`: tag-free native C/Rust-only package.
 - `reflektor/memmod`: OS-specific loader backends.
 - `reflektor/cli`: CLI entrypoint.

@@ -7,6 +7,9 @@ on:
 permissions:
   contents: read
 
+env:
+  REFLEKTOR_BOF_CORPUS_DIR: ${{ github.workspace }}/test/corpus/Situational-Awareness-BOFs
+
 jobs:
   darwin:
     name: darwin-${{ matrix.goarch }}
@@ -28,6 +31,14 @@ jobs:
       GOARCH: ${{ matrix.goarch }}
     steps:
       - uses: actions/checkout@v4
+      - name: Check out Situational Awareness BOF corpus
+        uses: actions/checkout@v4
+        with:
+          repository: sliverarmory/Situational-Awareness-BOFs
+          ref: bofs
+          path: test/corpus/Situational-Awareness-BOFs
+          fetch-depth: 1
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -38,10 +49,14 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.14.0
+      - name: Build Darwin BOF corpus target
+        working-directory: test/corpus/Situational-Awareness-BOFs
+        run: ./scripts/build-target.sh darwin "${GOARCH}"
       - name: Run Darwin C, Go, and Rust fixture tests
         run: |
           set -euo pipefail
-          go test ./... -skip '^TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix)$' -count=1 -v | tee darwin-test.log
+          CGO_ENABLED=0 go test -tags bof . ./internal/bofloader -count=1
+          go test ./... -skip '^TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)$' -count=1 -v | tee darwin-test.log
           memmod_test="TestLoadLibraryAndCallExport_DarwinArm64"
           if [[ "${GOARCH}" == "amd64" ]]; then
             memmod_test="TestLoadLibraryAndCallExport_DarwinAMD64"
@@ -65,7 +80,7 @@ jobs:
               exit 1
             fi
           done
-          unexpected_skips="$(grep -E '^--- SKIP:' darwin-test.log | grep -Ev 'TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix)' || true)"
+          unexpected_skips="$(grep -E '^--- SKIP:' darwin-test.log | grep -Ev 'TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)' || true)"
           if [[ -n "${unexpected_skips}" ]]; then
             echo "Darwin tests were skipped; refusing to pass CI."
             echo "${unexpected_skips}"
@@ -89,6 +104,24 @@ jobs:
           fi
           if grep -Fq -- '--- SKIP:' darwin-memmod-nocgo-test.log; then
             echo "CGO-free Darwin loader thread-affinity test was skipped; refusing to pass CI."
+            exit 1
+          fi
+          CGO_ENABLED=0 go test -tags bof ./integration -run '^TestLoadAndExecuteGeneratedBOF$' -count=1 -v | tee darwin-bof-nocgo-test.log
+          if ! grep -Fq -- '--- PASS: TestLoadAndExecuteGeneratedBOF ' darwin-bof-nocgo-test.log; then
+            echo "Required CGO-free Darwin BOF execution test did not pass"
+            exit 1
+          fi
+          if grep -Fq -- '--- SKIP:' darwin-bof-nocgo-test.log; then
+            echo "CGO-free Darwin BOF execution test was skipped; refusing to pass CI."
+            exit 1
+          fi
+          CGO_ENABLED=0 go test -tags bof ./integration -run '^TestSituationalAwarenessBOFCorpus$' -count=1 -v | tee darwin-bof-corpus-test.log
+          if ! grep -Fq -- '--- PASS: TestSituationalAwarenessBOFCorpus ' darwin-bof-corpus-test.log; then
+            echo "Required Darwin BOF corpus execution test did not pass"
+            exit 1
+          fi
+          if grep -Fq -- '--- SKIP:' darwin-bof-corpus-test.log; then
+            echo "Darwin BOF corpus execution test was skipped; refusing to pass CI."
             exit 1
           fi
 
@@ -115,6 +148,14 @@ jobs:
       CXX: zig c++
     steps:
       - uses: actions/checkout@v4
+      - name: Check out Situational Awareness BOF corpus
+        uses: actions/checkout@v4
+        with:
+          repository: sliverarmory/Situational-Awareness-BOFs
+          ref: bofs
+          path: test/corpus/Situational-Awareness-BOFs
+          fetch-depth: 1
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -125,6 +166,9 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.14.0
+      - name: Build Linux BOF corpus target
+        working-directory: test/corpus/Situational-Awareness-BOFs
+        run: ./scripts/build-target.sh linux "${GOARCH}"
       - name: Install libcurl development files
         run: |
           sudo apt-get update
@@ -132,7 +176,8 @@ jobs:
       - name: Run Linux C, Go, and Rust fixture tests
         run: |
           set -euo pipefail
-          go test ./... -skip '^TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix)$' -count=1 -v | tee linux-test.log
+          CGO_ENABLED=0 go test -tags bof . ./internal/bofloader -count=1
+          go test ./... -skip '^TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)$' -count=1 -v | tee linux-test.log
           for test_name in \
             TestLoadGeneratedCLinuxSOAndCallStartW \
             TestLoadGeneratedGoLinuxSOAndCallStartW \
@@ -155,7 +200,7 @@ jobs:
               exit 1
             fi
           done
-          unexpected_skips="$(grep -E '^--- SKIP:' linux-test.log | grep -Ev 'TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix)' || true)"
+          unexpected_skips="$(grep -E '^--- SKIP:' linux-test.log | grep -Ev 'TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)' || true)"
           if [[ -n "${unexpected_skips}" ]]; then
             echo "Linux tests were skipped; refusing to pass CI."
             echo "${unexpected_skips}"
@@ -175,6 +220,24 @@ jobs:
               exit 1
             fi
           done
+          CGO_ENABLED=0 go test -tags bof ./integration -run '^TestLoadAndExecuteGeneratedBOF$' -count=1 -v | tee linux-bof-nocgo-test.log
+          if ! grep -Fq -- '--- PASS: TestLoadAndExecuteGeneratedBOF ' linux-bof-nocgo-test.log; then
+            echo "Required CGO-free Linux BOF execution test did not pass"
+            exit 1
+          fi
+          if grep -Fq -- '--- SKIP:' linux-bof-nocgo-test.log; then
+            echo "CGO-free Linux BOF execution test was skipped; refusing to pass CI."
+            exit 1
+          fi
+          CGO_ENABLED=0 go test -tags bof ./integration -run '^TestSituationalAwarenessBOFCorpus$' -count=1 -v | tee linux-bof-corpus-test.log
+          if ! grep -Fq -- '--- PASS: TestSituationalAwarenessBOFCorpus ' linux-bof-corpus-test.log; then
+            echo "Required Linux BOF corpus execution test did not pass"
+            exit 1
+          fi
+          if grep -Fq -- '--- SKIP:' linux-bof-corpus-test.log; then
+            echo "Linux BOF corpus execution test was skipped; refusing to pass CI."
+            exit 1
+          fi
           CGO_ENABLED=1 go test -race ./integration -run '^TestNativePackageCallExportWithArgsLinux$' -count=1 -v | tee linux-native-race-test.log
           if ! grep -Fq -- '--- PASS: TestNativePackageCallExportWithArgsLinux ' linux-native-race-test.log; then
             echo "Required race-enabled native-package Linux test did not pass"
@@ -189,6 +252,20 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+      - name: Check out Situational Awareness BOF corpus
+        uses: actions/checkout@v4
+        with:
+          repository: sliverarmory/Situational-Awareness-BOFs
+          ref: bofs
+          path: test/corpus/Situational-Awareness-BOFs
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.0
+      - name: Build linux/386 BOF corpus target
+        working-directory: test/corpus/Situational-Awareness-BOFs
+        run: ./scripts/build-target.sh linux 386
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - name: Run linux/386 C, Go, and Rust fixture tests in Docker
@@ -219,6 +296,14 @@ jobs:
       GOARCH: ${{ matrix.goarch }}
     steps:
       - uses: actions/checkout@v4
+      - name: Check out Situational Awareness BOF corpus
+        uses: actions/checkout@v4
+        with:
+          repository: sliverarmory/Situational-Awareness-BOFs
+          ref: bofs
+          path: test/corpus/Situational-Awareness-BOFs
+          fetch-depth: 1
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -229,10 +314,14 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.14.0
+      - name: Build Windows BOF corpus target
+        working-directory: test/corpus/Situational-Awareness-BOFs
+        run: ./scripts/build-target.sh windows "${GOARCH}"
       - name: Run Windows C, Go, and Rust fixture tests
         run: |
           set -euo pipefail
-          go test ./... -skip '^TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix)$' -count=1 -v | tee windows-test.log
+          CGO_ENABLED=0 go test -tags bof . ./internal/bofloader -count=1
+          go test ./... -skip '^TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)$' -count=1 -v | tee windows-test.log
           for test_name in \
             TestLoadGeneratedCWindowsDLLAndCallStartW \
             TestLoadGeneratedGoWindowsDLLAndCallStartW \
@@ -250,10 +339,28 @@ jobs:
               exit 1
             fi
           done
-          unexpected_skips="$(grep -E '^--- SKIP:' windows-test.log | grep -Ev 'TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix)' || true)"
+          unexpected_skips="$(grep -E '^--- SKIP:' windows-test.log | grep -Ev 'TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)' || true)"
           if [[ -n "${unexpected_skips}" ]]; then
             echo "Windows tests were skipped; refusing to pass CI."
             echo "${unexpected_skips}"
+            exit 1
+          fi
+          CGO_ENABLED=0 go test -tags bof ./integration -run '^TestLoadAndExecuteGeneratedBOF$' -count=1 -v | tee windows-bof-nocgo-test.log
+          if ! grep -Fq -- '--- PASS: TestLoadAndExecuteGeneratedBOF ' windows-bof-nocgo-test.log; then
+            echo "Required CGO-free Windows BOF execution test did not pass"
+            exit 1
+          fi
+          if grep -Fq -- '--- SKIP:' windows-bof-nocgo-test.log; then
+            echo "CGO-free Windows BOF execution test was skipped; refusing to pass CI."
+            exit 1
+          fi
+          CGO_ENABLED=0 go test -tags bof ./integration -run '^TestSituationalAwarenessBOFCorpus$' -timeout 45m -count=1 -v | tee windows-bof-corpus-test.log
+          if ! grep -Fq -- '--- PASS: TestSituationalAwarenessBOFCorpus ' windows-bof-corpus-test.log; then
+            echo "Required Windows BOF corpus execution test did not pass"
+            exit 1
+          fi
+          if grep -Fq -- '--- SKIP:' windows-bof-corpus-test.log; then
+            echo "Windows BOF corpus execution test was skipped; refusing to pass CI."
             exit 1
           fi
 
@@ -286,6 +393,11 @@ jobs:
             echo "The complete recursive C fixture build matrix did not pass."
             exit 1
           fi
+          CGO_ENABLED=0 go test -tags bof ./integration -run '^TestBuildBOFMatrix$' -count=1 -v | tee bof-fixture-build-test.log
+          if ! grep -Fq -- '--- PASS: TestBuildBOFMatrix ' bof-fixture-build-test.log; then
+            echo "The complete BOF fixture build matrix did not pass."
+            exit 1
+          fi
 
   native-tag-free-build-matrix:
     name: native-tag-free-build-matrix
@@ -305,6 +417,37 @@ jobs:
           while read -r goos goarch; do
             echo "Building ./native for ${goos}/${goarch} with CGO_ENABLED=0"
             CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go build -trimpath ./native
+          done <<'TARGETS'
+          darwin amd64
+          darwin arm64
+          linux 386
+          linux amd64
+          linux arm64
+          windows 386
+          windows amd64
+          windows arm64
+          TARGETS
+
+  bof-build-matrix:
+    name: bof-no-cgo-build-matrix
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build default and BOF-tagged packages without cgo
+        run: |
+          set -euo pipefail
+          while read -r goos goarch; do
+            echo "Building default packages for ${goos}/${goarch} with CGO_ENABLED=0"
+            CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go build -trimpath ./...
+            echo "Building BOF packages for ${goos}/${goarch} with CGO_ENABLED=0"
+            CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go build -tags bof -trimpath ./...
           done <<'TARGETS'
           darwin amd64
           darwin arm64

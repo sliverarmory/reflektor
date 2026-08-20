@@ -18,9 +18,13 @@ export GOMODCACHE=/tmp/go-mod-cache
 export ZIG_GLOBAL_CACHE_DIR=/tmp/zig-global-cache
 export ZIG_LOCAL_CACHE_DIR=/tmp/zig-local-cache
 
+export REFLEKTOR_BOF_CORPUS_DIR=/workspace/test/corpus/Situational-Awareness-BOFs
+
+CGO_ENABLED=0 go test -tags bof . ./internal/bofloader -count=1
+
 # Run every platform-applicable test. The cross-platform C build matrix has its
 # own CI job because it needs Darwin-aware binary inspection tools.
-go test ./... -skip '^TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix)$' -count=1 -v | tee linux-test.log
+go test ./... -skip '^TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)$' -count=1 -v | tee linux-test.log
 
 for test_name in \
   TestLoadGeneratedCLinuxSOAndCallStartW \
@@ -45,7 +49,7 @@ for test_name in \
   fi
 done
 
-unexpected_skips="$(grep -E '^--- SKIP:' linux-test.log | grep -Ev 'TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix)' || true)"
+unexpected_skips="$(grep -E '^--- SKIP:' linux-test.log | grep -Ev 'TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)' || true)"
 if [[ -n "${unexpected_skips}" ]]; then
   echo "linux/386 tests were skipped; refusing to pass CI." >&2
   echo "${unexpected_skips}" >&2
@@ -66,3 +70,23 @@ for test_name in \
     exit 1
   fi
 done
+
+CGO_ENABLED=0 go test -tags bof ./integration -run '^TestLoadAndExecuteGeneratedBOF$' -count=1 -v | tee linux-bof-nocgo-test.log
+if ! grep -Fq -- '--- PASS: TestLoadAndExecuteGeneratedBOF ' linux-bof-nocgo-test.log; then
+  echo "Required CGO-free linux/386 BOF execution test did not pass" >&2
+  exit 1
+fi
+if grep -Fq -- '--- SKIP:' linux-bof-nocgo-test.log; then
+  echo "CGO-free linux/386 BOF execution test was skipped; refusing to pass CI." >&2
+  exit 1
+fi
+
+CGO_ENABLED=0 go test -tags bof ./integration -run '^TestSituationalAwarenessBOFCorpus$' -count=1 -v | tee linux-bof-corpus-test.log
+if ! grep -Fq -- '--- PASS: TestSituationalAwarenessBOFCorpus ' linux-bof-corpus-test.log; then
+  echo "Required linux/386 BOF corpus execution test did not pass" >&2
+  exit 1
+fi
+if grep -Fq -- '--- SKIP:' linux-bof-corpus-test.log; then
+  echo "linux/386 BOF corpus execution test was skipped; refusing to pass CI." >&2
+  exit 1
+fi
