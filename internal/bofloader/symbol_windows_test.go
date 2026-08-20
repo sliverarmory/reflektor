@@ -44,6 +44,12 @@ func TestResolveWindowsMSVCRTVsnprintf(t *testing.T) {
 		t.Fatalf("vsnprintf output is not NUL-terminated: %#v", buffer[:wantLength+1])
 	}
 
+	// The existing amd64 MSVCRT export retains its legacy -1-on-truncation
+	// behavior. The ARM64 compatibility shim deliberately provides the
+	// documented behavior of UCRT's public vsnprintf wrapper.
+	if runtime.GOARCH != "arm64" {
+		return
+	}
 	truncated := make([]byte, 5)
 	truncatedAddress := uintptr(unsafe.Pointer(&truncated[0]))
 	result, _, _ = syscall.SyscallN(address, truncatedAddress, uintptr(len(truncated)), formatAddress, 0)
