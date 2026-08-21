@@ -34,10 +34,7 @@ func TestLoadBOFWithOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entryPoint := "custom_entry"
-	if target.format == "macho" {
-		entryPoint = "_custom_entry"
-	}
+	entryPoint := exactBOFFixtureSymbol(target, "custom_entry")
 
 	denied := errors.New("test import policy denied object")
 	resolverCalled := false
@@ -139,10 +136,7 @@ func TestLoadBOFWithOptions(t *testing.T) {
 		{name: "non-executable", entryPoint: "bof_options_global", wantError: "not in a mapped executable section"},
 	} {
 		t.Run(test.name+" entry", func(t *testing.T) {
-			selected := test.entryPoint
-			if target.format == "macho" {
-				selected = "_" + selected
-			}
+			selected := exactBOFFixtureSymbol(target, test.entryPoint)
 			invalidResolverCalled := false
 			invalid, loadErr := reflektor.LoadBOFWithOptions(image, reflektor.BOFLoadOptions{
 				EntryPoint: selected,
@@ -177,6 +171,32 @@ func TestLoadBOFWithOptions(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "requires a host-provided resolver") {
 		t.Fatalf("missing privileged callback error = %v", err)
+	}
+}
+
+func exactBOFFixtureSymbol(target bofTarget, name string) string {
+	if target.format == "macho" || target.goos == "windows" && target.goarch == "386" {
+		return "_" + name
+	}
+	return name
+}
+
+func TestExactBOFFixtureSymbol(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		target bofTarget
+		want   string
+	}{
+		{name: "windows-386", target: bofTarget{goos: "windows", goarch: "386", format: "coff"}, want: "_custom_entry"},
+		{name: "windows-amd64", target: bofTarget{goos: "windows", goarch: "amd64", format: "coff"}, want: "custom_entry"},
+		{name: "darwin-macho", target: bofTarget{goos: "darwin", goarch: "arm64", format: "macho"}, want: "_custom_entry"},
+		{name: "linux-elf", target: bofTarget{goos: "linux", goarch: "amd64", format: "elf"}, want: "custom_entry"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := exactBOFFixtureSymbol(test.target, "custom_entry"); got != test.want {
+				t.Fatalf("exactBOFFixtureSymbol() = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 
