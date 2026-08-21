@@ -21,6 +21,9 @@ func platformCallbacks() map[string]uintptr {
 		"BeaconDataExtract": purego.NewCallback(func(_ purego.CDecl, a0, a1 uintptr) uintptr {
 			return beaconDataExtract(a0, a1)
 		}),
+		"BeaconDataExtractOrNull": purego.NewCallback(func(_ purego.CDecl, a0, a1 uintptr) uintptr {
+			return beaconDataExtractOrNull(a0, a1)
+		}),
 		"BeaconFormatAlloc": purego.NewCallback(func(_ purego.CDecl, a0, a1 uintptr) uintptr {
 			return beaconFormatAlloc(a0, a1)
 		}),
@@ -47,6 +50,9 @@ func platformCallbacks() map[string]uintptr {
 		}),
 		"BeaconOutput": purego.NewCallback(func(_ purego.CDecl, a0, a1, a2 uintptr) uintptr {
 			return beaconOutput(a0, a1, a2)
+		}),
+		"toWideChar": purego.NewCallback(func(_ purego.CDecl, a0, a1, a2 uintptr) uintptr {
+			return toWideChar(a0, a1, a2)
 		}),
 	}
 }

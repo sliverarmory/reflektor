@@ -33,6 +33,39 @@ type BOFOutput struct {
 	Data []byte
 }
 
+// BOFImport describes one external symbol referenced by a BOF image. Name is
+// the exact object-file symbol spelling. Builtin marks callbacks implemented by
+// Reflektor. RequiresHost marks Beacon APIs that Reflektor deliberately does
+// not implement and will not search for in system libraries.
+type BOFImport struct {
+	Name         string
+	Weak         bool
+	Builtin      bool
+	RequiresHost bool
+}
+
+// BOFLoadOptions controls entry-point selection and external-symbol policy.
+// Its zero value preserves LoadBOF's default behavior.
+type BOFLoadOptions struct {
+	// EntryPoint selects an exact defined executable symbol. When empty,
+	// Reflektor searches go, _go, coffee, and _coffee in that order.
+	EntryPoint string
+
+	// ValidateImports runs after parsing and host validation, but before image
+	// allocation, callback registration, or dynamic-library lookup. The slice
+	// is an owned, deterministic snapshot and may be retained by the callback.
+	ValidateImports func([]BOFImport) error
+
+	// ResolveSymbol may provide a native address for an import that is not a
+	// built-in Reflektor callback. Function addresses must follow the object's
+	// platform ABI. Returning handled=false falls back to the normal system
+	// resolver, except for RequiresHost imports, which fail explicitly. Any
+	// returned error aborts loading. A handled address must be nonzero and
+	// remain valid until the loaded BOF is closed. The resolver is called at
+	// most once for each exact imported name during each load.
+	ResolveSymbol func(BOFImport) (address uintptr, handled bool, err error)
+}
+
 // Beacon output channel values used by Cobalt-compatible BOFs.
 const (
 	BOFOutputDefault = 0x00
@@ -131,17 +164,23 @@ type BOF struct {
 	closed bool
 }
 
-// LoadBOF loads a native relocatable BOF image from memory. Windows accepts
-// COFF objects; Linux and Darwin accept ELF relocatable objects. BOF support is
-// opt-in and requires the `bof` build tag.
+// LoadBOF loads a native relocatable BOF image from memory using default load
+// options. BOF support is opt-in and requires the `bof` build tag.
 func LoadBOF(data []byte) (*BOF, error) {
+	return LoadBOFWithOptions(data, BOFLoadOptions{})
+}
+
+// LoadBOFWithOptions loads a native relocatable BOF image from memory. Windows
+// accepts COFF, Linux accepts ELF, and Darwin accepts native Mach-O plus legacy
+// ELF relocatable objects.
+func LoadBOFWithOptions(data []byte, options BOFLoadOptions) (*BOF, error) {
 	if !BOFEnabled {
 		return nil, ErrBOFDisabled
 	}
 	if len(data) == 0 {
 		return nil, errors.New("reflektor: empty BOF image")
 	}
-	handle, err := loadBOF(data)
+	handle, err := loadBOF(data, options)
 	if err != nil {
 		return nil, err
 	}
@@ -150,6 +189,12 @@ func LoadBOF(data []byte) (*BOF, error) {
 
 // LoadBOFFile reads and loads a native relocatable BOF image from disk.
 func LoadBOFFile(path string) (*BOF, error) {
+	return LoadBOFFileWithOptions(path, BOFLoadOptions{})
+}
+
+// LoadBOFFileWithOptions reads and loads a native relocatable BOF image from
+// disk using the supplied load options.
+func LoadBOFFileWithOptions(path string, options BOFLoadOptions) (*BOF, error) {
 	if !BOFEnabled {
 		return nil, ErrBOFDisabled
 	}
@@ -169,7 +214,7 @@ func LoadBOFFile(path string) (*BOF, error) {
 	if len(data) > maxBOFObjectSize {
 		return nil, fmt.Errorf("reflektor: BOF file exceeds %d bytes", maxBOFObjectSize)
 	}
-	return LoadBOF(data)
+	return LoadBOFWithOptions(data, options)
 }
 
 // Execute invokes the object's go (or coffee) entry point with an encoded

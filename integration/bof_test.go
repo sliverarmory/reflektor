@@ -5,6 +5,7 @@ package reflektor_test
 import (
 	"bytes"
 	"debug/elf"
+	"debug/macho"
 	"debug/pe"
 	"encoding/binary"
 	"fmt"
@@ -28,8 +29,8 @@ type bofTarget struct {
 }
 
 var bofTargets = []bofTarget{
-	{goos: "darwin", goarch: "amd64", zigTarget: "x86_64-linux-none", format: "elf"},
-	{goos: "darwin", goarch: "arm64", zigTarget: "aarch64-linux-none", format: "elf"},
+	{goos: "darwin", goarch: "amd64", zigTarget: "x86_64-macos-none", format: "macho"},
+	{goos: "darwin", goarch: "arm64", zigTarget: "aarch64-macos-none", format: "macho"},
 	{goos: "linux", goarch: "386", zigTarget: "x86-linux-none", format: "elf"},
 	{goos: "linux", goarch: "amd64", zigTarget: "x86_64-linux-none", format: "elf"},
 	{goos: "linux", goarch: "arm64", zigTarget: "aarch64-linux-none", format: "elf"},
@@ -42,6 +43,12 @@ func TestBuildBOFMatrix(t *testing.T) {
 	requireCommand(t, "zig")
 	requireCommand(t, "file")
 	outputDirectory := t.TempDir()
+	if configured := os.Getenv("REFLEKTOR_BOF_FIXTURE_DIR"); configured != "" {
+		outputDirectory = configured
+		if err := os.MkdirAll(outputDirectory, 0o755); err != nil {
+			t.Fatalf("create BOF fixture seed directory: %v", err)
+		}
+	}
 	for _, target := range bofTargets {
 		target := target
 		t.Run(target.goos+"-"+target.goarch, func(t *testing.T) {
@@ -81,6 +88,11 @@ func TestLoadAndExecuteGeneratedBOF(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing BOF fixture target for %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
+	testLoadAndExecuteGeneratedBOF(t, target)
+}
+
+func testLoadAndExecuteGeneratedBOF(t *testing.T, target bofTarget) {
+	t.Helper()
 	path := buildBOFFixture(t, t.TempDir(), target)
 	if target.goos == "windows" && target.goarch != "386" {
 		validateWindowsUnwindFixture(t, path, target.goarch)
@@ -150,21 +162,32 @@ func nativeBOFTarget() (bofTarget, bool) {
 }
 
 func buildBOFFixture(t *testing.T, outputDirectory string, target bofTarget) string {
+	extraArguments := []string(nil)
+	if target.format == "macho" && target.goarch == "arm64" {
+		// Native Darwin/arm64 uses Apple's distinct variadic ABI. The Mach-O
+		// fixture covers the same output bytes through BeaconOutput while the
+		// separate legacy ELF fixture retains BeaconPrintf coverage.
+		extraArguments = append(extraArguments, "-DBOF_DARWIN_ARM64_MACHO")
+	}
+	return buildBOFSource(t, outputDirectory, target, "fixture", "fixture.c", extraArguments...)
+}
+
+func buildBOFSource(t *testing.T, outputDirectory string, target bofTarget, name, source string, extraArguments ...string) string {
 	t.Helper()
-	outputPath := filepath.Join(outputDirectory, fmt.Sprintf("fixture_%s_%s.o", target.goos, target.goarch))
+	outputPath := filepath.Join(outputDirectory, fmt.Sprintf("%s_%s_%s.o", name, target.goos, target.goarch))
 	arguments := []string{
 		"cc", "-target", target.zigTarget, "-c", "-O1", "-g0",
 		"-fno-stack-protector",
 	}
-	// The loader may map ELF objects above the low 4 GiB address range. Keep
-	// Unix fixtures position-independent so their data references never rely on
+	// The loader may map ELF objects above the low 4 GiB address range. Keep ELF
+	// fixtures position-independent so their data references never rely on
 	// an R_X86_64_32 absolute relocation that would depend on a lucky mmap.
 	if target.format == "elf" {
 		arguments = append(arguments, "-fPIC")
 	}
-	// Zig uses an ELF target as the Darwin interchange container, so reserve
-	// Apple's platform register explicitly when generating arm64 machine code.
-	if target.goos == "darwin" && target.goarch == "arm64" {
+	// The native macOS target already reserves Apple's x18 platform register.
+	// The backwards-compatible Linux-targeted ELF container must opt in.
+	if target.goos == "darwin" && target.goarch == "arm64" && target.format == "elf" {
 		arguments = append(arguments, "-mcpu=baseline+reserve_x18")
 	}
 	// Windows/amd64 and Windows/arm64 fixtures deliberately retain their
@@ -174,9 +197,10 @@ func buildBOFFixture(t *testing.T, outputDirectory string, target bofTarget) str
 	if target.goos != "windows" || target.goarch == "386" {
 		arguments = append(arguments, "-fno-asynchronous-unwind-tables", "-fno-unwind-tables")
 	}
+	arguments = append(arguments, extraArguments...)
 	arguments = append(arguments,
 		"-fno-exceptions", "-fno-ident", "-o", outputPath,
-		filepath.Join("..", "testdata", "bof", "fixture.c"),
+		filepath.Join("..", "testdata", "bof", source),
 	)
 	command := exec.Command("zig", arguments...)
 	command.Env = append(os.Environ(),
@@ -185,7 +209,7 @@ func buildBOFFixture(t *testing.T, outputDirectory string, target bofTarget) str
 	)
 	output, err := command.CombinedOutput()
 	if err != nil {
-		t.Fatalf("build BOF fixture for %s/%s: %v\n%s", target.goos, target.goarch, err, output)
+		t.Fatalf("build BOF fixture %q for %s/%s: %v\n%s", name, target.goos, target.goarch, err, output)
 	}
 	return outputPath
 }
@@ -197,6 +221,22 @@ func validateBOFObject(t *testing.T, path string, target bofTarget) {
 		t.Fatal(err)
 	}
 	switch target.format {
+	case "macho":
+		file, parseErr := macho.NewFile(bytes.NewReader(image))
+		if parseErr != nil {
+			t.Fatalf("parse Mach-O BOF: %v", parseErr)
+		}
+		defer file.Close()
+		if file.Magic != macho.Magic64 {
+			t.Fatalf("Mach-O magic = 0x%x, want MH_MAGIC_64 (0x%x)", file.Magic, macho.Magic64)
+		}
+		if file.Type != macho.TypeObj {
+			t.Fatalf("Mach-O type = %s, want MH_OBJECT", file.Type)
+		}
+		wantCPU := map[string]macho.Cpu{"amd64": macho.CpuAmd64, "arm64": macho.CpuArm64}[target.goarch]
+		if file.Cpu != wantCPU {
+			t.Fatalf("Mach-O CPU = %s, want %s", file.Cpu, wantCPU)
+		}
 	case "elf":
 		file, parseErr := elf.NewFile(bytes.NewReader(image))
 		if parseErr != nil {

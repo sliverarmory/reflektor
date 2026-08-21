@@ -82,6 +82,7 @@ type objectRelocation struct {
 	symbol  uint32
 	addend  int64
 	hasAdd  bool
+	width   uint8
 }
 
 type objectFile struct {
@@ -103,6 +104,10 @@ type externalSymbol struct {
 }
 
 func Load(data []byte) (*Loader, error) {
+	return LoadWithOptions(data, LoadOptions{})
+}
+
+func LoadWithOptions(data []byte, options LoadOptions) (*Loader, error) {
 	if len(data) == 0 {
 		return nil, errors.New("bofloader: empty object image")
 	}
@@ -118,8 +123,34 @@ func Load(data []byte) (*Loader, error) {
 		return nil, err
 	}
 
-	entryNames := []string{"go", "_go", "coffee", "_coffee"}
+	entryNames, err := selectedEntryNames(options)
+	if err != nil {
+		return nil, err
+	}
+	entrySymbol := objectSymbol{}
+	for _, name := range entryNames {
+		symbol, ok, findErr := findDefinedSymbolDefinition(object, name)
+		if findErr != nil {
+			return nil, findErr
+		}
+		if ok {
+			entrySymbol = symbol
+			break
+		}
+	}
+	if entrySymbol.name == "" {
+		if options.EntryPoint != "" {
+			return nil, fmt.Errorf("bofloader: entry symbol %q not found", options.EntryPoint)
+		}
+		return nil, errors.New("bofloader: entry symbol not found (expected go or coffee)")
+	}
 	referenced := referencedLinkageSymbols(object)
+	imports := objectImports(object, referenced)
+	if options.ValidateImports != nil {
+		if err := options.ValidateImports(append([]Import(nil), imports...)); err != nil {
+			return nil, fmt.Errorf("bofloader: validate imports: %w", err)
+		}
+	}
 	pageSize := uint64(systemPageSize())
 	thunkStride := uint64(16)
 	gotStride := uint64(pointerSize())
@@ -181,28 +212,17 @@ func Load(data []byte) (*Loader, error) {
 		}
 		copy(region.data[section.offset:section.offset+uint64(len(section.data))], section.data)
 	}
+	entry, err := definedSymbolAddress(object, entrySymbol)
+	if err != nil {
+		return nil, err
+	}
 
-	externals, err := resolveExternalSymbols(object, referenced, region, thunkSize, gotSize)
+	externals, err := resolveExternalSymbols(object, referenced, region, thunkSize, gotSize, imports, options)
 	if err != nil {
 		return nil, err
 	}
 	if err := applyRelocations(object, region, externals); err != nil {
 		return nil, err
-	}
-
-	entry := uintptr(0)
-	for _, name := range entryNames {
-		address, ok, findErr := findDefinedSymbol(object, name)
-		if findErr != nil {
-			return nil, findErr
-		}
-		if ok {
-			entry = address
-			break
-		}
-	}
-	if entry == 0 {
-		return nil, errors.New("bofloader: entry symbol not found (expected go or coffee)")
 	}
 
 	if err := region.protect(0, int(thunkSize), protRead|protExec); err != nil {
@@ -249,6 +269,9 @@ func parseObject(data []byte) (*objectFile, error) {
 	if len(data) >= 4 && data[0] == 0x7f && data[1] == 'E' && data[2] == 'L' && data[3] == 'F' {
 		return parseELF(data)
 	}
+	if isMachOMagic(data) {
+		return parseMachO(data)
+	}
 	return parseCOFF(data)
 }
 
@@ -268,6 +291,10 @@ func validateHost(object *objectFile) error {
 		if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 			return fmt.Errorf("bofloader: ELF BOFs are unsupported on %s", runtime.GOOS)
 		}
+	case "macho":
+		if runtime.GOOS != "darwin" {
+			return fmt.Errorf("bofloader: Mach-O BOFs require a Darwin host; use a native relocatable object on %s", runtime.GOOS)
+		}
 	default:
 		return fmt.Errorf("bofloader: unsupported object format %q", object.format)
 	}
@@ -282,7 +309,8 @@ func referencedLinkageSymbols(object *objectFile) []uint32 {
 			continue
 		}
 		symbol, ok := object.symbols[relocation.symbol]
-		needsDefinedGOT := object.format == "elf" && elfRelocationNeedsGOT(object.arch, relocation.typeID)
+		needsDefinedGOT := object.format == "elf" && elfRelocationNeedsGOT(object.arch, relocation.typeID) ||
+			object.format == "macho" && machoRelocationNeedsGOT(object.arch, relocation.typeID)
 		if !ok || (symbol.section != sectionUndefined && !needsDefinedGOT) {
 			continue
 		}
@@ -295,22 +323,31 @@ func referencedLinkageSymbols(object *objectFile) []uint32 {
 	return result
 }
 
-func resolveExternalSymbols(object *objectFile, referenced []uint32, region *memoryRegion, thunkSize, gotSize uint64) (map[uint32]externalSymbol, error) {
+func resolveExternalSymbols(object *objectFile, referenced []uint32, region *memoryRegion, thunkSize, gotSize uint64, imports []Import, options LoadOptions) (map[uint32]externalSymbol, error) {
 	resolved := make(map[uint32]externalSymbol, len(referenced))
+	importsByName := make(map[string]Import, len(imports))
+	for _, imported := range imports {
+		importsByName[imported.Name] = imported
+	}
+	targetsByName := make(map[string]uintptr, len(imports))
 	for position, index := range referenced {
 		symbol := object.symbols[index]
 		target := uintptr(0)
 		var err error
-		if symbol.name == "_GLOBAL_OFFSET_TABLE_" {
+		if object.format == "elf" && symbol.name == "_GLOBAL_OFFSET_TABLE_" {
 			target = region.base() + uintptr(thunkSize)
 		} else if symbol.section == sectionUndefined {
-			target, err = resolveSymbol(symbol.name)
-			if err != nil {
-				if symbol.weak {
-					target = 0
-				} else {
+			if cached, ok := targetsByName[symbol.name]; ok {
+				target = cached
+			} else {
+				if imported, ok := importsByName[symbol.name]; ok {
+					symbol.weak = imported.Weak
+				}
+				target, err = resolveImportedSymbol(symbol, options)
+				if err != nil {
 					return nil, fmt.Errorf("bofloader: resolve external symbol %q: %w", symbol.name, err)
 				}
+				targetsByName[symbol.name] = target
 			}
 		} else {
 			linked, linkErr := linkRelocationSymbol(object, objectRelocation{symbol: index}, nil)
@@ -345,6 +382,18 @@ func resolveExternalSymbols(object *objectFile, referenced []uint32, region *mem
 }
 
 func findDefinedSymbol(object *objectFile, name string) (uintptr, bool, error) {
+	symbol, ok, err := findDefinedSymbolDefinition(object, name)
+	if err != nil || !ok {
+		return 0, ok, err
+	}
+	address, err := definedSymbolAddress(object, symbol)
+	if err != nil {
+		return 0, false, err
+	}
+	return address, true, nil
+}
+
+func findDefinedSymbolDefinition(object *objectFile, name string) (objectSymbol, bool, error) {
 	indices := make([]uint32, 0, 1)
 	for index, symbol := range object.symbols {
 		if symbol.name == name && symbol.section != sectionUndefined {
@@ -352,29 +401,34 @@ func findDefinedSymbol(object *objectFile, name string) (uintptr, bool, error) {
 		}
 	}
 	if len(indices) == 0 {
-		return 0, false, nil
+		return objectSymbol{}, false, nil
 	}
 	sort.Slice(indices, func(left, right int) bool { return indices[left] < indices[right] })
 	if len(indices) != 1 {
-		return 0, false, fmt.Errorf("bofloader: entry symbol %q has multiple definitions at symbol indices %v", name, indices)
+		return objectSymbol{}, false, fmt.Errorf("bofloader: entry symbol %q has multiple definitions at symbol indices %v", name, indices)
 	}
 
 	symbol := object.symbols[indices[0]]
 	if symbol.section < 0 || symbol.section >= len(object.sections) {
-		return 0, false, fmt.Errorf("bofloader: entry symbol %q references invalid section %d", name, symbol.section)
+		return objectSymbol{}, false, fmt.Errorf("bofloader: entry symbol %q references invalid section %d", name, symbol.section)
 	}
 	section := object.sections[symbol.section]
 	if !section.mapped || section.protection&protExec == 0 {
-		return 0, false, fmt.Errorf("bofloader: entry symbol %q is not in a mapped executable section", name)
+		return objectSymbol{}, false, fmt.Errorf("bofloader: entry symbol %q is not in a mapped executable section", name)
 	}
 	if symbol.value >= section.size {
-		return 0, false, fmt.Errorf("bofloader: entry symbol %q value %#x exceeds section %q size %#x", name, symbol.value, section.name, section.size)
+		return objectSymbol{}, false, fmt.Errorf("bofloader: entry symbol %q value %#x exceeds section %q size %#x", name, symbol.value, section.name, section.size)
 	}
+	return symbol, true, nil
+}
+
+func definedSymbolAddress(object *objectFile, symbol objectSymbol) (uintptr, error) {
+	section := object.sections[symbol.section]
 	address, ok := checkedAddUint64(uint64(section.address), symbol.value)
 	if !ok || uint64(uintptr(address)) != address || address == 0 {
-		return 0, false, fmt.Errorf("bofloader: entry symbol %q address overflows the host pointer size", name)
+		return 0, fmt.Errorf("bofloader: entry symbol %q address overflows the host pointer size", symbol.name)
 	}
-	return uintptr(address), true, nil
+	return uintptr(address), nil
 }
 
 func mappedSectionAlignment(section objectSection, pageSize uint64) (uint64, error) {

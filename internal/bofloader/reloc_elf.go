@@ -302,7 +302,7 @@ func applyELFARM64Relocation(relocation objectRelocation, location []byte, place
 			return putInt16(location, value)
 		}
 	case elf.R_AARCH64_LD_PREL_LO19:
-		return applyARM64Branch19(location, directLinkedAddress(linked), place, relocation.hasAdd, relocation.addend)
+		return applyARM64Literal19(location, directLinkedAddress(linked), place, relocation.hasAdd, relocation.addend)
 	case elf.R_AARCH64_ADR_PREL_LO21:
 		return applyARM64ADR(location, directLinkedAddress(linked), place, relocation.hasAdd, relocation.addend)
 	case elf.R_AARCH64_ADR_PREL_PG_HI21:

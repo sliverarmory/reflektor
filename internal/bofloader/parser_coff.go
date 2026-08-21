@@ -10,10 +10,11 @@ import (
 )
 
 const (
-	coffSectionLinkInfo   = 0x00000200
-	coffSectionLinkRemove = 0x00000800
-	coffSectionAlignMask  = 0x00f00000
-	coffStorageWeak       = 105
+	coffSectionLinkInfo           = 0x00000200
+	coffSectionLinkRemove         = 0x00000800
+	coffSectionRelocationOverflow = 0x01000000
+	coffSectionAlignMask          = 0x00f00000
+	coffStorageWeak               = 105
 )
 
 func parseCOFF(data []byte) (object *objectFile, err error) {
@@ -251,6 +252,13 @@ func preflightCOFF(data []byte) error {
 		relocationOffset := uint64(binary.LittleEndian.Uint32(header[24:28]))
 		relocations := uint64(binary.LittleEndian.Uint16(header[32:34]))
 		characteristics := binary.LittleEndian.Uint32(header[36:40])
+		// IMAGE_SCN_LNK_NRELOC_OVFL stores the actual count in a sentinel
+		// relocation record. debug/pe does not implement that encoding and would
+		// silently expose only the uint16 header count, so reject it before
+		// pe.NewFile allocates or parses the section relocation slice.
+		if characteristics&coffSectionRelocationOverflow != 0 {
+			return fmt.Errorf("bofloader: COFF section %d uses unsupported extended relocation count", index)
+		}
 		mapped := characteristics&(pe.IMAGE_SCN_CNT_CODE|pe.IMAGE_SCN_CNT_INITIALIZED_DATA|pe.IMAGE_SCN_CNT_UNINITIALIZED_DATA|pe.IMAGE_SCN_MEM_READ|pe.IMAGE_SCN_MEM_WRITE|pe.IMAGE_SCN_MEM_EXECUTE) != 0
 		if characteristics&(pe.IMAGE_SCN_MEM_DISCARDABLE|coffSectionLinkInfo|coffSectionLinkRemove) == 0 && mapped {
 			mappedBytes, ok = checkedAddUint64(mappedBytes, rawSize)

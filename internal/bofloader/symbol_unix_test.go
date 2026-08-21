@@ -29,3 +29,18 @@ func TestUnixSystemLibraryCandidatesPreserveLibPrefix(t *testing.T) {
 		})
 	}
 }
+
+func TestUnixQualifiedLibraryCandidatesPreserveExactThenMachOSpelling(t *testing.T) {
+	tests := []struct {
+		name string
+		want []string
+	}{
+		{name: "libc", want: []string{"libc"}},
+		{name: "_libc", want: []string{"_libc", "libc"}},
+	}
+	for _, test := range tests {
+		if got := unixQualifiedLibraryCandidates(test.name); !reflect.DeepEqual(got, test.want) {
+			t.Fatalf("unixQualifiedLibraryCandidates(%q) = %q, want %q", test.name, got, test.want)
+		}
+	}
+}

@@ -45,6 +45,35 @@ func TestBeaconDataCallbacks(t *testing.T) {
 	}
 }
 
+func TestBeaconDataExtractOrNull(t *testing.T) {
+	executionLock.Lock()
+	defer executionLock.Unlock()
+	context := newExecutionContext()
+	activeExecution.Store(context)
+	defer activeExecution.Store(nil)
+
+	argument := make([]byte, 4+4+1+4+4)
+	binary.LittleEndian.PutUint32(argument[0:4], uint32(len(argument)-4))
+	binary.LittleEndian.PutUint32(argument[4:8], 1)
+	argument[8] = 0
+	binary.LittleEndian.PutUint32(argument[9:13], 4)
+	copy(argument[13:], "text")
+
+	var parser beaconDataParser
+	beaconDataParse(uintptr(unsafe.Pointer(&parser)), byteSliceAddress(argument), uintptr(len(argument)))
+	var extractedSize int32
+	if got := beaconDataExtractOrNull(uintptr(unsafe.Pointer(&parser)), uintptr(unsafe.Pointer(&extractedSize))); got != 0 || extractedSize != 1 {
+		t.Fatalf("empty BeaconDataExtractOrNull = %#x, %d", got, extractedSize)
+	}
+	got := beaconDataExtractOrNull(uintptr(unsafe.Pointer(&parser)), uintptr(unsafe.Pointer(&extractedSize)))
+	if got == 0 || extractedSize != 4 || string(pointerBytes(got, int(extractedSize))) != "text" {
+		t.Fatalf("non-empty BeaconDataExtractOrNull = %#x, %d", got, extractedSize)
+	}
+	if _, err := context.result(); err != nil {
+		t.Fatalf("callback error: %v", err)
+	}
+}
+
 func TestBeaconFormatAndOutputCallbacks(t *testing.T) {
 	executionLock.Lock()
 	defer executionLock.Unlock()
@@ -104,7 +133,10 @@ func TestBeaconPrintfFormatting(t *testing.T) {
 }
 
 func TestBeaconCallbackResolution(t *testing.T) {
-	for _, name := range []string{"BeaconOutput", "_BeaconOutput", "__imp_BeaconOutput", "__imp__BeaconOutput@12"} {
+	for _, name := range []string{
+		"BeaconOutput", "_BeaconOutput", "__imp_BeaconOutput", "__imp__BeaconOutput@12",
+		"BeaconDataExtractOrNull", "_BeaconDataExtractOrNull", "toWideChar", "_toWideChar", "_toWideChar@12", "__imp_toWideChar", "__imp__toWideChar@12",
+	} {
 		address, ok, err := resolveBeaconCallback(name)
 		if err != nil {
 			t.Fatalf("resolveBeaconCallback(%q): %v", name, err)
@@ -112,6 +144,9 @@ func TestBeaconCallbackResolution(t *testing.T) {
 		if !ok || address == 0 {
 			t.Fatalf("resolveBeaconCallback(%q) = %#x, %v", name, address, ok)
 		}
+	}
+	if address, ok, err := resolveBeaconCallback("BeaconInjectProcess"); err != nil || ok || address != 0 {
+		t.Fatalf("unsupported privileged callback resolved: address=%#x ok=%v err=%v", address, ok, err)
 	}
 }
 

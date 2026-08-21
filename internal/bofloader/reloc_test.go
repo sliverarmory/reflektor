@@ -3,6 +3,7 @@
 package bofloader
 
 import (
+	"bytes"
 	"debug/elf"
 	"encoding/binary"
 	"math"
@@ -211,6 +212,136 @@ func TestARM64RelocationEncoders(t *testing.T) {
 			t.Fatalf("LDR immediate = %#x, want %#x", got, want)
 		}
 	})
+
+	t.Run("validated instruction classes", func(t *testing.T) {
+		tests := []struct {
+			name string
+			word uint32
+			call func([]byte) error
+		}{
+			{name: "conditional branch", word: 0x54000000, call: func(location []byte) error {
+				return applyARM64Branch19(location, 0x1000, 0x1000, true, 0)
+			}},
+			{name: "literal load", word: 0x58000000, call: func(location []byte) error {
+				return applyARM64Literal19(location, 0x1000, 0x1000, true, 0)
+			}},
+			{name: "test branch", word: 0x36000000, call: func(location []byte) error {
+				return applyARM64Branch14(location, 0x1000, 0x1000, true, 0)
+			}},
+			{name: "ADR", word: 0x10000000, call: func(location []byte) error {
+				return applyARM64ADR(location, 0x1000, 0x1000, true, 0)
+			}},
+			{name: "ADD low12", word: 0x91000000, call: func(location []byte) error {
+				return applyARM64AddLO12(location, 0x123, true, 0)
+			}},
+			{name: "ADD high12", word: 0x91000000, call: func(location []byte) error {
+				return applyARM64AddHigh12(location, 0x123000, true, 0)
+			}},
+		}
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				location := make([]byte, 4)
+				binary.LittleEndian.PutUint32(location, test.word)
+				if err := test.call(location); err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+	})
+}
+
+func TestARM64RelocationsRejectWrongInstructionClasses(t *testing.T) {
+	const nop = uint32(0xd503201f)
+	tests := []struct {
+		name string
+		call func([]byte) error
+	}{
+		{name: "branch26", call: func(location []byte) error {
+			return applyARM64Branch26(location, 0x1000, 0x1000, true, 0)
+		}},
+		{name: "branch19", call: func(location []byte) error {
+			return applyARM64Branch19(location, 0x1000, 0x1000, true, 0)
+		}},
+		{name: "literal19", call: func(location []byte) error {
+			return applyARM64Literal19(location, 0x1000, 0x1000, true, 0)
+		}},
+		{name: "branch14", call: func(location []byte) error {
+			return applyARM64Branch14(location, 0x1000, 0x1000, true, 0)
+		}},
+		{name: "ADR", call: func(location []byte) error {
+			return applyARM64ADR(location, 0x1000, 0x1000, true, 0)
+		}},
+		{name: "ADRP", call: func(location []byte) error {
+			return applyARM64ADRP(location, 0x1000, 0x1000, true, 0, true)
+		}},
+		{name: "ADD low12", call: func(location []byte) error {
+			return applyARM64AddLO12(location, 0x1000, true, 0)
+		}},
+		{name: "ADD high12", call: func(location []byte) error {
+			return applyARM64AddHigh12(location, 0x1000, true, 0)
+		}},
+		{name: "load/store low12", call: func(location []byte) error {
+			return applyARM64LoadStoreLO12(location, 0x1000, 3, true, 0)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			location := make([]byte, 4)
+			binary.LittleEndian.PutUint32(location, nop)
+			before := append([]byte(nil), location...)
+			err := test.call(location)
+			if err == nil || !strings.Contains(err.Error(), "expected") {
+				t.Fatalf("error = %v, want instruction-class error", err)
+			}
+			if !bytes.Equal(location, before) {
+				t.Fatalf("location changed on rejection: %x -> %x", before, location)
+			}
+		})
+	}
+}
+
+func TestELFARM64LiteralRelocationUsesLiteralInstructionClass(t *testing.T) {
+	linked := linkedSymbol{symbol: objectSymbol{name: "literal", section: 0}, address: 0x1000}
+	relocation := objectRelocation{typeID: uint32(elf.R_AARCH64_LD_PREL_LO19), hasAdd: true}
+
+	valid := make([]byte, 4)
+	binary.LittleEndian.PutUint32(valid, 0x58000000) // LDR x0, literal
+	if err := applyELFARM64Relocation(relocation, valid, 0x1000, linked); err != nil {
+		t.Fatalf("literal-load relocation error = %v", err)
+	}
+
+	conditionalBranch := make([]byte, 4)
+	binary.LittleEndian.PutUint32(conditionalBranch, 0x54000000)
+	if err := applyELFARM64Relocation(relocation, conditionalBranch, 0x1000, linked); err == nil || !strings.Contains(err.Error(), "literal load") {
+		t.Fatalf("conditional-branch relocation error = %v, want literal-load instruction rejection", err)
+	}
+}
+
+func TestELFARM64LoadStoreRelocationRejectsMismatchedScale(t *testing.T) {
+	linked := linkedSymbol{symbol: objectSymbol{name: "data", section: 0}, address: 0x1000}
+	relocation := objectRelocation{typeID: uint32(elf.R_AARCH64_LDST64_ABS_LO12_NC), hasAdd: true}
+	location := make([]byte, 4)
+	binary.LittleEndian.PutUint32(location, 0xb9400000) // LDR w0, [x0]: 32-bit scale 2.
+
+	if err := applyELFARM64Relocation(relocation, location, 0, linked); err == nil || !strings.Contains(err.Error(), "does not match instruction scale") {
+		t.Fatalf("LDST64 relocation error = %v, want scale mismatch", err)
+	}
+}
+
+func TestARM64LoadStoreScaleRecognizesQRegisterLoadsAndStores(t *testing.T) {
+	for _, word := range []uint32{
+		0x3d800000, // STR q0, [x0]
+		0x3dc00000, // LDR q0, [x0]
+	} {
+		if got := arm64LoadStoreScale(word); got != 4 {
+			t.Fatalf("arm64LoadStoreScale(%#08x) = %d, want 4", word, got)
+		}
+		location := make([]byte, 4)
+		binary.LittleEndian.PutUint32(location, word)
+		if err := applyARM64LoadStoreLO12(location, 0x12345020, 4, true, 0); err != nil {
+			t.Fatalf("applyARM64LoadStoreLO12(%#08x) error = %v", word, err)
+		}
+	}
 }
 
 func TestCOFFARM64SectionSymbolUsesByteAddend(t *testing.T) {

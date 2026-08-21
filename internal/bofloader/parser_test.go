@@ -52,6 +52,20 @@ func TestParsersRejectOverlappingSectionAllocationAmplification(t *testing.T) {
 	})
 }
 
+func TestCOFFPreflightRejectsExtendedRelocationCounts(t *testing.T) {
+	image := overlappingCOFFSections(1, 1)
+	const firstSectionHeader = 20
+	binary.LittleEndian.PutUint16(image[firstSectionHeader+32:firstSectionHeader+34], ^uint16(0))
+	characteristics := binary.LittleEndian.Uint32(image[firstSectionHeader+36 : firstSectionHeader+40])
+	binary.LittleEndian.PutUint32(
+		image[firstSectionHeader+36:firstSectionHeader+40],
+		characteristics|coffSectionRelocationOverflow,
+	)
+	if err := preflightCOFF(image); err == nil || !strings.Contains(err.Error(), "extended relocation count") {
+		t.Fatalf("preflightCOFF() error = %v, want extended-relocation rejection", err)
+	}
+}
+
 func TestELFPreflightRejectsCompressedSectionsBeforeParsing(t *testing.T) {
 	image := overlappingELF64Sections(1, 1)
 	const firstSectionFlags = 64 + 64 + 8

@@ -26,7 +26,7 @@ func applyRelocations(object *objectFile, region *memoryRegion, externals map[ui
 	}
 
 	for _, relocation := range object.relocations {
-		width, noop, err := relocationWidth(object.format, object.arch, relocation.typeID)
+		width, noop, err := relocationWidth(object.format, object.arch, relocation)
 		if err != nil {
 			return relocationError(object, relocation, err)
 		}
@@ -62,6 +62,8 @@ func applyRelocations(object *objectFile, region *memoryRegion, externals map[ui
 			err = applyCOFFRelocation(object, relocation, location, place, linked)
 		case "elf":
 			err = applyELFRelocation(object, relocation, location, place, linked, externals)
+		case "macho":
+			err = applyMachORelocation(object, relocation, location, place, linked)
 		default:
 			err = fmt.Errorf("unsupported object format %q", object.format)
 		}
@@ -133,15 +135,20 @@ func linkRelocationSymbol(object *objectFile, relocation objectRelocation, exter
 	return linked, nil
 }
 
-func relocationWidth(format, arch string, typeID uint32) (width int, noop bool, err error) {
-	if typeID == 0 {
+func relocationWidth(format, arch string, relocation objectRelocation) (width int, noop bool, err error) {
+	if format != "macho" && relocation.typeID == 0 {
 		return 0, true, nil
 	}
 	switch format {
 	case "coff":
-		return coffRelocationWidth(arch, typeID)
+		return coffRelocationWidth(arch, relocation.typeID)
 	case "elf":
-		return elfRelocationWidth(arch, typeID)
+		return elfRelocationWidth(arch, relocation.typeID)
+	case "macho":
+		if relocation.width != 1 && relocation.width != 2 && relocation.width != 4 && relocation.width != 8 {
+			return 0, false, fmt.Errorf("invalid Mach-O relocation width %d", relocation.width)
+		}
+		return int(relocation.width), false, nil
 	default:
 		return 0, false, fmt.Errorf("unsupported object format %q", format)
 	}

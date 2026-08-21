@@ -21,7 +21,8 @@ BEACON_IMPORT void BeaconOutput(int32_t type, char *data, int32_t length);
 BEACON_IMPORT void BeaconPrintf(int32_t type, const char *format, ...);
 
 // External linkage is intentional. PIC ELF compilers access this symbol through
-// the GOT even though it is defined in the same relocatable object.
+// the GOT even though it is defined in the same relocatable object; native
+// Mach-O compilers emit their corresponding section-relative relocation pair.
 char bof_pic_global[] = "bof-pic-defined-global";
 
 void go(char *buffer, int32_t length) {
@@ -48,6 +49,14 @@ void go(char *buffer, int32_t length) {
     BeaconOutput(0, success, (int32_t)(sizeof(success) - 1));
     // Keep these as literals so ARM64/COFF emits a section-symbol ADRP
     // relocation with a non-zero implicit byte addend.
+#if defined(BOF_DARWIN_ARM64_MACHO)
+    // Native Apple arm64 variadic arguments use a different ABI. Exercise the
+    // native Mach-O relocation path with BeaconOutput; the legacy Darwin ELF
+    // fixture retains the BeaconPrintf callback test.
+    static char formatted[] = "bof-printf=7:callback-ok";
+    BeaconOutput(0, formatted, (int32_t)(sizeof(formatted) - 1));
+#else
     BeaconPrintf(0, "bof-printf=%d:%s", 7, "callback-ok");
+#endif
     BeaconOutput(0, bof_pic_global, (int32_t)(sizeof(bof_pic_global) - 1));
 }

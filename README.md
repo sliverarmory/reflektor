@@ -88,8 +88,8 @@ use origin-relative names such as `$ORIGIN`, `@loader_path`, or `@rpath`.
 ## Beacon Object Files
 
 BOF loading is an opt-in capability. Build the importing program with the
-`bof` tag; ordinary builds retain the API but `LoadBOF` and `LoadBOFFile`
-return `ErrBOFDisabled`:
+`bof` tag; ordinary builds retain the API but `LoadBOF`, `LoadBOFFile`, and
+their `WithOptions` variants return `ErrBOFDisabled`:
 
 ```bash
 CGO_ENABLED=0 go build -tags bof ./...
@@ -101,13 +101,14 @@ CGO_ENABLED=0 go build -tags bof ./...
 | --- | --- | --- |
 | Windows `386`, `amd64`, `arm64` | COFF (`.o`) | `go(char *, int32)` using the Windows ABI |
 | Linux `386`, `amd64`, `arm64` | ELF `ET_REL` (`.o`) | `go(char *, int32)` using the host ABI |
-| Darwin `amd64`, `arm64` | constrained ELF `ET_REL` (`.o`) | `go(char *, int32)` using the host ABI |
+| Darwin `amd64`, `arm64` | Mach-O `MH_OBJECT` (`.o`); legacy ELF `ET_REL` accepted for compatibility | `go(char *, int32)` using the host ABI |
 
-The Darwin profile deliberately uses ELF as its container so the same bounded
-relocation engine works without CGO; compile freestanding objects with
-`x86_64-linux-none` or `aarch64-linux-none` while using only host-compatible
-types and imported Beacon/system functions. Darwin/arm64 objects must also be
-compiled with Zig's `-mcpu=baseline+reserve_x18` because Apple reserves that platform register.
+Compile native Darwin objects with Zig's `x86_64-macos-none` or
+`aarch64-macos-none` targets while using only host-compatible types and
+imported Beacon/system functions. The native arm64 target follows Apple's x18
+platform-register reservation automatically. The earlier constrained ELF
+Darwin interchange format remains accepted for backwards compatibility; those
+Linux-targeted arm64 objects must explicitly reserve x18.
 Windows COFF machine code is not portable to Linux or Darwin.
 
 ```go
@@ -123,6 +124,21 @@ defer bof.Close()
 records, err := bof.Execute(arguments.Bytes())
 ```
 
+Use `LoadBOFWithOptions` (or `LoadBOFFileWithOptions`) when the host needs an
+exact entry symbol or an import boundary. `ValidateImports` receives a sorted,
+owned snapshot before image allocation, callback registration, or dynamic
+library lookup. `ResolveSymbol` can then supply stable native function or data
+addresses using the platform ABI for custom imports. Reflektor's built-in
+callbacks always take precedence and
+cannot be replaced through the custom resolver.
+
+Unsupported Beacon integration APIs—including token, temporary-process, and
+process-injection callbacks—are marked `RequiresHost` and fail explicitly
+unless `ResolveSymbol` supplies them; they are never silent stubs or system
+symbol lookups. The built-in compatibility set also includes the bounded
+`BeaconDataExtractOrNull` helper and `toWideChar`, whose destination is always
+UTF-16LE and whose maximum length is measured in bytes.
+
 The loader supplies the Beacon data, format, and output callbacks, preserves
 each output record's channel, uses page-level W^X protections, and serializes
 execution around the process-wide native callback bridge. A BOF is still
@@ -136,6 +152,10 @@ join them before its entry point returns.
 arguments and implement bounded string, character, integer, and pointer
 conversions. Floating-point conversions are rejected on 64-bit Unix because
 its variadic ABI does not expose those values to the fixed callback bridge.
+Native Mach-O Darwin/arm64 objects must use `BeaconOutput` instead: imports of
+`BeaconPrintf` and `BeaconFormatPrintf` are rejected because Apple's variadic
+ABI is incompatible with the fixed callback bridge. Legacy Darwin ELF objects
+retain the existing callback behavior.
 
 ## Native-only Package
 
@@ -249,7 +269,7 @@ Linux cross-arch Docker harness:
 
 - `reflektor/reflektor.go`: root importable package (`reflektor`).
 - `reflektor/bof.go`: build-tag-neutral BOF API and argument encoder.
-- `reflektor/internal/bofloader`: `bof`-tagged COFF/ELF loader and Beacon bridge.
+- `reflektor/internal/bofloader`: `bof`-tagged COFF/ELF/Mach-O loader and Beacon bridge.
 - `reflektor/native`: tag-free native C/Rust-only package.
 - `reflektor/memmod`: OS-specific loader backends.
 - `reflektor/cli`: CLI entrypoint.

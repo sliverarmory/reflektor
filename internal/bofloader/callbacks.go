@@ -43,7 +43,30 @@ var (
 	callbackInitErr error
 )
 
+var builtinBeaconCallbackNames = map[string]struct{}{
+	"BeaconDataParse":         {},
+	"BeaconDataInt":           {},
+	"BeaconDataShort":         {},
+	"BeaconDataLength":        {},
+	"BeaconDataExtract":       {},
+	"BeaconDataExtractOrNull": {},
+	"BeaconFormatAlloc":       {},
+	"BeaconFormatReset":       {},
+	"BeaconFormatFree":        {},
+	"BeaconFormatAppend":      {},
+	"BeaconFormatPrintf":      {},
+	"BeaconFormatToString":    {},
+	"BeaconFormatInt":         {},
+	"BeaconPrintf":            {},
+	"BeaconOutput":            {},
+	"toWideChar":              {},
+}
+
 func resolveBeaconCallback(symbol string) (uintptr, bool, error) {
+	name := normalizeImportedSymbol(symbol)
+	if _, ok := builtinBeaconCallbackNames[name]; !ok {
+		return 0, false, nil
+	}
 	callbackOnce.Do(func() {
 		defer func() {
 			if recovered := recover(); recovered != nil {
@@ -55,7 +78,6 @@ func resolveBeaconCallback(symbol string) (uintptr, bool, error) {
 	if callbackInitErr != nil {
 		return 0, false, callbackInitErr
 	}
-	name := normalizeImportedSymbol(symbol)
 	address, ok := callbackSymbols[name]
 	return address, ok, nil
 }
@@ -68,10 +90,11 @@ func normalizeImportedSymbol(symbol string) string {
 			name = name[1:]
 		}
 	}
-	if strings.HasPrefix(name, "_") && strings.HasPrefix(name[1:], "Beacon") {
+	name = trimStdcallSuffix(name)
+	if strings.HasPrefix(name, "_") && (strings.HasPrefix(name[1:], "Beacon") || name[1:] == "toWideChar") {
 		name = name[1:]
 	}
-	return trimStdcallSuffix(name)
+	return name
 }
 
 func trimStdcallSuffix(name string) string {
@@ -166,22 +189,45 @@ func beaconDataLength(parserAddress uintptr) (result uintptr) {
 
 func beaconDataExtract(parserAddress, sizeAddress uintptr) (result uintptr) {
 	defer callbackPanic("BeaconDataExtract")
-	parser, ok := checkedDataParser("BeaconDataExtract", parserAddress, 4)
+	result, length, ok := beaconDataExtractField("BeaconDataExtract", parserAddress)
 	if !ok {
 		return 0
 	}
-	length := binary.LittleEndian.Uint32(pointerBytes(parser.buffer, 4))
-	if length > uint32(parser.length-4) {
-		callbackError("BeaconDataExtract", "field length %d exceeds %d remaining bytes", length, parser.length-4)
-		return 0
-	}
-	result = parser.buffer + 4
-	parser.buffer = result + uintptr(length)
-	parser.length -= int32(length) + 4
 	if sizeAddress != 0 {
-		writeInt32(sizeAddress, int32(length))
+		writeInt32(sizeAddress, length)
 	}
 	return result
+}
+
+func beaconDataExtractOrNull(parserAddress, sizeAddress uintptr) (result uintptr) {
+	defer callbackPanic("BeaconDataExtractOrNull")
+	result, length, ok := beaconDataExtractField("BeaconDataExtractOrNull", parserAddress)
+	if !ok {
+		return 0
+	}
+	if sizeAddress != 0 {
+		writeInt32(sizeAddress, length)
+	}
+	if result == 0 || length <= 0 || pointerBytes(result, 1)[0] == 0 {
+		return 0
+	}
+	return result
+}
+
+func beaconDataExtractField(name string, parserAddress uintptr) (result uintptr, length int32, ok bool) {
+	parser, ok := checkedDataParser(name, parserAddress, 4)
+	if !ok {
+		return 0, 0, false
+	}
+	fieldLength := binary.LittleEndian.Uint32(pointerBytes(parser.buffer, 4))
+	if fieldLength > uint32(parser.length-4) {
+		callbackError(name, "field length %d exceeds %d remaining bytes", fieldLength, parser.length-4)
+		return 0, 0, false
+	}
+	result = parser.buffer + 4
+	parser.buffer = result + uintptr(fieldLength)
+	parser.length -= int32(fieldLength) + 4
+	return result, int32(fieldLength), true
 }
 
 //go:nocheckptr

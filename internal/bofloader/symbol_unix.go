@@ -25,11 +25,22 @@ func resolveSymbol(symbol string) (uintptr, error) {
 	if separator := strings.IndexByte(name, '$'); separator > 0 && separator < len(name)-1 {
 		library := name[:separator]
 		name = trimStdcallSuffix(name[separator+1:])
-		handle, err := openUnixSystemLibrary(library)
-		if err != nil {
-			return 0, err
+		var resolutionErrors []error
+		for _, candidate := range unixQualifiedLibraryCandidates(library) {
+			handle, err := openUnixSystemLibrary(candidate)
+			if err != nil {
+				resolutionErrors = append(resolutionErrors, err)
+				continue
+			}
+			address, err := purego.Dlsym(handle, name)
+			if err == nil && address != 0 {
+				return address, nil
+			}
+			if err != nil {
+				resolutionErrors = append(resolutionErrors, err)
+			}
 		}
-		return purego.Dlsym(handle, name)
+		return 0, fmt.Errorf("system symbol %q was not found in library %q: %w", name, library, errors.Join(resolutionErrors...))
 	}
 
 	candidates := []string{name}
@@ -47,6 +58,17 @@ func resolveSymbol(symbol string) (uintptr, error) {
 		}
 	}
 	return 0, fmt.Errorf("system symbol %q was not found: %w", name, errors.Join(resolutionErrors...))
+}
+
+func unixQualifiedLibraryCandidates(name string) []string {
+	candidates := []string{name}
+	// Mach-O adds one leading underscore to C symbols, including Reflektor's
+	// library$symbol spelling. Preserve an intentionally underscore-prefixed
+	// library as the first lookup and try the Mach-O spelling as a fallback.
+	if strings.HasPrefix(name, "_") && len(name) > 1 {
+		candidates = append(candidates, name[1:])
+	}
+	return candidates
 }
 
 func openUnixSystemLibrary(name string) (uintptr, error) {

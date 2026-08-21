@@ -71,11 +71,13 @@ for test_name in \
   fi
 done
 
-CGO_ENABLED=0 go test -tags bof ./integration -run '^TestLoadAndExecuteGeneratedBOF$' -count=1 -v | tee linux-bof-nocgo-test.log
-if ! grep -Fq -- '--- PASS: TestLoadAndExecuteGeneratedBOF ' linux-bof-nocgo-test.log; then
-  echo "Required CGO-free linux/386 BOF execution test did not pass" >&2
-  exit 1
-fi
+CGO_ENABLED=0 go test -tags bof ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestLoadBOFWithOptions)$' -count=1 -v | tee linux-bof-nocgo-test.log
+for test_name in TestLoadAndExecuteGeneratedBOF TestLoadBOFWithOptions; do
+  if ! grep -Fq -- "--- PASS: ${test_name} " linux-bof-nocgo-test.log; then
+    echo "Required CGO-free linux/386 BOF execution test did not pass: ${test_name}" >&2
+    exit 1
+  fi
+done
 if grep -Fq -- '--- SKIP:' linux-bof-nocgo-test.log; then
   echo "CGO-free linux/386 BOF execution test was skipped; refusing to pass CI." >&2
   exit 1
