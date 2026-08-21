@@ -48,13 +48,13 @@ jobs:
           set -euo pipefail
           make -C "${REFLEKTOR_BOF_CORPUS_DIR}" matrix
           mkdir -p "${REFLEKTOR_BOF_FIXTURE_DIR}"
-          CGO_ENABLED=0 go test -tags bof ./integration -run '^TestBuildBOFMatrix$' -count=1 -v | tee bof-fixture-seeds.log
+          CGO_ENABLED=0 go test ./integration -run '^TestBuildBOFMatrix$' -count=1 -v | tee bof-fixture-seeds.log
           find "${REFLEKTOR_BOF_CORPUS_DIR}/dist" "${REFLEKTOR_BOF_FIXTURE_DIR}" -type f \( -name '*.o' -o -name '*.obj' \) -print | LC_ALL=C sort > bof-fuzz-seeds.txt
           test "$(wc -l < bof-fuzz-seeds.txt | tr -d '[:space:]')" -eq 325
       - name: Run parser and callback seed corpus
         run: |
           set -euo pipefail
-          CGO_ENABLED=0 go test -tags bof ./internal/bofloader -count=1 -v | tee bof-fuzz-seed-test.log
+          CGO_ENABLED=0 go test ./internal/bofloader -count=1 -v | tee bof-fuzz-seed-test.log
       - name: Run bounded fuzz campaigns
         run: |
           set -euo pipefail
@@ -66,7 +66,7 @@ jobs:
             FuzzBeaconPrintfFormatter \
             FuzzBeaconDataParserState; do
             echo "fuzzing ${fuzz_target}" | tee -a bof-fuzz.log
-            CGO_ENABLED=0 go test -tags bof ./internal/bofloader \
+            CGO_ENABLED=0 go test ./internal/bofloader \
               -run '^$' -fuzz "^${fuzz_target}$" -fuzztime=2m -timeout=4m 2>&1 | tee -a bof-fuzz.log
           done
       - name: Upload fuzz evidence and crashers

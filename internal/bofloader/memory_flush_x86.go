@@ -1,4 +1,4 @@
-//go:build bof && ((darwin && amd64) || (linux && (386 || amd64)))
+//go:build (darwin && amd64) || (linux && (386 || amd64))
 
 package bofloader
 

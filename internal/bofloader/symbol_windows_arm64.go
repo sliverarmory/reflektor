@@ -1,4 +1,4 @@
-//go:build bof && windows && arm64
+//go:build windows && arm64
 
 package bofloader
 

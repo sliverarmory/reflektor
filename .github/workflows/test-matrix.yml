@@ -55,8 +55,9 @@ jobs:
       - name: Run Darwin C, Go, and Rust fixture tests
         run: |
           set -euo pipefail
-          CGO_ENABLED=0 go test -tags bof . ./internal/bofloader -count=1
-          go test ./... -skip '^TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)$' -count=1 -v | tee darwin-test.log
+          CGO_ENABLED=0 go test ./bof ./internal/bofloader -count=1
+          intentional_skip_pattern='TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)|TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions|TestSituationalAwarenessBOFCorpus(Child)?'
+          go test ./... -skip "${intentional_skip_pattern}" -count=1 -v | tee darwin-test.log
           memmod_test="TestLoadLibraryAndCallExport_DarwinArm64"
           if [[ "${GOARCH}" == "amd64" ]]; then
             memmod_test="TestLoadLibraryAndCallExport_DarwinAMD64"
@@ -70,6 +71,7 @@ jobs:
             TestLoadGeneratedRustSharedLibraryRecursiveMode \
             TestLoadLibraryRecursiveDependencies \
             TestCallExportWithArgs \
+            TestBOFPackageDependencyGraphIsIsolated \
             TestNativePackageCallExport \
             TestNativePackageRejectsGoCSharedImage \
             TestNativePackageRejectsGoCSharedInLaterFatSlice \
@@ -80,7 +82,7 @@ jobs:
               exit 1
             fi
           done
-          unexpected_skips="$(grep -E '^--- SKIP:' darwin-test.log | grep -Ev 'TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)' || true)"
+          unexpected_skips="$(grep -E '^--- SKIP:' darwin-test.log | grep -Ev "${intentional_skip_pattern}" || true)"
           if [[ -n "${unexpected_skips}" ]]; then
             echo "Darwin tests were skipped; refusing to pass CI."
             echo "${unexpected_skips}"
@@ -106,8 +108,8 @@ jobs:
             echo "CGO-free Darwin loader thread-affinity test was skipped; refusing to pass CI."
             exit 1
           fi
-          CGO_ENABLED=0 go test -tags bof ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestLoadBOFWithOptions)$' -count=1 -v | tee darwin-bof-nocgo-test.log
-          for test_name in TestLoadAndExecuteGeneratedBOF TestLoadAndExecuteLegacyDarwinELFBOF TestLoadBOFWithOptions; do
+          CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions)$' -count=1 -v | tee darwin-bof-nocgo-test.log
+          for test_name in TestLoadAndExecuteGeneratedBOF TestLoadAndExecuteLegacyDarwinELFBOF TestBOFLoadWithOptions; do
             if ! grep -Fq -- "--- PASS: ${test_name} " darwin-bof-nocgo-test.log; then
               echo "Required CGO-free Darwin BOF execution test did not pass: ${test_name}"
               exit 1
@@ -117,7 +119,7 @@ jobs:
             echo "CGO-free Darwin BOF execution test was skipped; refusing to pass CI."
             exit 1
           fi
-          CGO_ENABLED=0 go test -tags bof ./integration -run '^TestSituationalAwarenessBOFCorpus$' -count=1 -v | tee darwin-bof-corpus-test.log
+          CGO_ENABLED=0 go test ./integration -run '^TestSituationalAwarenessBOFCorpus$' -count=1 -v | tee darwin-bof-corpus-test.log
           if ! grep -Fq -- '--- PASS: TestSituationalAwarenessBOFCorpus ' darwin-bof-corpus-test.log; then
             echo "Required Darwin BOF corpus execution test did not pass"
             exit 1
@@ -178,8 +180,9 @@ jobs:
       - name: Run Linux C, Go, and Rust fixture tests
         run: |
           set -euo pipefail
-          CGO_ENABLED=0 go test -tags bof . ./internal/bofloader -count=1
-          go test ./... -skip '^TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)$' -count=1 -v | tee linux-test.log
+          CGO_ENABLED=0 go test ./bof ./internal/bofloader -count=1
+          intentional_skip_pattern='TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)|TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions|TestSituationalAwarenessBOFCorpus(Child)?'
+          go test ./... -skip "${intentional_skip_pattern}" -count=1 -v | tee linux-test.log
           for test_name in \
             TestLoadGeneratedCLinuxSOAndCallStartW \
             TestLoadGeneratedGoLinuxSOAndCallStartW \
@@ -189,6 +192,7 @@ jobs:
             TestLoadGeneratedRustSharedLibraryRecursiveMode \
             TestLoadLibraryRecursiveDependencies \
             TestCallExportWithArgs \
+            TestBOFPackageDependencyGraphIsIsolated \
             TestNativePackageCallExport \
             TestNativePackageRejectsGoCSharedImage \
             TestNativePackageLinuxDependencyGraphIsIsolated \
@@ -202,7 +206,7 @@ jobs:
               exit 1
             fi
           done
-          unexpected_skips="$(grep -E '^--- SKIP:' linux-test.log | grep -Ev 'TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)' || true)"
+          unexpected_skips="$(grep -E '^--- SKIP:' linux-test.log | grep -Ev "${intentional_skip_pattern}" || true)"
           if [[ -n "${unexpected_skips}" ]]; then
             echo "Linux tests were skipped; refusing to pass CI."
             echo "${unexpected_skips}"
@@ -222,8 +226,8 @@ jobs:
               exit 1
             fi
           done
-          CGO_ENABLED=0 go test -tags bof ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestLoadBOFWithOptions)$' -count=1 -v | tee linux-bof-nocgo-test.log
-          for test_name in TestLoadAndExecuteGeneratedBOF TestLoadBOFWithOptions; do
+          CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions)$' -count=1 -v | tee linux-bof-nocgo-test.log
+          for test_name in TestLoadAndExecuteGeneratedBOF TestBOFLoadWithOptions; do
             if ! grep -Fq -- "--- PASS: ${test_name} " linux-bof-nocgo-test.log; then
               echo "Required CGO-free Linux BOF execution test did not pass: ${test_name}"
               exit 1
@@ -233,7 +237,7 @@ jobs:
             echo "CGO-free Linux BOF execution test was skipped; refusing to pass CI."
             exit 1
           fi
-          CGO_ENABLED=0 go test -tags bof ./integration -run '^TestSituationalAwarenessBOFCorpus$' -count=1 -v | tee linux-bof-corpus-test.log
+          CGO_ENABLED=0 go test ./integration -run '^TestSituationalAwarenessBOFCorpus$' -count=1 -v | tee linux-bof-corpus-test.log
           if ! grep -Fq -- '--- PASS: TestSituationalAwarenessBOFCorpus ' linux-bof-corpus-test.log; then
             echo "Required Linux BOF corpus execution test did not pass"
             exit 1
@@ -324,8 +328,9 @@ jobs:
       - name: Run Windows C, Go, and Rust fixture tests
         run: |
           set -euo pipefail
-          CGO_ENABLED=0 go test -tags bof . ./internal/bofloader -count=1
-          go test ./... -skip '^TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)$' -count=1 -v | tee windows-test.log
+          CGO_ENABLED=0 go test ./bof ./internal/bofloader -count=1
+          intentional_skip_pattern='TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)|TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions|TestSituationalAwarenessBOFCorpus(Child)?'
+          go test ./... -skip "${intentional_skip_pattern}" -count=1 -v | tee windows-test.log
           for test_name in \
             TestLoadGeneratedCWindowsDLLAndCallStartW \
             TestLoadGeneratedGoWindowsDLLAndCallStartW \
@@ -335,6 +340,7 @@ jobs:
             TestLoadGeneratedRustSharedLibraryRecursiveMode \
             TestLoadLibraryRecursiveDependencies \
             TestCallExportWithArgs \
+            TestBOFPackageDependencyGraphIsIsolated \
             TestNativePackageCallExport \
             TestNativePackageRejectsGoCSharedImage \
             TestCallExportWithGoCallbackWindows; do
@@ -343,14 +349,14 @@ jobs:
               exit 1
             fi
           done
-          unexpected_skips="$(grep -E '^--- SKIP:' windows-test.log | grep -Ev 'TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)' || true)"
+          unexpected_skips="$(grep -E '^--- SKIP:' windows-test.log | grep -Ev "${intentional_skip_pattern}" || true)"
           if [[ -n "${unexpected_skips}" ]]; then
             echo "Windows tests were skipped; refusing to pass CI."
             echo "${unexpected_skips}"
             exit 1
           fi
-          CGO_ENABLED=0 go test -tags bof ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestLoadBOFWithOptions)$' -count=1 -v | tee windows-bof-nocgo-test.log
-          for test_name in TestLoadAndExecuteGeneratedBOF TestLoadBOFWithOptions; do
+          CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions)$' -count=1 -v | tee windows-bof-nocgo-test.log
+          for test_name in TestLoadAndExecuteGeneratedBOF TestBOFLoadWithOptions; do
             if ! grep -Fq -- "--- PASS: ${test_name} " windows-bof-nocgo-test.log; then
               echo "Required CGO-free Windows BOF execution test did not pass: ${test_name}"
               exit 1
@@ -360,7 +366,7 @@ jobs:
             echo "CGO-free Windows BOF execution test was skipped; refusing to pass CI."
             exit 1
           fi
-          CGO_ENABLED=0 go test -tags bof ./integration -run '^TestSituationalAwarenessBOFCorpus$' -timeout 45m -count=1 -v | tee windows-bof-corpus-test.log
+          CGO_ENABLED=0 go test ./integration -run '^TestSituationalAwarenessBOFCorpus$' -timeout 45m -count=1 -v | tee windows-bof-corpus-test.log
           if ! grep -Fq -- '--- PASS: TestSituationalAwarenessBOFCorpus ' windows-bof-corpus-test.log; then
             echo "Required Windows BOF corpus execution test did not pass"
             exit 1
@@ -399,7 +405,7 @@ jobs:
             echo "The complete recursive C fixture build matrix did not pass."
             exit 1
           fi
-          CGO_ENABLED=0 go test -tags bof ./integration -run '^TestBuildBOFMatrix$' -count=1 -v | tee bof-fixture-build-test.log
+          CGO_ENABLED=0 go test ./integration -run '^TestBuildBOFMatrix$' -count=1 -v | tee bof-fixture-build-test.log
           if ! grep -Fq -- '--- PASS: TestBuildBOFMatrix ' bof-fixture-build-test.log; then
             echo "The complete BOF fixture build matrix did not pass."
             exit 1
@@ -446,14 +452,12 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Build default and BOF-tagged packages without cgo
+      - name: Build all packages with BOF support without cgo or tags
         run: |
           set -euo pipefail
           while read -r goos goarch; do
-            echo "Building default packages for ${goos}/${goarch} with CGO_ENABLED=0"
+            echo "Building all packages for ${goos}/${goarch} with CGO_ENABLED=0"
             CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go build -trimpath ./...
-            echo "Building BOF packages for ${goos}/${goarch} with CGO_ENABLED=0"
-            CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go build -tags bof -trimpath ./...
           done <<'TARGETS'
           darwin amd64
           darwin arm64

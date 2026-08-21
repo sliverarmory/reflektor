@@ -1,4 +1,4 @@
-//go:build bof && windows && (386 || amd64 || arm64)
+//go:build windows && (386 || amd64 || arm64)
 
 package reflektor_test
 

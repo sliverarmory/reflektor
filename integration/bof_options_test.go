@@ -1,5 +1,3 @@
-//go:build bof
-
 package reflektor_test
 
 import (
@@ -11,12 +9,12 @@ import (
 	"testing"
 	"unsafe"
 
-	reflektor "github.com/sliverarmory/reflektor"
+	"github.com/sliverarmory/reflektor/bof"
 )
 
 var bofOptionsHostData = uintptr(0x43)
 
-func TestLoadBOFWithOptions(t *testing.T) {
+func TestBOFLoadWithOptions(t *testing.T) {
 	requireCommand(t, "zig")
 	target, ok := nativeBOFTarget()
 	if !ok {
@@ -38,10 +36,10 @@ func TestLoadBOFWithOptions(t *testing.T) {
 
 	denied := errors.New("test import policy denied object")
 	resolverCalled := false
-	if loaded, loadErr := reflektor.LoadBOFWithOptions(image, reflektor.BOFLoadOptions{
+	if loaded, loadErr := bof.LoadWithOptions(image, bof.LoadOptions{
 		EntryPoint:      entryPoint,
-		ValidateImports: func([]reflektor.BOFImport) error { return denied },
-		ResolveSymbol: func(reflektor.BOFImport) (uintptr, bool, error) {
+		ValidateImports: func([]bof.Import) error { return denied },
+		ResolveSymbol: func(bof.Import) (uintptr, bool, error) {
 			resolverCalled = true
 			return 0, false, nil
 		},
@@ -60,14 +58,14 @@ func TestLoadBOFWithOptions(t *testing.T) {
 	resolvedHostValue := false
 	resolvedHostData := false
 	resolvedPrivileged := false
-	loaded, err := reflektor.LoadBOFWithOptions(image, reflektor.BOFLoadOptions{
+	loaded, err := bof.LoadWithOptions(image, bof.LoadOptions{
 		EntryPoint: entryPoint,
-		ValidateImports: func(imports []reflektor.BOFImport) error {
+		ValidateImports: func(imports []bof.Import) error {
 			validated = true
 			assertBOFOptionsImports(t, imports)
 			return nil
 		},
-		ResolveSymbol: func(imported reflektor.BOFImport) (uintptr, bool, error) {
+		ResolveSymbol: func(imported bof.Import) (uintptr, bool, error) {
 			if !validated {
 				t.Fatal("ResolveSymbol ran before ValidateImports")
 			}
@@ -93,14 +91,14 @@ func TestLoadBOFWithOptions(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("LoadBOFWithOptions() error = %v", err)
+		t.Fatalf("bof.LoadWithOptions() error = %v", err)
 	}
 	defer loaded.Close()
 	if !validated || !resolvedHostValue || runtime.GOOS == "darwin" && !resolvedHostData || !resolvedPrivileged {
 		t.Fatalf("options callbacks: validated=%v hostValue=%v hostData=%v privileged=%v", validated, resolvedHostValue, resolvedHostData, resolvedPrivileged)
 	}
 
-	var arguments reflektor.BOFArguments
+	var arguments bof.Arguments
 	if err := arguments.AddString(""); err != nil {
 		t.Fatal(err)
 	}
@@ -111,13 +109,13 @@ func TestLoadBOFWithOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	if len(outputs) != 1 || outputs[0].Type != reflektor.BOFOutputDefault || string(outputs[0].Data) != "bof-options-ok" {
+	if len(outputs) != 1 || outputs[0].Type != bof.OutputDefault || string(outputs[0].Data) != "bof-options-ok" {
 		t.Fatalf("Execute() outputs = %#v", outputs)
 	}
 	if err := loaded.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
-	resolveFixtureImport := func(imported reflektor.BOFImport) (uintptr, bool, error) {
+	resolveFixtureImport := func(imported bof.Import) (uintptr, bool, error) {
 		if strings.Contains(imported.Name, "HostResolvedValue") || strings.Contains(imported.Name, "BeaconInjectProcess") {
 			return callback, true, nil
 		}
@@ -138,9 +136,9 @@ func TestLoadBOFWithOptions(t *testing.T) {
 		t.Run(test.name+" entry", func(t *testing.T) {
 			selected := exactBOFFixtureSymbol(target, test.entryPoint)
 			invalidResolverCalled := false
-			invalid, loadErr := reflektor.LoadBOFWithOptions(image, reflektor.BOFLoadOptions{
+			invalid, loadErr := bof.LoadWithOptions(image, bof.LoadOptions{
 				EntryPoint: selected,
-				ResolveSymbol: func(imported reflektor.BOFImport) (uintptr, bool, error) {
+				ResolveSymbol: func(imported bof.Import) (uintptr, bool, error) {
 					invalidResolverCalled = true
 					return resolveFixtureImport(imported)
 				},
@@ -149,7 +147,7 @@ func TestLoadBOFWithOptions(t *testing.T) {
 				_ = invalid.Close()
 			}
 			if loadErr == nil || !strings.Contains(loadErr.Error(), test.wantError) {
-				t.Fatalf("LoadBOFWithOptions(entry=%q) = %#v, %v", selected, invalid, loadErr)
+				t.Fatalf("bof.LoadWithOptions(entry=%q) = %#v, %v", selected, invalid, loadErr)
 			}
 			if invalidResolverCalled {
 				t.Fatal("ResolveSymbol ran for an invalid entry point")
@@ -157,9 +155,9 @@ func TestLoadBOFWithOptions(t *testing.T) {
 		})
 	}
 
-	_, err = reflektor.LoadBOFWithOptions(image, reflektor.BOFLoadOptions{
+	_, err = bof.LoadWithOptions(image, bof.LoadOptions{
 		EntryPoint: entryPoint,
-		ResolveSymbol: func(imported reflektor.BOFImport) (uintptr, bool, error) {
+		ResolveSymbol: func(imported bof.Import) (uintptr, bool, error) {
 			if strings.Contains(imported.Name, "HostResolvedValue") {
 				return callback, true, nil
 			}
@@ -227,7 +225,7 @@ func validateMachOOptionsGOTRelocations(t *testing.T, path, arch string) {
 	}
 }
 
-func assertBOFOptionsImports(t *testing.T, imports []reflektor.BOFImport) {
+func assertBOFOptionsImports(t *testing.T, imports []bof.Import) {
 	t.Helper()
 	want := map[string]bool{
 		"BeaconDataParse":         false,

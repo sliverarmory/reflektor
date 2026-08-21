@@ -1,5 +1,3 @@
-//go:build bof
-
 package reflektor_test
 
 import (
@@ -20,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	reflektor "github.com/sliverarmory/reflektor"
+	"github.com/sliverarmory/reflektor/bof"
 )
 
 const (
@@ -139,9 +137,9 @@ func TestSituationalAwarenessBOFCorpusChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := reflektor.LoadBOFFile(objectPath)
+	loaded, err := bof.LoadFile(objectPath)
 	if err != nil {
-		t.Fatalf("LoadBOFFile(%s): %v", artifact.Path, err)
+		t.Fatalf("bof.LoadFile(%s): %v", artifact.Path, err)
 	}
 	outputs, executeErr := loaded.Execute(arguments)
 	closeErr := loaded.Close()
@@ -416,7 +414,7 @@ func runBOFCorpusArtifact(t *testing.T, repository string, artifact bofCorpusArt
 
 func packBOFCorpusArguments(t *testing.T, arguments []bofCorpusArgument) []byte {
 	t.Helper()
-	var packed reflektor.BOFArguments
+	var packed bof.Arguments
 	for index, argument := range arguments {
 		var err error
 		switch argument.Type {
@@ -500,7 +498,7 @@ func replaceCorpusVariables(value string, replacements map[string]string) (strin
 	return value, nil
 }
 
-func assertBOFCorpusOutput(t *testing.T, artifact bofCorpusArtifact, outputs []reflektor.BOFOutput) {
+func assertBOFCorpusOutput(t *testing.T, artifact bofCorpusArtifact, outputs []bof.Output) {
 	t.Helper()
 	if len(outputs) < artifact.Expect.MinCallbacks {
 		t.Fatalf("%s emitted %d callback(s), want at least %d", artifact.Path, len(outputs), artifact.Expect.MinCallbacks)
@@ -534,7 +532,7 @@ func assertBOFCorpusOutput(t *testing.T, artifact bofCorpusArtifact, outputs []r
 	t.Fatalf("%s output did not contain any of %q; output=%q", artifact.Path, artifact.Expect.ContainsAny, truncateBOFOutput(combined.Bytes(), 4096))
 }
 
-func bofOutputLength(outputs []reflektor.BOFOutput) int {
+func bofOutputLength(outputs []bof.Output) int {
 	total := 0
 	for _, output := range outputs {
 		total += len(output.Data)

@@ -20,7 +20,7 @@ BEACON_IMPORT char *BeaconDataExtractOrNull(datap *parser, int32_t *size);
 BEACON_IMPORT void BeaconOutput(int32_t type, char *data, int32_t length);
 BEACON_IMPORT int32_t toWideChar(char *source, bof_wchar_t *destination, int32_t maximum);
 
-// These imports are intentionally supplied by BOFLoadOptions.ResolveSymbol.
+// These imports are intentionally supplied by bof.LoadOptions.ResolveSymbol.
 BEACON_IMPORT uintptr_t HostResolvedValue(void);
 BEACON_IMPORT void BeaconInjectProcess(void);
 #if defined(BOF_DARWIN)

@@ -2,7 +2,9 @@
 
 <img align="right" src=".github/images/reflektor.png" alt="Reflektor" width="300">
 
-Reflektor is a Go library and CLI for loading shared libraries from bytes and invoking exported functions.
+Reflektor is a Go library and CLI for loading shared libraries from bytes and
+invoking exported functions. Its `bof` subpackage loads and executes native
+Beacon Object Files.
 
 It exposes a stable root package (`reflektor`) so other projects can import it directly, while platform-specific loading is handled behind `memmod`.
 
@@ -87,15 +89,19 @@ use origin-relative names such as `$ORIGIN`, `@loader_path`, or `@rpath`.
 
 ## Beacon Object Files
 
-BOF loading is an opt-in capability. Build the importing program with the
-`bof` tag; ordinary builds retain the API but `LoadBOF`, `LoadBOFFile`, and
-their `WithOptions` variants return `ErrBOFDisabled`:
+BOF loading is provided by a separate, tag-free package:
 
-```bash
-CGO_ENABLED=0 go build -tags bof ./...
+```go
+import "github.com/sliverarmory/reflektor/bof"
 ```
 
-`LoadBOF` accepts the native relocatable-object convention used by each host:
+No CGO or custom build tags are required. The package boundary keeps the BOF
+parser, relocator, native callback bridge, and Beacon compatibility layer out
+of shared-library-only consumers. BOF-only consumers can likewise import this
+subpackage without pulling in the root package's `memmod` shared-library
+backend.
+
+`bof.Load` accepts the native relocatable-object convention used by each host:
 
 | Host | BOF object format | Entry ABI |
 | --- | --- | --- |
@@ -112,19 +118,19 @@ Linux-targeted arm64 objects must explicitly reserve x18.
 Windows COFF machine code is not portable to Linux or Darwin.
 
 ```go
-var arguments reflektor.BOFArguments
+var arguments bof.Arguments
 _ = arguments.AddString("example")
 
-bof, err := reflektor.LoadBOF(objectBytes)
+loaded, err := bof.Load(objectBytes)
 if err != nil {
     return err
 }
-defer bof.Close()
+defer loaded.Close()
 
-records, err := bof.Execute(arguments.Bytes())
+records, err := loaded.Execute(arguments.Bytes())
 ```
 
-Use `LoadBOFWithOptions` (or `LoadBOFFileWithOptions`) when the host needs an
+Use `bof.LoadWithOptions` (or `bof.LoadFileWithOptions`) when the host needs an
 exact entry symbol or an import boundary. `ValidateImports` receives a sorted,
 owned snapshot before image allocation, callback registration, or dynamic
 library lookup. `ResolveSymbol` can then supply stable native function or data
@@ -268,8 +274,8 @@ Linux cross-arch Docker harness:
 ## Repository Layout
 
 - `reflektor/reflektor.go`: root importable package (`reflektor`).
-- `reflektor/bof.go`: build-tag-neutral BOF API and argument encoder.
-- `reflektor/internal/bofloader`: `bof`-tagged COFF/ELF/Mach-O loader and Beacon bridge.
+- `reflektor/bof`: public, tag-free BOF API and argument encoder.
+- `reflektor/internal/bofloader`: internal COFF/ELF/Mach-O loader and Beacon bridge.
 - `reflektor/native`: tag-free native C/Rust-only package.
 - `reflektor/memmod`: OS-specific loader backends.
 - `reflektor/cli`: CLI entrypoint.

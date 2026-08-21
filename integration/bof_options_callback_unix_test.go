@@ -1,4 +1,4 @@
-//go:build bof && ((darwin && (amd64 || arm64)) || (linux && (386 || amd64 || arm64)))
+//go:build (darwin && (amd64 || arm64)) || (linux && (386 || amd64 || arm64))
 
 package reflektor_test
 

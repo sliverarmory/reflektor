@@ -1,5 +1,3 @@
-//go:build bof
-
 package reflektor_test
 
 import (
@@ -18,7 +16,7 @@ import (
 	"sync"
 	"testing"
 
-	reflektor "github.com/sliverarmory/reflektor"
+	"github.com/sliverarmory/reflektor/bof"
 )
 
 type bofTarget struct {
@@ -80,9 +78,6 @@ func validateDarwinARM64ReservedRegister(t *testing.T, path string) {
 }
 
 func TestLoadAndExecuteGeneratedBOF(t *testing.T) {
-	if !reflektor.BOFEnabled {
-		t.Fatal("BOFEnabled = false in a bof-tagged test")
-	}
 	requireCommand(t, "zig")
 	target, ok := nativeBOFTarget()
 	if !ok {
@@ -101,13 +96,13 @@ func testLoadAndExecuteGeneratedBOF(t *testing.T, target bofTarget) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := reflektor.LoadBOF(image)
+	loaded, err := bof.Load(image)
 	if err != nil {
-		t.Fatalf("LoadBOF() error = %v", err)
+		t.Fatalf("bof.Load() error = %v", err)
 	}
 	defer loaded.Close()
 
-	var arguments reflektor.BOFArguments
+	var arguments bof.Arguments
 	if err := arguments.AddInt32(0x12345678); err != nil {
 		t.Fatal(err)
 	}
@@ -125,9 +120,9 @@ func testLoadAndExecuteGeneratedBOF(t *testing.T, target bofTarget) {
 			return
 		}
 		if len(outputs) != 3 ||
-			outputs[0].Type != reflektor.BOFOutputDefault || string(outputs[0].Data) != "bof-e2e-ok" ||
-			outputs[1].Type != reflektor.BOFOutputDefault || string(outputs[1].Data) != "bof-printf=7:callback-ok" ||
-			outputs[2].Type != reflektor.BOFOutputDefault || string(outputs[2].Data) != "bof-pic-defined-global" {
+			outputs[0].Type != bof.OutputDefault || string(outputs[0].Data) != "bof-e2e-ok" ||
+			outputs[1].Type != bof.OutputDefault || string(outputs[1].Data) != "bof-printf=7:callback-ok" ||
+			outputs[2].Type != bof.OutputDefault || string(outputs[2].Data) != "bof-pic-defined-global" {
 			t.Errorf("Execute() outputs = %#v", outputs)
 		}
 	}
@@ -147,8 +142,8 @@ func testLoadAndExecuteGeneratedBOF(t *testing.T, target bofTarget) {
 	if err := loaded.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
-	if _, err := loaded.Execute(arguments.Bytes()); err != reflektor.ErrBOFClosed {
-		t.Fatalf("Execute() after Close error = %v, want ErrBOFClosed", err)
+	if _, err := loaded.Execute(arguments.Bytes()); err != bof.ErrClosed {
+		t.Fatalf("Execute() after Close error = %v, want bof.ErrClosed", err)
 	}
 }
 

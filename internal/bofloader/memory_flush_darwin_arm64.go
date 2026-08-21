@@ -1,4 +1,4 @@
-//go:build bof && darwin && arm64
+//go:build darwin && arm64
 
 package bofloader
 
