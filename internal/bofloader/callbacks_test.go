@@ -130,6 +130,27 @@ func TestBeaconPrintfFormatting(t *testing.T) {
 	}
 }
 
+func TestBeaconPrintfWidePrecisionDoesNotSplitUTF8(t *testing.T) {
+	format := append([]byte("%.1ls|%.2ls|%.3ls"), 0)
+	var wide16 = [...]uint16{'é', 'x', 0}
+	var wide32 = [...]uint32{'é', 'x', 0}
+	wideAddress := uintptr(unsafe.Pointer(&wide32[0]))
+	if runtime.GOOS == "windows" {
+		wideAddress = uintptr(unsafe.Pointer(&wide16[0]))
+	}
+	formatted, err := formatPrintf(byteSliceAddress(format), [maxPrintfArgument]uintptr{
+		wideAddress, wideAddress, wideAddress,
+	})
+	runtime.KeepAlive(wide16)
+	runtime.KeepAlive(wide32)
+	if err != nil {
+		t.Fatalf("formatPrintf() error = %v", err)
+	}
+	if formatted != "|é|éx" {
+		t.Fatalf("formatPrintf() = %q, want %q", formatted, "|é|éx")
+	}
+}
+
 func TestBeaconCallbackResolution(t *testing.T) {
 	for _, name := range []string{
 		"BeaconOutput", "_BeaconOutput", "__imp_BeaconOutput", "__imp__BeaconOutput@12",

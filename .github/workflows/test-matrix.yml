@@ -35,7 +35,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: sliverarmory/Situational-Awareness-BOFs
-          ref: bofs
+          ref: 693174ff525595c5ec61b08fdccb5f057ad52c94
           path: test/corpus/Situational-Awareness-BOFs
           fetch-depth: 1
           persist-credentials: false
@@ -156,7 +156,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: sliverarmory/Situational-Awareness-BOFs
-          ref: bofs
+          ref: 693174ff525595c5ec61b08fdccb5f057ad52c94
           path: test/corpus/Situational-Awareness-BOFs
           fetch-depth: 1
           persist-credentials: false
@@ -264,7 +264,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: sliverarmory/Situational-Awareness-BOFs
-          ref: bofs
+          ref: 693174ff525595c5ec61b08fdccb5f057ad52c94
           path: test/corpus/Situational-Awareness-BOFs
           fetch-depth: 1
           persist-credentials: false
@@ -308,7 +308,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: sliverarmory/Situational-Awareness-BOFs
-          ref: bofs
+          ref: 693174ff525595c5ec61b08fdccb5f057ad52c94
           path: test/corpus/Situational-Awareness-BOFs
           fetch-depth: 1
           persist-credentials: false

@@ -23,9 +23,7 @@ BEACON_IMPORT int32_t toWideChar(char *source, bof_wchar_t *destination, int32_t
 // These imports are intentionally supplied by bof.LoadOptions.ResolveSymbol.
 BEACON_IMPORT uintptr_t HostResolvedValue(void);
 BEACON_IMPORT void BeaconInjectProcess(void);
-#if defined(BOF_DARWIN)
 extern BEACON_IMPORT uintptr_t HostResolvedData;
-#endif
 
 char bof_options_global[] = "not-an-entry";
 
@@ -64,11 +62,9 @@ void custom_entry(char *buffer, int32_t length) {
         BeaconOutput(13, failure, (int32_t)(sizeof(failure) - 1));
         return;
     }
-#if defined(BOF_DARWIN)
     if (HostResolvedData != (uintptr_t)0x43) {
         BeaconOutput(13, failure, (int32_t)(sizeof(failure) - 1));
         return;
     }
-#endif
     BeaconOutput(0, success, (int32_t)(sizeof(success) - 1));
 }

@@ -11,27 +11,34 @@ import (
 
 func TestCOFFAMD64ExternalLinkage(t *testing.T) {
 	tests := []struct {
-		name       string
-		symbolName string
-		wantTarget uint64
+		name         string
+		symbolName   string
+		instruction  []byte
+		relocationAt uint64
+		protection   protection
+		wantTarget   uint64
 	}{
-		{name: "direct call uses thunk", symbolName: "memcpy", wantTarget: 0x1800},
-		{name: "dllimport call uses GOT slot", symbolName: "__imp_KERNEL32$GetLastError", wantTarget: 0x1c00},
+		{name: "direct call uses thunk", symbolName: "memcpy", instruction: []byte{0xe8, 0, 0, 0, 0}, relocationAt: 1, protection: protRead | protExec, wantTarget: 0x1800},
+		{name: "tail call uses thunk", symbolName: "memcpy", instruction: []byte{0xe9, 0, 0, 0, 0}, relocationAt: 1, protection: protRead | protExec, wantTarget: 0x1800},
+		{name: "direct data load uses resolver address", symbolName: "HostResolvedData", instruction: []byte{0x48, 0x8b, 0x05, 0, 0, 0, 0}, relocationAt: 3, protection: protRead | protExec, wantTarget: 0x2800},
+		{name: "data bytes do not imply call", symbolName: "HostResolvedData", instruction: []byte{0xe8, 0, 0, 0, 0}, relocationAt: 1, protection: protRead, wantTarget: 0x2800},
+		{name: "dllimport call uses GOT slot", symbolName: "__imp_KERNEL32$GetLastError", instruction: []byte{0xff, 0x15, 0, 0, 0, 0}, relocationAt: 2, protection: protRead | protExec, wantTarget: 0x1c00},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			location := make([]byte, 4)
+			location := test.instruction[test.relocationAt : test.relocationAt+4]
 			linked := linkedSymbol{
-				symbol: objectSymbol{name: test.symbolName, section: sectionUndefined},
+				symbol:  objectSymbol{name: test.symbolName, section: sectionUndefined},
+				address: 0x2800,
 				external: &externalSymbol{
-					target: 0x9000,
+					target: 0x2800,
 					thunk:  uintptr(0x1800),
 					got:    uintptr(0x1c00),
 				},
 			}
 			err := applyCOFFAMD64Relocation(
-				&objectFile{imageBase: 0x1000},
-				objectRelocation{typeID: coffAMD64Rel32},
+				&objectFile{imageBase: 0x1000, sections: []objectSection{{data: test.instruction, protection: test.protection}}},
+				objectRelocation{section: 0, offset: test.relocationAt, typeID: coffAMD64Rel32},
 				location,
 				0x2000,
 				linked,
@@ -44,6 +51,51 @@ func TestCOFFAMD64ExternalLinkage(t *testing.T) {
 				t.Fatalf("relocation = %d, want %d", got, want)
 			}
 		})
+	}
+}
+
+func TestCOFFARM64Rel32UsesDirectSymbol(t *testing.T) {
+	location := make([]byte, 4)
+	linked := linkedSymbol{
+		symbol:  objectSymbol{name: "HostResolvedData", section: sectionUndefined},
+		address: 0x2800,
+		external: &externalSymbol{
+			target: 0x2800,
+			thunk:  0x1800,
+		},
+	}
+	if err := applyCOFFARM64Relocation(
+		&objectFile{imageBase: 0x1000},
+		objectRelocation{typeID: coffARM64Rel32},
+		location,
+		0x2000,
+		linked,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := int32(binary.LittleEndian.Uint32(location)), int32(0x2800-0x2000-4); got != want {
+		t.Fatalf("relocation = %d, want %d", got, want)
+	}
+}
+
+func TestCOFFI386Rel32CallUsesDirectTargetAcrossAddressSpace(t *testing.T) {
+	instruction := []byte{0xe8, 0, 0, 0, 0}
+	location := instruction[1:]
+	linked := linkedSymbol{
+		symbol:  objectSymbol{name: "high", section: sectionUndefined},
+		address: 0xf0000000,
+		external: &externalSymbol{
+			target: 0xf0000000,
+			thunk:  0x1800,
+		},
+	}
+	object := &objectFile{sections: []objectSection{{data: instruction, protection: protRead | protExec}}}
+	relocation := objectRelocation{section: 0, offset: 1, typeID: coffI386Rel32}
+	if err := applyCOFFI386Relocation(object, relocation, location, 0x10000000, linked); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := binary.LittleEndian.Uint32(location), uint32(0xdffffffc); got != want {
+		t.Fatalf("wrapped REL32 = %#x, want %#x", got, want)
 	}
 }
 
@@ -93,6 +145,39 @@ func TestELFI386PICRelocations(t *testing.T) {
 		}
 		if got, want := int32(binary.LittleEndian.Uint32(location)), int32(0x1800-4-0x2000); got != want {
 			t.Fatalf("PLT32 = %d, want %d", got, want)
+		}
+	})
+
+	pc32Linked := linkedSymbol{
+		symbol:  objectSymbol{index: 2, name: "HostResolvedData", section: sectionUndefined},
+		address: 0x2800,
+		external: &externalSymbol{
+			target: 0x2800,
+			thunk:  0x1800,
+		},
+	}
+
+	t.Run("PC32 uses direct target", func(t *testing.T) {
+		location := make([]byte, 4)
+		binary.LittleEndian.PutUint32(location, math.MaxUint32-3)
+		relocation := objectRelocation{typeID: uint32(elf.R_386_PC32)}
+		if err := applyELFI386Relocation(relocation, location, 0x2000, pc32Linked, externals); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := int32(binary.LittleEndian.Uint32(location)), int32(0x2800-4-0x2000); got != want {
+			t.Fatalf("PC32 = %d, want %d", got, want)
+		}
+	})
+
+	t.Run("PC32 wraps across address space", func(t *testing.T) {
+		location := make([]byte, 4)
+		relocation := objectRelocation{typeID: uint32(elf.R_386_PC32)}
+		linked := linkedSymbol{symbol: objectSymbol{name: "high", section: sectionUndefined}, address: 0xf0000000}
+		if err := applyELFI386Relocation(relocation, location, 0x10000000, linked, nil); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := binary.LittleEndian.Uint32(location), uint32(0xe0000000); got != want {
+			t.Fatalf("wrapped PC32 = %#x, want %#x", got, want)
 		}
 	})
 }

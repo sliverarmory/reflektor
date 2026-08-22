@@ -128,7 +128,7 @@ func applyCOFFAMD64Relocation(object *objectFile, relocation objectRelocation, l
 	case coffAMD64Rel32, coffAMD64Rel32_1, coffAMD64Rel32_2,
 		coffAMD64Rel32_3, coffAMD64Rel32_4, coffAMD64Rel32_5:
 		bias := uint64(4 + relocation.typeID - coffAMD64Rel32)
-		value, err := relativeValue(coffLinkedAddress(linked, true), addend, place, bias)
+		value, err := relativeValue(coffAMD64RelativeAddress(object, relocation, linked), addend, place, bias)
 		if err != nil {
 			return err
 		}
@@ -180,11 +180,11 @@ func applyCOFFI386Relocation(object *objectFile, relocation objectRelocation, lo
 	case coffI386SecRel:
 		return applyCOFFSecRelRelocation(location, addend, linked)
 	case coffI386Rel32:
-		value, err := relativeValue(coffLinkedAddress(linked, true), addend, place, 4)
+		value, err := relativeValue32(coffLinkedAddress(linked, false), addend, place, 4)
 		if err != nil {
 			return err
 		}
-		return putInt32(location, value)
+		return putUint32(location, uint64(value))
 	default:
 		return fmt.Errorf("unsupported COFF/386 relocation")
 	}
@@ -227,7 +227,7 @@ func applyCOFFARM64Relocation(object *objectFile, relocation objectRelocation, l
 		case coffARM64SecRel:
 			return applyCOFFSecRelRelocation(location, addend, linked)
 		case coffARM64Rel32:
-			value, err := relativeValue(coffLinkedAddress(linked, true), addend, place, 4)
+			value, err := relativeValue(coffLinkedAddress(linked, false), addend, place, 4)
 			if err != nil {
 				return err
 			}
@@ -278,6 +278,36 @@ func applyCOFFARM64Relocation(object *objectFile, relocation objectRelocation, l
 		}
 	}
 	return fmt.Errorf("unsupported COFF/arm64 relocation")
+}
+
+func coffAMD64RelativeAddress(object *objectFile, relocation objectRelocation, linked linkedSymbol) uint64 {
+	if linked.external == nil || coffImportPointerSymbol(linked.symbol.name) {
+		return coffLinkedAddress(linked, false)
+	}
+	if coffAMD64RelativeBranch(object, relocation) {
+		return coffLinkedAddress(linked, true)
+	}
+	return coffLinkedAddress(linked, false)
+}
+
+func coffAMD64RelativeBranch(object *objectFile, relocation objectRelocation) bool {
+	// Undefined COFF symbols do not reliably retain function/data type
+	// metadata. Inspect relocation sites in executable sections instead. If the
+	// bytes are unavailable, resolving the symbol directly is safer than
+	// treating data as executable thunk bytes.
+	if object == nil || relocation.section < 0 || relocation.section >= len(object.sections) {
+		return false
+	}
+	section := object.sections[relocation.section]
+	if section.protection&protExec == 0 || relocation.offset == 0 || relocation.offset > uint64(len(section.data)) {
+		return false
+	}
+	offset := int(relocation.offset)
+	opcode := section.data[offset-1]
+	if opcode == 0xe8 || opcode == 0xe9 {
+		return true
+	}
+	return opcode >= 0x80 && opcode <= 0x8f && offset >= 2 && section.data[offset-2] == 0x0f
 }
 
 func applyCOFFSectionRelocation(location []byte, addend int64, linked linkedSymbol) error {

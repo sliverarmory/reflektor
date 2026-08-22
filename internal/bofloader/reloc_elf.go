@@ -209,7 +209,13 @@ func applyELFI386Relocation(relocation objectRelocation, location []byte, place 
 			return err
 		}
 		return putUint32(location, value)
-	case elf.R_386_PC32, elf.R_386_PLT32:
+	case elf.R_386_PC32:
+		value, err := relativeValue32(directLinkedAddress(linked), addend, place, 0)
+		if err != nil {
+			return err
+		}
+		return putUint32(location, uint64(value))
+	case elf.R_386_PLT32:
 		value, err := relativeValue(thunkLinkedAddress(linked), addend, place, 0)
 		if err != nil {
 			return err

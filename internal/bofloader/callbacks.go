@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"unicode/utf16"
+	"unicode/utf8"
 	"unsafe"
 )
 
@@ -84,9 +85,7 @@ func normalizeImportedSymbol(symbol string) string {
 	name := strings.TrimSpace(symbol)
 	if strings.HasPrefix(name, "__imp_") {
 		name = strings.TrimPrefix(name, "__imp_")
-		if strings.HasPrefix(name, "_") {
-			name = name[1:]
-		}
+		name = strings.TrimPrefix(name, "_")
 	}
 	name = trimStdcallSuffix(name)
 	if strings.HasPrefix(name, "_") && (strings.HasPrefix(name[1:], "Beacon") || name[1:] == "toWideChar") {
@@ -474,7 +473,7 @@ func formatPrintf(address uintptr, values [maxPrintfArgument]uintptr) (string, e
 			index++
 		}
 		flags := format[flagsStart:index]
-		width := -1
+		var width int
 		if index < len(format) && format[index] == '*' {
 			value, argumentErr := arguments.next(32)
 			if argumentErr != nil {
@@ -802,7 +801,11 @@ func readWideCStringAtMost(address uintptr, byteLimit int) (string, error) {
 		return "", err
 	}
 	if len(text) > byteLimit {
-		text = text[:byteLimit]
+		end := byteLimit
+		for end > 0 && !utf8.RuneStart(text[end]) {
+			end--
+		}
+		text = text[:end]
 	}
 	return text, nil
 }

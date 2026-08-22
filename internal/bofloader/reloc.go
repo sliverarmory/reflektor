@@ -251,6 +251,22 @@ func relativeValue(target uint64, addend int64, place uint64, bias uint64) (int6
 	return signedDifference(value, reference)
 }
 
+func relativeValue32(target uint64, addend int64, place uint64, bias uint64) (uint32, error) {
+	if target > math.MaxUint32 {
+		return 0, fmt.Errorf("relocation target %#x exceeds 32-bit address space", target)
+	}
+	if place > math.MaxUint32 {
+		return 0, fmt.Errorf("relocation place %#x exceeds 32-bit address space", place)
+	}
+	if bias > math.MaxUint32 {
+		return 0, fmt.Errorf("relocation bias %#x exceeds 32 bits", bias)
+	}
+	// On 32-bit x86, S + A - P is computed modulo 2^32. The resulting bit
+	// pattern remains valid even when the mathematical difference falls outside
+	// the signed int32 range.
+	return uint32(target) + uint32(addend) - uint32(place) - uint32(bias), nil
+}
+
 func signedDifference(left, right uint64) (int64, error) {
 	if left >= right {
 		difference := left - right

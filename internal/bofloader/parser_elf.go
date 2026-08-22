@@ -110,7 +110,7 @@ func parseELF(data []byte) (object *objectFile, err error) {
 	commonSymbols := make([]uint32, 0)
 	for position, raw := range symbols {
 		index := uint32(position + 1) // debug/elf omits ELF symbol table entry zero.
-		section := sectionUndefined
+		var section int
 		value := raw.Value
 		switch raw.Section {
 		case elf.SHN_UNDEF:

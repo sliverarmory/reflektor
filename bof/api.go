@@ -61,7 +61,9 @@ type LoadOptions struct {
 	// resolver, except for RequiresHost imports, which fail explicitly. Any
 	// returned error aborts loading. A handled address must be nonzero and
 	// remain valid until the loaded BOF is closed. The resolver is called at
-	// most once for each exact imported name during each load.
+	// most once for each exact imported name during each load. Data imports
+	// must use the object's native indirection convention when required; for
+	// example, Windows data declarations should use __declspec(dllimport).
 	ResolveSymbol func(Import) (address uintptr, handled bool, err error)
 }
 

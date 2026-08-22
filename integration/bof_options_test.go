@@ -20,11 +20,7 @@ func TestBOFLoadWithOptions(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing BOF fixture target for %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
-	extraArguments := []string(nil)
-	if target.goos == "darwin" {
-		extraArguments = append(extraArguments, "-DBOF_DARWIN")
-	}
-	path := buildBOFSource(t, t.TempDir(), target, "options_fixture", "options_fixture.c", extraArguments...)
+	path := buildBOFSource(t, t.TempDir(), target, "options_fixture", "options_fixture.c")
 	if target.format == "macho" {
 		validateMachOOptionsGOTRelocations(t, path, target.goarch)
 	}
@@ -94,7 +90,7 @@ func TestBOFLoadWithOptions(t *testing.T) {
 		t.Fatalf("bof.LoadWithOptions() error = %v", err)
 	}
 	defer loaded.Close()
-	if !validated || !resolvedHostValue || runtime.GOOS == "darwin" && !resolvedHostData || !resolvedPrivileged {
+	if !validated || !resolvedHostValue || !resolvedHostData || !resolvedPrivileged {
 		t.Fatalf("options callbacks: validated=%v hostValue=%v hostData=%v privileged=%v", validated, resolvedHostValue, resolvedHostData, resolvedPrivileged)
 	}
 
@@ -233,10 +229,8 @@ func assertBOFOptionsImports(t *testing.T, imports []bof.Import) {
 		"BeaconOutput":            false,
 		"toWideChar":              false,
 		"HostResolvedValue":       false,
+		"HostResolvedData":        false,
 		"BeaconInjectProcess":     false,
-	}
-	if runtime.GOOS == "darwin" {
-		want["HostResolvedData"] = false
 	}
 	for _, imported := range imports {
 		for name := range want {

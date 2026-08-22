@@ -138,6 +138,11 @@ addresses using the platform ABI for custom imports. Reflektor's built-in
 callbacks always take precedence and
 cannot be replaced through the custom resolver.
 
+External data must use the target's native indirection convention when the
+object format requires it. Windows data declarations should use
+`__declspec(dllimport)` so COFF emits an import-pointer reference rather than a
+range-limited direct reference.
+
 Unsupported Beacon integration APIs—including token, temporary-process, and
 process-injection callbacks—are marked `RequiresHost` and fail explicitly
 unless `ResolveSymbol` supplies them; they are never silent stubs or system
