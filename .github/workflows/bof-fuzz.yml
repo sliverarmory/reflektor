@@ -1,0 +1,85 @@
+name: BOF Fuzz
+
+on:
+  push:
+    branches:
+      - main
+      - bofs
+  schedule:
+    - cron: "23 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bof-fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REFLEKTOR_BOF_CORPUS_DIR: ${{ github.workspace }}/test/corpus/Situational-Awareness-BOFs
+  REFLEKTOR_BOF_FIXTURE_DIR: ${{ github.workspace }}/test/fuzz-fixtures
+
+jobs:
+  fuzz:
+    runs-on: macos-15
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out Situational Awareness BOF corpus
+        uses: actions/checkout@v4
+        with:
+          repository: sliverarmory/Situational-Awareness-BOFs
+          ref: 693174ff525595c5ec61b08fdccb5f057ad52c94
+          path: test/corpus/Situational-Awareness-BOFs
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.0
+      - name: Build all corpus and generated-object seeds
+        run: |
+          set -euo pipefail
+          make -C "${REFLEKTOR_BOF_CORPUS_DIR}" matrix
+          mkdir -p "${REFLEKTOR_BOF_FIXTURE_DIR}"
+          CGO_ENABLED=0 go test ./integration -run '^TestBuildBOFMatrix$' -count=1 -v | tee bof-fixture-seeds.log
+          find "${REFLEKTOR_BOF_CORPUS_DIR}/dist" "${REFLEKTOR_BOF_FIXTURE_DIR}" -type f \( -name '*.o' -o -name '*.obj' \) -print | LC_ALL=C sort > bof-fuzz-seeds.txt
+          test "$(wc -l < bof-fuzz-seeds.txt | tr -d '[:space:]')" -eq 325
+      - name: Run parser and callback seed corpus
+        run: |
+          set -euo pipefail
+          CGO_ENABLED=0 go test ./internal/bofloader -count=1 -v | tee bof-fuzz-seed-test.log
+      - name: Run bounded fuzz campaigns
+        run: |
+          set -euo pipefail
+          for fuzz_target in \
+            FuzzELFObjectParser \
+            FuzzCOFFObjectParser \
+            FuzzMachOObjectParser \
+            FuzzARM64RelocationEncoders \
+            FuzzBeaconPrintfFormatter \
+            FuzzBeaconDataParserState; do
+            echo "fuzzing ${fuzz_target}" | tee -a bof-fuzz.log
+            CGO_ENABLED=0 go test ./internal/bofloader \
+              -run '^$' -fuzz "^${fuzz_target}$" -fuzztime=2m -timeout=4m 2>&1 | tee -a bof-fuzz.log
+          done
+      - name: Upload fuzz evidence and crashers
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bof-fuzz-${{ github.sha }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            bof-fixture-seeds.log
+            bof-fuzz-seeds.txt
+            bof-fuzz-seed-test.log
+            bof-fuzz.log
+            internal/bofloader/testdata/fuzz/**

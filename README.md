@@ -2,7 +2,9 @@
 
 <img align="right" src=".github/images/reflektor.png" alt="Reflektor" width="300">
 
-Reflektor is a Go library and CLI for loading shared libraries from bytes and invoking exported functions.
+Reflektor is a Go library and CLI for loading shared libraries from bytes and
+invoking exported functions. Its `bof` subpackage loads and executes native
+Beacon Object Files.
 
 It exposes a stable root package (`reflektor`) so other projects can import it directly, while platform-specific loading is handled behind `memmod`.
 
@@ -84,6 +86,87 @@ lib, err := reflektor.LoadLibraryRecursive(payload)
 Both recursive APIs read the complete custom dependency graph before the root
 export is invoked. `LoadLibraryFileRecursive` is preferred for libraries that
 use origin-relative names such as `$ORIGIN`, `@loader_path`, or `@rpath`.
+
+## Beacon Object Files
+
+BOF loading is provided by a separate, tag-free package:
+
+```go
+import "github.com/sliverarmory/reflektor/bof"
+```
+
+No CGO or custom build tags are required. The package boundary keeps the BOF
+parser, relocator, native callback bridge, and Beacon compatibility layer out
+of shared-library-only consumers. BOF-only consumers can likewise import this
+subpackage without pulling in the root package's `memmod` shared-library
+backend.
+
+`bof.Load` accepts the native relocatable-object convention used by each host:
+
+| Host | BOF object format | Entry ABI |
+| --- | --- | --- |
+| Windows `386`, `amd64`, `arm64` | COFF (`.o`) | `go(char *, int32)` using the Windows ABI |
+| Linux `386`, `amd64`, `arm64` | ELF `ET_REL` (`.o`) | `go(char *, int32)` using the host ABI |
+| Darwin `amd64`, `arm64` | Mach-O `MH_OBJECT` (`.o`); legacy ELF `ET_REL` accepted for compatibility | `go(char *, int32)` using the host ABI |
+
+Compile native Darwin objects with Zig's `x86_64-macos-none` or
+`aarch64-macos-none` targets while using only host-compatible types and
+imported Beacon/system functions. The native arm64 target follows Apple's x18
+platform-register reservation automatically. The earlier constrained ELF
+Darwin interchange format remains accepted for backwards compatibility; those
+Linux-targeted arm64 objects must explicitly reserve x18.
+Windows COFF machine code is not portable to Linux or Darwin.
+
+```go
+var arguments bof.Arguments
+_ = arguments.AddString("example")
+
+loaded, err := bof.Load(objectBytes)
+if err != nil {
+    return err
+}
+defer loaded.Close()
+
+records, err := loaded.Execute(arguments.Bytes())
+```
+
+Use `bof.LoadWithOptions` (or `bof.LoadFileWithOptions`) when the host needs an
+exact entry symbol or an import boundary. `ValidateImports` receives a sorted,
+owned snapshot before image allocation, callback registration, or dynamic
+library lookup. `ResolveSymbol` can then supply stable native function or data
+addresses using the platform ABI for custom imports. Reflektor's built-in
+callbacks always take precedence and
+cannot be replaced through the custom resolver.
+
+External data must use the target's native indirection convention when the
+object format requires it. Windows data declarations should use
+`__declspec(dllimport)` so COFF emits an import-pointer reference rather than a
+range-limited direct reference.
+
+Unsupported Beacon integration APIs—including token, temporary-process, and
+process-injection callbacks—are marked `RequiresHost` and fail explicitly
+unless `ResolveSymbol` supplies them; they are never silent stubs or system
+symbol lookups. The built-in compatibility set also includes the bounded
+`BeaconDataExtractOrNull` helper and `toWideChar`, whose destination is always
+UTF-16LE and whose maximum length is measured in bytes.
+
+The loader supplies the Beacon data, format, and output callbacks, preserves
+each output record's channel, uses page-level W^X protections, and serializes
+execution around the process-wide native callback bridge. A BOF is still
+arbitrary native code in the current process: malformed code can corrupt or
+terminate the host, so untrusted objects need a subprocess boundary.
+Object images are capped at 64 MiB and packed argument buffers at 16 MiB.
+Callback capture is synchronous: a BOF that starts native worker threads must
+join them before its entry point returns.
+
+`BeaconPrintf` and `BeaconFormatPrintf` accept at most ten machine-word
+arguments and implement bounded string, character, integer, and pointer
+conversions. Floating-point conversions are rejected on 64-bit Unix because
+its variadic ABI does not expose those values to the fixed callback bridge.
+Native Mach-O Darwin/arm64 objects must use `BeaconOutput` instead: imports of
+`BeaconPrintf` and `BeaconFormatPrintf` are rejected because Apple's variadic
+ABI is incompatible with the fixed callback bridge. Legacy Darwin ELF objects
+retain the existing callback behavior.
 
 ## Native-only Package
 
@@ -196,6 +279,8 @@ Linux cross-arch Docker harness:
 ## Repository Layout
 
 - `reflektor/reflektor.go`: root importable package (`reflektor`).
+- `reflektor/bof`: public, tag-free BOF API and argument encoder.
+- `reflektor/internal/bofloader`: internal COFF/ELF/Mach-O loader and Beacon bridge.
 - `reflektor/native`: tag-free native C/Rust-only package.
 - `reflektor/memmod`: OS-specific loader backends.
 - `reflektor/cli`: CLI entrypoint.

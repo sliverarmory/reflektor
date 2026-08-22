@@ -18,9 +18,15 @@ export GOMODCACHE=/tmp/go-mod-cache
 export ZIG_GLOBAL_CACHE_DIR=/tmp/zig-global-cache
 export ZIG_LOCAL_CACHE_DIR=/tmp/zig-local-cache
 
-# Run every platform-applicable test. The cross-platform C build matrix has its
-# own CI job because it needs Darwin-aware binary inspection tools.
-go test ./... -skip '^TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix)$' -count=1 -v | tee linux-test.log
+export REFLEKTOR_BOF_CORPUS_DIR=/workspace/test/corpus/Situational-Awareness-BOFs
+
+CGO_ENABLED=0 go test ./bof ./internal/bofloader -count=1
+
+# Run every platform-applicable shared-library and lightweight BOF test. The
+# cross-platform build matrices have their own CI job, while native BOF
+# execution and corpus coverage run in dedicated CGO-free passes below.
+intentional_skip_pattern='TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)|TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions|TestSituationalAwarenessBOFCorpus(Child)?'
+go test ./... -skip "${intentional_skip_pattern}" -count=1 -v | tee linux-test.log
 
 for test_name in \
   TestLoadGeneratedCLinuxSOAndCallStartW \
@@ -31,6 +37,7 @@ for test_name in \
   TestLoadGeneratedRustSharedLibraryRecursiveMode \
   TestLoadLibraryRecursiveDependencies \
   TestCallExportWithArgs \
+  TestBOFPackageDependencyGraphIsIsolated \
   TestNativePackageCallExport \
   TestNativePackageRejectsGoCSharedImage \
   TestNativePackageLinuxDependencyGraphIsIsolated \
@@ -45,7 +52,7 @@ for test_name in \
   fi
 done
 
-unexpected_skips="$(grep -E '^--- SKIP:' linux-test.log | grep -Ev 'TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix)' || true)"
+unexpected_skips="$(grep -E '^--- SKIP:' linux-test.log | grep -Ev "${intentional_skip_pattern}" || true)"
 if [[ -n "${unexpected_skips}" ]]; then
   echo "linux/386 tests were skipped; refusing to pass CI." >&2
   echo "${unexpected_skips}" >&2
@@ -66,3 +73,25 @@ for test_name in \
     exit 1
   fi
 done
+
+CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions)$' -count=1 -v | tee linux-bof-nocgo-test.log
+for test_name in TestLoadAndExecuteGeneratedBOF TestBOFLoadWithOptions; do
+  if ! grep -Fq -- "--- PASS: ${test_name} " linux-bof-nocgo-test.log; then
+    echo "Required CGO-free linux/386 BOF execution test did not pass: ${test_name}" >&2
+    exit 1
+  fi
+done
+if grep -Fq -- '--- SKIP:' linux-bof-nocgo-test.log; then
+  echo "CGO-free linux/386 BOF execution test was skipped; refusing to pass CI." >&2
+  exit 1
+fi
+
+CGO_ENABLED=0 go test ./integration -run '^TestSituationalAwarenessBOFCorpus$' -count=1 -v | tee linux-bof-corpus-test.log
+if ! grep -Fq -- '--- PASS: TestSituationalAwarenessBOFCorpus ' linux-bof-corpus-test.log; then
+  echo "Required linux/386 BOF corpus execution test did not pass" >&2
+  exit 1
+fi
+if grep -Fq -- '--- SKIP:' linux-bof-corpus-test.log; then
+  echo "linux/386 BOF corpus execution test was skipped; refusing to pass CI." >&2
+  exit 1
+fi
