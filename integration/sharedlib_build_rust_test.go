@@ -73,8 +73,14 @@ func rustTargetFor(goos string, goarch string) (string, bool) {
 		return "i686-unknown-linux-gnu", true
 	case goos == "linux" && goarch == "amd64":
 		return "x86_64-unknown-linux-gnu", true
+	case goos == "linux" && goarch == "arm":
+		return "armv7-unknown-linux-gnueabihf", true
 	case goos == "linux" && goarch == "arm64":
 		return "aarch64-unknown-linux-gnu", true
+	case goos == "linux" && goarch == "ppc64le":
+		return "powerpc64le-unknown-linux-gnu", true
+	case goos == "linux" && goarch == "riscv64":
+		return "riscv64gc-unknown-linux-gnu", true
 	case goos == "windows" && goarch == "386":
 		return "i686-pc-windows-msvc", true
 	case goos == "windows" && goarch == "amd64":

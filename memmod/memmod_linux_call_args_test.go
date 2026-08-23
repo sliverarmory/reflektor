@@ -1,4 +1,4 @@
-//go:build linux && (386 || amd64 || arm64)
+//go:build linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)
 
 package memmod
 
@@ -208,6 +208,12 @@ func linuxCallArgsZigTarget(t *testing.T) string {
 		return "x86_64-linux-gnu"
 	case "arm64":
 		return "aarch64-linux-gnu"
+	case "arm":
+		return "arm-linux-gnueabihf"
+	case "riscv64":
+		return "riscv64-linux-gnu"
+	case "ppc64le":
+		return "powerpc64le-linux-gnu"
 	default:
 		t.Fatalf("unsupported Linux call-arguments GOARCH %s", runtime.GOARCH)
 		return ""

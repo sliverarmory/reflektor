@@ -5,6 +5,7 @@ set -euo pipefail
 readonly REFLEKTOR_MODULE="github.com/sliverarmory/reflektor"
 readonly SLIVER_REF_MARKER=".reflektor-e2e-sliver-ref"
 readonly REFLEKTOR_REF_MARKER=".reflektor-e2e-reflektor-ref"
+readonly SLIVER_TARGET_PATCH="test/sliver-e2e/sliver-new-linux-targets.patch"
 
 die() {
 	echo "reflektor Sliver overlay: $*" >&2
@@ -120,6 +121,9 @@ verify_overlay() {
 	local implant_mod="$sliver_root/implant/go-mod"
 	local modules_file="$sliver_root/implant/vendor/modules.txt"
 	local vendor_root="$sliver_root/implant/vendor/$REFLEKTOR_MODULE"
+	local client_generate="$sliver_root/client/command/generate/generate.go"
+	local client_constants="$sliver_root/client/constants/constants.go"
+	local riscv_ztypes="$sliver_root/implant/sliver/shell/pty/ztypes_riscv64.go"
 	local expected_sliver_ref="${SLIVER_REF:-}"
 	local expected_reflektor_ref=""
 	local header_count=""
@@ -127,6 +131,40 @@ verify_overlay() {
 	[[ -f "$implant_mod" ]] || die "Sliver implant/go-mod is missing"
 	[[ -f "$modules_file" ]] || die "Sliver implant/vendor/modules.txt is missing"
 	[[ -f "$sliver_root/implant/sliver/extension/extension_unix.go" ]] || die "Sliver Unix extension source is missing"
+	[[ -f "$sliver_root/implant/sliver/extension/extension_linux.go" ]] || die "Sliver Linux extension source is missing"
+	[[ -f "$sliver_root/implant/sliver/extension/extension_linux_unsupported.go" ]] || die "Sliver unsupported Linux extension source is missing"
+	grep -Fqx -- '//go:build (darwin && (amd64 || arm64)) || (linux && (386 || amd64 || arm || arm64 || ppc64le || riscv64))' \
+		"$sliver_root/implant/sliver/extension/extension_unix.go" ||
+		die "Sliver Unix extension build constraint does not select every supported Linux target"
+	grep -Fqx -- '//go:build 386 || amd64 || arm || arm64 || ppc64le || riscv64' \
+		"$sliver_root/implant/sliver/extension/extension_linux.go" ||
+		die "Sliver Linux extension build constraint does not select every supported Linux target"
+	grep -Fqx -- '//go:build !(386 || amd64 || arm || arm64 || ppc64le || riscv64)' \
+		"$sliver_root/implant/sliver/extension/extension_linux_unsupported.go" ||
+		die "Sliver unsupported Linux extension build constraint overlaps a supported target"
+	[[ -f "$riscv_ztypes" ]] || die "Sliver RISC-V PTY C type definitions are missing"
+	grep -Fqx -- $'\t_C_int  int32' "$riscv_ztypes" ||
+		die "Sliver RISC-V PTY C int definition is missing"
+	grep -Fqx -- $'\t_C_uint uint32' "$riscv_ztypes" ||
+		die "Sliver RISC-V PTY C uint definition is missing"
+	for target in arm ppc64le riscv64; do
+		[[ "$(grep -Fc -- "\"linux/$target\":" "$sliver_root/server/generate/binaries.go")" == "2" ]] ||
+			die "Sliver compiler and Zig target maps do not both include linux/$target exactly once"
+		grep -Fq -- "\"linux/$target\":" "$client_generate" ||
+			die "Sliver client compiler targets do not include linux/$target"
+		grep -Fq -- "\"linux/$target\":" "$sliver_root/test/reflektor/main.go" ||
+			die "Sliver Reflektor driver does not include linux/$target"
+	done
+	grep -Fq -- 'NativeExtensionLinuxARMFilter          = "native-extension:linux/arm"' "$client_constants" ||
+		die "Sliver client native-extension filters do not include linux/arm"
+	grep -Fq -- 'NativeExtensionLinuxPPC64LEFilter      = "native-extension:linux/ppc64le"' "$client_constants" ||
+		die "Sliver client native-extension filters do not include linux/ppc64le"
+	grep -Fq -- 'NativeExtensionLinuxRISCV64Filter      = "native-extension:linux/riscv64"' "$client_constants" ||
+		die "Sliver client native-extension filters do not include linux/riscv64"
+	for target in arm ppc64le riscv64; do
+		grep -Fq -- "{GOOS: \"linux\", GOARCH: \"$target\"" "$client_constants" ||
+			die "Sliver client native-extension target matrix does not include linux/$target"
+	done
 
 	if [[ -n "$expected_sliver_ref" ]]; then
 		verify_ref_marker "$sliver_root" "$SLIVER_REF_MARKER" "$expected_sliver_ref" "Sliver ref"
@@ -176,10 +214,14 @@ prepare_overlay() {
 	[[ -f "$reflektor_root/go.mod" ]] || die "Reflektor go.mod is missing"
 	[[ -f "$implant_mod" ]] || die "Sliver implant/go-mod is missing"
 	[[ -f "$implant_sum" ]] || die "Sliver implant/go-sum is missing"
+	[[ -f "$reflektor_root/$SLIVER_TARGET_PATCH" ]] || die "Sliver target overlay patch is missing"
 	git -C "$sliver_root" diff --quiet -- . || die "Sliver checkout has unstaged changes before overlay preparation"
 	git -C "$sliver_root" diff --cached --quiet -- . || die "Sliver checkout has staged changes before overlay preparation"
 	git -C "$reflektor_root" diff --quiet -- native memmod cli reflektor.go || die "Reflektor loader source has unstaged changes"
 	git -C "$reflektor_root" diff --cached --quiet -- native memmod cli reflektor.go || die "Reflektor loader source has staged changes"
+	git -C "$sliver_root" apply --check "$reflektor_root/$SLIVER_TARGET_PATCH" ||
+		die "Sliver target overlay does not apply to the pinned source"
+	git -C "$sliver_root" apply "$reflektor_root/$SLIVER_TARGET_PATCH"
 
 	overlay_tmp="$(mktemp -d "${TMPDIR:-/tmp}/reflektor-sliver-overlay.XXXXXX")"
 	original_mod="$overlay_tmp/original-go-mod"

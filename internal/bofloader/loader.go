@@ -65,12 +65,13 @@ type objectSection struct {
 }
 
 type objectSymbol struct {
-	index   uint32
-	name    string
-	section int
-	value   uint64
-	size    uint64
-	weak    bool
+	index      uint32
+	name       string
+	section    int
+	value      uint64
+	size       uint64
+	localEntry uint64
+	weak       bool
 }
 
 type objectRelocation struct {
@@ -89,6 +90,8 @@ type objectFile struct {
 	sections    []objectSection
 	symbols     map[uint32]objectSymbol
 	relocations []objectRelocation
+	riscvPairs  map[riscvRelocationSite]riscvRelocationPair
+	ppc64TOC    uintptr
 	imageBase   uintptr
 }
 
@@ -150,7 +153,7 @@ func LoadWithOptions(data []byte, options LoadOptions) (*Loader, error) {
 		}
 	}
 	pageSize := uint64(systemPageSize())
-	thunkStride := uint64(16)
+	thunkStride := importThunkStride(object.arch)
 	gotStride := uint64(pointerSize())
 	thunkSize := alignUp(uint64(len(referenced))*thunkStride, pageSize)
 	gotSize := alignUp(uint64(len(referenced))*gotStride, pageSize)
@@ -199,6 +202,16 @@ func LoadWithOptions(data []byte, options LoadOptions) (*Loader, error) {
 
 	base := region.base()
 	object.imageBase = base
+	if object.arch == "ppc64le" {
+		gotBase, ok := checkedAddUint64(uint64(base), thunkSize)
+		if !ok || gotBase > ^uint64(0)-ppc64TOCBias {
+			return nil, errors.New("bofloader: PPC64 ELFv2 TOC address overflows")
+		}
+		object.ppc64TOC = uintptr(gotBase + ppc64TOCBias)
+		if uint64(object.ppc64TOC) != gotBase+ppc64TOCBias {
+			return nil, errors.New("bofloader: PPC64 ELFv2 TOC address exceeds pointer size")
+		}
+	}
 	for i := range object.sections {
 		section := &object.sections[i]
 		if !section.mapped || section.size == 0 {
@@ -280,6 +293,9 @@ func validateHost(object *objectFile) error {
 	if object.arch != runtime.GOARCH {
 		return fmt.Errorf("bofloader: object architecture %s does not match host %s", object.arch, runtime.GOARCH)
 	}
+	if err := validateRuntimeVariant(); err != nil {
+		return err
+	}
 	switch object.format {
 	case "coff":
 		if runtime.GOOS != "windows" {
@@ -321,6 +337,16 @@ func referencedLinkageSymbols(object *objectFile) []uint32 {
 	return result
 }
 
+func importThunkStride(arch string) uint64 {
+	if arch == "ppc64le" {
+		// Keep each ELFv2 linkage stub on a 32-byte boundary. The current stub
+		// occupies five instructions; the larger stride also matches a common
+		// PPC64 instruction-cache line and leaves room for future ABI sequences.
+		return 32
+	}
+	return 16
+}
+
 func resolveExternalSymbols(object *objectFile, referenced []uint32, region *memoryRegion, thunkSize, gotSize uint64, imports []Import, options LoadOptions) (map[uint32]externalSymbol, error) {
 	resolved := make(map[uint32]externalSymbol, len(referenced))
 	importsByName := make(map[string]Import, len(imports))
@@ -334,6 +360,11 @@ func resolveExternalSymbols(object *objectFile, referenced []uint32, region *mem
 		var err error
 		if object.format == "elf" && symbol.name == "_GLOBAL_OFFSET_TABLE_" {
 			target = region.base() + uintptr(thunkSize)
+		} else if object.format == "elf" && object.arch == "ppc64le" && symbol.name == ".TOC." {
+			if object.ppc64TOC == 0 {
+				return nil, errors.New("bofloader: unexpected synthetic ELF .TOC. symbol")
+			}
+			target = object.ppc64TOC
 		} else if symbol.section == sectionUndefined {
 			if cached, ok := targetsByName[symbol.name]; ok {
 				target = cached
@@ -357,9 +388,10 @@ func resolveExternalSymbols(object *objectFile, referenced []uint32, region *mem
 				return nil, fmt.Errorf("bofloader: defined GOT symbol %q address %#x exceeds pointer size", symbol.name, linked.address)
 			}
 		}
-		thunkOffset := uint64(position) * 16
+		thunkStride := importThunkStride(object.arch)
+		thunkOffset := uint64(position) * thunkStride
 		gotOffset := thunkSize + uint64(position)*uint64(pointerSize())
-		if thunkOffset+16 > thunkSize || gotOffset+uint64(pointerSize()) > thunkSize+gotSize {
+		if thunkOffset+thunkStride > thunkSize || gotOffset+uint64(pointerSize()) > thunkSize+gotSize {
 			return nil, errors.New("bofloader: import linkage table overflow")
 		}
 		ext := externalSymbol{
@@ -371,7 +403,7 @@ func resolveExternalSymbols(object *objectFile, referenced []uint32, region *mem
 			thunkOff:  thunkOffset,
 		}
 		writePointer(region.data[gotOffset:gotOffset+uint64(pointerSize())], target)
-		if err := writeThunk(region.data[thunkOffset:thunkOffset+16], target); err != nil {
+		if err := writeThunk(region.data[thunkOffset:thunkOffset+thunkStride], target, ext.thunk, ext.got, object.ppc64TOC); err != nil {
 			return nil, fmt.Errorf("bofloader: create thunk for %q: %w", symbol.name, err)
 		}
 		resolved[index] = ext

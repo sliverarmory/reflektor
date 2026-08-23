@@ -1,4 +1,4 @@
-//go:build linux && (amd64 || arm64)
+//go:build linux && !android && (amd64 || arm64 || ppc64le || riscv64)
 
 // SPDX-License-Identifier: MIT
 package linuxmem

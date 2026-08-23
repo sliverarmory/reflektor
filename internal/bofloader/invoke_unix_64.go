@@ -1,4 +1,4 @@
-//go:build (darwin && (amd64 || arm64)) || (linux && (amd64 || arm64))
+//go:build (darwin && !ios && (amd64 || arm64)) || (linux && !android && (amd64 || arm64 || ppc64le || riscv64))
 
 package bofloader
 

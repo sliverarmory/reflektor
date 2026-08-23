@@ -1,4 +1,4 @@
-//go:build linux && (386 || amd64 || arm64)
+//go:build linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)
 
 // SPDX-License-Identifier: MIT
 //
@@ -53,6 +53,21 @@ const (
 	dynTagFiniArraySz = 28
 	dynTagPreinitArr  = 32
 	dynTagPreinitSz   = 33
+
+	armELFEABIMask  = 0xff000000
+	armELFEABI5     = 0x05000000
+	armELFFloatSoft = 0x00000200
+	armELFFloatHard = 0x00000400
+
+	riscvELFRVC            = 0x00000001
+	riscvELFFloatABIMask   = 0x00000006
+	riscvELFFloatABIDouble = 0x00000004
+	riscvELFRVE            = 0x00000008
+	riscvELFTSO            = 0x00000010
+	riscvELFKnownFlags     = riscvELFRVC | riscvELFFloatABIMask | riscvELFRVE | riscvELFTSO
+
+	ppc64ELFABI  = 0x00000003
+	ppc64ELFABI2 = 0x00000002
 )
 
 type Module struct {
@@ -123,7 +138,7 @@ func LoadLibrary(data []byte) (*Module, error) {
 	if f.Section(".go.buildinfo") != nil {
 		return nil, rejection.ErrGoSharedLibraryUnsupported
 	}
-	if err := validateELFHeaders(f); err != nil {
+	if err := validateELFImage(data, f); err != nil {
 		return nil, err
 	}
 	initInfo, err := parseDynamicInitInfo(f)
@@ -148,6 +163,9 @@ func LoadLibrary(data []byte) (*Module, error) {
 		return nil, err
 	}
 	if err := applyDynamicRelocations(mapped, f, resolver); err != nil {
+		return nil, err
+	}
+	if err := flushMappedInstructionCache(mapped.mapping); err != nil {
 		return nil, err
 	}
 
@@ -548,6 +566,12 @@ func applyOneRelocation(machine elf.Machine, class elf.Class, mapped mappedELF, 
 		return apply386Reloc(relocType, place, mapped.loadBias, symValue, addend, mapped.tlsOffset, mapped.hasTLS)
 	case elf.EM_AARCH64:
 		return applyAArch64Reloc(relocType, place, mapped.loadBias, symValue, addend, mapped.tlsOffset, mapped.hasTLS)
+	case elf.EM_ARM:
+		return applyARMReloc(relocType, place, mapped.loadBias, symValue, addend, mapped.tlsOffset, mapped.hasTLS)
+	case elf.EM_RISCV:
+		return applyRISCV64Reloc(relocType, place, mapped.loadBias, symValue, addend, mapped.tlsOffset, mapped.hasTLS)
+	case elf.EM_PPC64:
+		return applyPPC64LEReloc(relocType, place, mapped.loadBias, symValue, addend, mapped.tlsOffset, mapped.hasTLS)
 	default:
 		return fmt.Errorf("unsupported machine for relocation: %s", machine)
 	}
@@ -647,6 +671,81 @@ func applyAArch64Reloc(relocType uint32, place uintptr, loadBias uintptr, symVal
 	}
 }
 
+func applyARMReloc(relocType uint32, place uintptr, loadBias uintptr, symValue uintptr, addend int64, tlsOffset int64, hasTLS bool) error {
+	switch elf.R_ARM(relocType) {
+	case elf.R_ARM_NONE:
+		return nil
+	case elf.R_ARM_RELATIVE:
+		writeU32(place, uint32(int64(loadBias)+addend))
+		return nil
+	case elf.R_ARM_TLS_TPOFF32:
+		if !hasTLS {
+			return errors.New("arm static TLS relocation has no reserved host TLS slot")
+		}
+		writeU32(place, uint32(tlsOffset+addend))
+		return nil
+	case elf.R_ARM_JUMP_SLOT, elf.R_ARM_GLOB_DAT:
+		writeU32(place, uint32(symValue))
+		return nil
+	case elf.R_ARM_ABS32:
+		writeU32(place, uint32(int64(symValue)+addend))
+		return nil
+	case elf.R_ARM_REL32:
+		writeU32(place, uint32(int64(symValue)+addend-int64(place)))
+		return nil
+	default:
+		return fmt.Errorf("unsupported arm relocation type: %d", relocType)
+	}
+}
+
+func applyRISCV64Reloc(relocType uint32, place uintptr, loadBias uintptr, symValue uintptr, addend int64, tlsOffset int64, hasTLS bool) error {
+	switch elf.R_RISCV(relocType) {
+	case elf.R_RISCV_NONE:
+		return nil
+	case elf.R_RISCV_RELATIVE:
+		writeU64(place, uint64(int64(loadBias)+addend))
+		return nil
+	case elf.R_RISCV_TLS_TPREL64:
+		if !hasTLS {
+			return errors.New("riscv64 static TLS relocation has no reserved host TLS slot")
+		}
+		writeU64(place, uint64(tlsOffset+addend))
+		return nil
+	case elf.R_RISCV_JUMP_SLOT:
+		writeU64(place, uint64(symValue))
+		return nil
+	case elf.R_RISCV_64:
+		writeU64(place, uint64(int64(symValue)+addend))
+		return nil
+	default:
+		return fmt.Errorf("unsupported riscv64 relocation type: %d", relocType)
+	}
+}
+
+func applyPPC64LEReloc(relocType uint32, place uintptr, loadBias uintptr, symValue uintptr, addend int64, tlsOffset int64, hasTLS bool) error {
+	switch elf.R_PPC64(relocType) {
+	case elf.R_PPC64_NONE:
+		return nil
+	case elf.R_PPC64_RELATIVE:
+		writeU64(place, uint64(int64(loadBias)+addend))
+		return nil
+	case elf.R_PPC64_TPREL64:
+		if !hasTLS {
+			return errors.New("ppc64le static TLS relocation has no reserved host TLS slot")
+		}
+		writeU64(place, uint64(tlsOffset+addend))
+		return nil
+	case elf.R_PPC64_JMP_SLOT, elf.R_PPC64_GLOB_DAT:
+		writeU64(place, uint64(symValue))
+		return nil
+	case elf.R_PPC64_ADDR64:
+		writeU64(place, uint64(int64(symValue)+addend))
+		return nil
+	default:
+		return fmt.Errorf("unsupported ppc64le relocation type: %d", relocType)
+	}
+}
+
 func resolveRelocationSymbol(symIndex uint32, dynSyms []elf.Symbol, loadBias uintptr, resolver *symbolResolver) (uintptr, error) {
 	if symIndex == 0 {
 		return 0, nil
@@ -703,6 +802,9 @@ func applySegmentProtections(mapped mappedELF) error {
 	for _, p := range mapped.progs {
 		if p.Type != elf.PT_LOAD || p.Memsz == 0 {
 			continue
+		}
+		if p.Flags&elf.PF_W != 0 && p.Flags&elf.PF_X != 0 {
+			return fmt.Errorf("PT_LOAD vaddr=%#x requests writable and executable memory", p.Vaddr)
 		}
 		start := alignDown64(p.Vaddr, pageSize)
 		end := alignUp64(p.Vaddr+p.Memsz, pageSize)
@@ -1024,6 +1126,12 @@ func commonLinuxDependencies() []string {
 		deps = append(deps, "ld-linux.so.2", "ld-musl-i386.so.1")
 	case "arm64":
 		deps = append(deps, "ld-linux-aarch64.so.1", "ld-musl-aarch64.so.1")
+	case "arm":
+		deps = append(deps, "ld-linux-armhf.so.3", "ld-linux.so.3", "ld-musl-armhf.so.1")
+	case "riscv64":
+		deps = append(deps, "ld-linux-riscv64-lp64d.so.1", "ld-musl-riscv64.so.1")
+	case "ppc64le":
+		deps = append(deps, "ld64.so.2", "ld-musl-powerpc64le.so.1")
 	}
 	return deps
 }
@@ -1202,6 +1310,12 @@ func linuxLibrarySearchDirs() []string {
 		dirs = append(dirs, "/lib/i386-linux-gnu", "/usr/lib/i386-linux-gnu")
 	case "arm64":
 		dirs = append(dirs, "/lib/aarch64-linux-gnu", "/usr/lib/aarch64-linux-gnu")
+	case "arm":
+		dirs = append(dirs, "/lib/arm-linux-gnueabihf", "/usr/lib/arm-linux-gnueabihf")
+	case "riscv64":
+		dirs = append(dirs, "/lib/riscv64-linux-gnu", "/usr/lib/riscv64-linux-gnu")
+	case "ppc64le":
+		dirs = append(dirs, "/lib/powerpc64le-linux-gnu", "/usr/lib/powerpc64le-linux-gnu")
 	}
 	return dirs
 }
@@ -1214,27 +1328,31 @@ func (resolver *symbolResolver) Resolve(name string) (uintptr, error) {
 		return 0, err
 	}
 
-	if addr, err := resolveFromRuntimeModules(resolver.modules, name); err == nil && addr != 0 {
-		resolver.resolved[name] = addr
-		return addr, nil
-	}
-
 	if resolver.api != nil {
+		// Prefer the native loader once dlsym has been bootstrapped. In addition
+		// to honoring loader scope and interposition, dlsym evaluates GNU
+		// IFUNC resolvers. Returning base+st_value for an IFUNC would bind its
+		// resolver as the callable symbol and crash on the first invocation.
 		if addr, err := resolveWithDLSym(resolver.api, name); err == nil && addr != 0 {
 			resolver.resolved[name] = addr
 			return addr, nil
 		}
+	}
+
+	if addr, err := resolveFromRuntimeModules(resolver.modules, name); err == nil && addr != 0 {
+		resolver.resolved[name] = addr
+		return addr, nil
 	}
 
 	if resolver.api != nil && resolver.api.dlopen != 0 {
 		for _, dep := range commonLinuxDependencies() {
 			_ = resolver.ensureLibraryLoaded(dep, false)
 		}
-		if addr, err := resolveFromRuntimeModules(resolver.modules, name); err == nil && addr != 0 {
+		if addr, err := resolveWithDLSym(resolver.api, name); err == nil && addr != 0 {
 			resolver.resolved[name] = addr
 			return addr, nil
 		}
-		if addr, err := resolveWithDLSym(resolver.api, name); err == nil && addr != 0 {
+		if addr, err := resolveFromRuntimeModules(resolver.modules, name); err == nil && addr != 0 {
 			resolver.resolved[name] = addr
 			return addr, nil
 		}
@@ -1679,6 +1797,11 @@ func matchSymbolOffset(symbols []elf.Symbol, want string) (uintptr, bool) {
 		if s.Value == 0 {
 			continue
 		}
+		// An IFUNC's st_value addresses its resolver, not the callable function.
+		// Only the native dynamic loader can safely select its implementation.
+		if elf.ST_TYPE(s.Info) == elf.STT_GNU_IFUNC {
+			continue
+		}
 		if s.Name == want || strings.HasPrefix(s.Name, want+"@") {
 			return uintptr(s.Value), true
 		}
@@ -1692,7 +1815,49 @@ func validateELFForCurrentArch(data []byte) error {
 		return fmt.Errorf("invalid ELF image: %w", err)
 	}
 	defer f.Close()
-	return validateELFHeaders(f)
+	return validateELFImage(data, f)
+}
+
+func validateELFImage(data []byte, f *elf.File) error {
+	if err := validateELFHeaders(f); err != nil {
+		return err
+	}
+	flagsOffset := 48
+	if f.Class == elf.ELFCLASS32 {
+		flagsOffset = 36
+	}
+	if len(data) < flagsOffset+4 {
+		return errors.New("ELF header is truncated before e_flags")
+	}
+	flags := binary.LittleEndian.Uint32(data[flagsOffset : flagsOffset+4])
+	return validateELFArchitectureFlags(f.Machine, flags)
+}
+
+func validateELFArchitectureFlags(machine elf.Machine, flags uint32) error {
+	switch machine {
+	case elf.EM_ARM:
+		if flags&armELFEABIMask != armELFEABI5 || flags&(armELFFloatSoft|armELFFloatHard) != armELFFloatHard {
+			return fmt.Errorf("ELF/arm shared libraries require EABI5 hard-float flags, got %#08x", flags)
+		}
+	case elf.EM_RISCV:
+		if flags&riscvELFFloatABIMask != riscvELFFloatABIDouble {
+			return fmt.Errorf("ELF/riscv64 shared libraries require the LP64D double-float ABI, got flags %#08x", flags)
+		}
+		if flags&riscvELFRVE != 0 {
+			return fmt.Errorf("ELF/riscv64 shared libraries cannot use the RV32E register ABI, got flags %#08x", flags)
+		}
+		if flags&riscvELFTSO != 0 {
+			return fmt.Errorf("ELF/riscv64 shared libraries requiring RVTSO are unsupported, got flags %#08x", flags)
+		}
+		if unknown := flags &^ riscvELFKnownFlags; unknown != 0 {
+			return fmt.Errorf("ELF/riscv64 shared library has unknown flags %#08x", unknown)
+		}
+	case elf.EM_PPC64:
+		if flags&ppc64ELFABI != ppc64ELFABI2 || flags&^uint32(ppc64ELFABI) != 0 {
+			return fmt.Errorf("ELF/ppc64le shared libraries require the ELFv2 ABI flags, got %#08x", flags)
+		}
+	}
+	return nil
 }
 
 func validateELFHeaders(f *elf.File) error {
@@ -1709,8 +1874,12 @@ func validateELFHeaders(f *elf.File) error {
 	if f.Data != elf.ELFDATA2LSB {
 		return fmt.Errorf("unsupported ELF endianness: %s", f.Data)
 	}
-	if f.Class != elf.ELFCLASS32 && f.Class != elf.ELFCLASS64 {
-		return fmt.Errorf("unsupported ELF class: %s", f.Class)
+	wantClass := elf.ELFCLASS64
+	if runtime.GOARCH == "386" || runtime.GOARCH == "arm" {
+		wantClass = elf.ELFCLASS32
+	}
+	if f.Class != wantClass {
+		return fmt.Errorf("unsupported ELF class for linux/%s: provided %s, expected %s", runtime.GOARCH, f.Class, wantClass)
 	}
 	return nil
 }
@@ -1723,6 +1892,12 @@ func currentELFMachine() (elf.Machine, error) {
 		return elf.EM_X86_64, nil
 	case "arm64":
 		return elf.EM_AARCH64, nil
+	case "arm":
+		return elf.EM_ARM, nil
+	case "riscv64":
+		return elf.EM_RISCV, nil
+	case "ppc64le":
+		return elf.EM_PPC64, nil
 	default:
 		return 0, fmt.Errorf("unsupported linux architecture: %s", runtime.GOARCH)
 	}

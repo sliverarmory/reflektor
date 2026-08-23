@@ -1,0 +1,137 @@
+diff --git a/implant/sliver/extension/extension_unix.go b/implant/sliver/extension/extension_unix.go
+--- a/implant/sliver/extension/extension_unix.go
++++ b/implant/sliver/extension/extension_unix.go
+@@ -1,4 +1,4 @@
+-//go:build (darwin && (amd64 || arm64)) || (linux && (386 || amd64 || arm64))
++//go:build (darwin && (amd64 || arm64)) || (linux && (386 || amd64 || arm || arm64 || ppc64le || riscv64))
+ 
+ package extension
+ 
+diff --git a/implant/sliver/extension/extension_linux.go b/implant/sliver/extension/extension_linux.go
+--- a/implant/sliver/extension/extension_linux.go
++++ b/implant/sliver/extension/extension_linux.go
+@@ -1,4 +1,4 @@
+-//go:build 386 || amd64 || arm64
++//go:build 386 || amd64 || arm || arm64 || ppc64le || riscv64
+ 
+ package extension
+ 
+diff --git a/implant/sliver/extension/extension_linux_unsupported.go b/implant/sliver/extension/extension_linux_unsupported.go
+--- a/implant/sliver/extension/extension_linux_unsupported.go
++++ b/implant/sliver/extension/extension_linux_unsupported.go
+@@ -1,4 +1,4 @@
+-//go:build !(386 || amd64 || arm64)
++//go:build !(386 || amd64 || arm || arm64 || ppc64le || riscv64)
+ 
+ package extension
+ 
+diff --git a/implant/sliver/shell/pty/ztypes_riscv64.go b/implant/sliver/shell/pty/ztypes_riscv64.go
+new file mode 100644
+--- /dev/null
++++ b/implant/sliver/shell/pty/ztypes_riscv64.go
+@@ -0,0 +1,9 @@
++// Created by cgo -godefs - DO NOT EDIT
++// cgo -godefs types.go
++
++package pty
++
++type (
++	_C_int  int32
++	_C_uint uint32
++)
+
+diff --git a/client/command/generate/generate.go b/client/command/generate/generate.go
+--- a/client/command/generate/generate.go
++++ b/client/command/generate/generate.go
+@@ -82,7 +82,10 @@ var (
+ 		"darwin/arm64":  true,
+ 		"linux/386":     true,
+ 		"linux/amd64":   true,
++		"linux/arm":     true,
+ 		"linux/arm64":   true,
++		"linux/ppc64le": true,
++		"linux/riscv64": true,
+ 		"windows/386":   true,
+ 		"windows/amd64": true,
+ 		"windows/arm64": true,
+diff --git a/client/constants/constants.go b/client/constants/constants.go
+--- a/client/constants/constants.go
++++ b/client/constants/constants.go
+@@ -374,7 +374,10 @@ const (
+ 	NativeExtensionDarwinARM64Filter       = "native-extension:darwin/arm64"
+ 	NativeExtensionLinux386Filter          = "native-extension:linux/386"
+ 	NativeExtensionLinuxAMD64Filter        = "native-extension:linux/amd64"
++	NativeExtensionLinuxARMFilter          = "native-extension:linux/arm"
+ 	NativeExtensionLinuxARM64Filter        = "native-extension:linux/arm64"
++	NativeExtensionLinuxPPC64LEFilter      = "native-extension:linux/ppc64le"
++	NativeExtensionLinuxRISCV64Filter      = "native-extension:linux/riscv64"
+ 	NativeExtensionWindows386Filter        = "native-extension:windows/386"
+ 	NativeExtensionWindowsAMD64Filter      = "native-extension:windows/amd64"
+ 	NativeExtensionWindowsARM64Filter      = "native-extension:windows/arm64"
+@@ -388,18 +391,21 @@ type NativeExtensionTarget struct {
+ 	Filter string
+ }
+ 
+-var nativeExtensionTargets = [8]NativeExtensionTarget{
++var nativeExtensionTargets = [11]NativeExtensionTarget{
+ 	{GOOS: "darwin", GOARCH: "amd64", Filter: NativeExtensionDarwinAMD64Filter},
+ 	{GOOS: "darwin", GOARCH: "arm64", Filter: NativeExtensionDarwinARM64Filter},
+ 	{GOOS: "linux", GOARCH: "386", Filter: NativeExtensionLinux386Filter},
+ 	{GOOS: "linux", GOARCH: "amd64", Filter: NativeExtensionLinuxAMD64Filter},
++	{GOOS: "linux", GOARCH: "arm", Filter: NativeExtensionLinuxARMFilter},
+ 	{GOOS: "linux", GOARCH: "arm64", Filter: NativeExtensionLinuxARM64Filter},
++	{GOOS: "linux", GOARCH: "ppc64le", Filter: NativeExtensionLinuxPPC64LEFilter},
++	{GOOS: "linux", GOARCH: "riscv64", Filter: NativeExtensionLinuxRISCV64Filter},
+ 	{GOOS: "windows", GOARCH: "386", Filter: NativeExtensionWindows386Filter},
+ 	{GOOS: "windows", GOARCH: "amd64", Filter: NativeExtensionWindowsAMD64Filter},
+ 	{GOOS: "windows", GOARCH: "arm64", Filter: NativeExtensionWindowsARM64Filter},
+ }
+ 
+ // NativeExtensionTargets returns the supported native extension target matrix.
+-func NativeExtensionTargets() [8]NativeExtensionTarget {
++func NativeExtensionTargets() [11]NativeExtensionTarget {
+ 	return nativeExtensionTargets
+ }
+ 
+diff --git a/server/generate/binaries.go b/server/generate/binaries.go
+index c5f86a1a3..fd6325af0 100644
+--- a/server/generate/binaries.go
++++ b/server/generate/binaries.go
+@@ -61,9 +61,12 @@ var (
+ 	SupportedCompilerTargets = map[string]bool{
+ 		"darwin/amd64":  true,
+ 		"darwin/arm64":  true,
+ 		"linux/386":     true,
+ 		"linux/amd64":   true,
++		"linux/arm":     true,
+ 		"linux/arm64":   true,
++		"linux/ppc64le": true,
++		"linux/riscv64": true,
+ 		"windows/386":   true,
+ 		"windows/amd64": true,
+ 		"windows/arm64": true,
+@@ -1267,6 +1270,9 @@ func findCrossCompilers(targetGOOS string, targetGOARCH string) (string, string
+ 			"linux/amd64":   "x86_64-linux-musl",
+ 			"linux/386":     "x86-linux-musl",
++			"linux/arm":     "arm-linux-gnueabihf",
+ 			"linux/arm64":   "aarch64-linux-musl",
++			"linux/ppc64le": "powerpc64le-linux-gnu",
++			"linux/riscv64": "riscv64-linux-gnu",
+ 			"linux/ppc64":   "powerpc64le-linux-musl",
+ 		}[fmt.Sprintf("%s/%s", targetGOOS, targetGOARCH)]
+ 
+diff --git a/test/reflektor/main.go b/test/reflektor/main.go
+index ed9883b36..6c65db6b3 100644
+--- a/test/reflektor/main.go
++++ b/test/reflektor/main.go
+@@ -610,7 +610,10 @@ func validateOptions(opts *options) error {
+ 		"darwin/arm64":  true,
+ 		"linux/386":     true,
+ 		"linux/amd64":   true,
++		"linux/arm":     true,
+ 		"linux/arm64":   true,
++		"linux/ppc64le": true,
++		"linux/riscv64": true,
+ 		"windows/386":   true,
+ 		"windows/amd64": true,
+ 		"windows/arm64": true,

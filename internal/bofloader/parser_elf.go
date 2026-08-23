@@ -8,6 +8,25 @@ import (
 	"strings"
 )
 
+const (
+	armELFEABIMask  = 0xff000000
+	armELFEABI5     = 0x05000000
+	armELFFloatSoft = 0x00000200
+	armELFFloatHard = 0x00000400
+
+	riscvELFRVC            = 0x00000001
+	riscvELFFloatABIMask   = 0x00000006
+	riscvELFFloatABIDouble = 0x00000004
+	riscvELFRVE            = 0x00000008
+	riscvELFTSO            = 0x00000010
+	riscvELFKnownFlags     = riscvELFRVC | riscvELFFloatABIMask | riscvELFRVE | riscvELFTSO
+
+	ppc64ELFABI          = 0x00000003
+	ppc64ELFABI2         = 0x00000002
+	ppc64LocalEntryMask  = 0xe0
+	ppc64ReservedSTOther = 0x1c
+)
+
 func parseELF(data []byte) (object *objectFile, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -35,10 +54,37 @@ func parseELF(data []byte) (object *objectFile, err error) {
 	switch {
 	case file.Machine == elf.EM_386 && file.Class == elf.ELFCLASS32:
 		arch = "386"
+	case file.Machine == elf.EM_ARM && file.Class == elf.ELFCLASS32:
+		flags := binary.LittleEndian.Uint32(data[36:40])
+		if flags&armELFEABIMask != armELFEABI5 || flags&(armELFFloatSoft|armELFFloatHard) != armELFFloatHard {
+			return nil, fmt.Errorf("bofloader: ELF/arm BOFs require EABI5 hard-float flags, got %#08x", flags)
+		}
+		arch = "arm"
 	case file.Machine == elf.EM_X86_64 && file.Class == elf.ELFCLASS64:
 		arch = "amd64"
 	case file.Machine == elf.EM_AARCH64 && file.Class == elf.ELFCLASS64:
 		arch = "arm64"
+	case file.Machine == elf.EM_RISCV && file.Class == elf.ELFCLASS64:
+		flags := binary.LittleEndian.Uint32(data[48:52])
+		if flags&riscvELFFloatABIMask != riscvELFFloatABIDouble {
+			return nil, fmt.Errorf("bofloader: ELF/riscv64 BOFs require the LP64D double-float ABI, got flags %#08x", flags)
+		}
+		if flags&riscvELFRVE != 0 {
+			return nil, fmt.Errorf("bofloader: ELF/riscv64 BOFs cannot use the RV32E register ABI, got flags %#08x", flags)
+		}
+		if flags&riscvELFTSO != 0 {
+			return nil, fmt.Errorf("bofloader: ELF/riscv64 BOFs requiring RVTSO are unsupported, got flags %#08x", flags)
+		}
+		if unknown := flags &^ riscvELFKnownFlags; unknown != 0 {
+			return nil, fmt.Errorf("bofloader: ELF/riscv64 BOF has unknown flags %#08x", unknown)
+		}
+		arch = "riscv64"
+	case file.Machine == elf.EM_PPC64 && file.Class == elf.ELFCLASS64:
+		flags := binary.LittleEndian.Uint32(data[48:52])
+		if flags&ppc64ELFABI != ppc64ELFABI2 || flags&^uint32(ppc64ELFABI) != 0 {
+			return nil, fmt.Errorf("bofloader: ELF/ppc64le BOFs require the ELFv2 ABI flags, got %#08x", flags)
+		}
+		arch = "ppc64le"
 	default:
 		return nil, fmt.Errorf("bofloader: unsupported ELF machine/class %s/%s", file.Machine, file.Class)
 	}
@@ -146,13 +192,42 @@ func parseELF(data []byte) (object *objectFile, err error) {
 			}
 			section = sectionMap[rawSection]
 		}
+		localEntry := uint64(0)
+		if arch == "ppc64le" {
+			if raw.Other&ppc64ReservedSTOther != 0 {
+				return nil, fmt.Errorf("bofloader: ELF/ppc64le symbol %q has reserved st_other bits %#02x", raw.Name, raw.Other&ppc64ReservedSTOther)
+			}
+			encoding := (raw.Other & ppc64LocalEntryMask) >> 5
+			switch encoding {
+			case 1:
+				return nil, fmt.Errorf("bofloader: ELF/ppc64le symbol %q uses unsupported local-entry encoding 1 (NOTOC caller-save-r2 semantics)", raw.Name)
+			case 7:
+				return nil, fmt.Errorf("bofloader: ELF/ppc64le symbol %q uses reserved local-entry encoding 7", raw.Name)
+			}
+			localEntry = ppc64LocalEntryOffset(raw.Other)
+			if localEntry != 0 {
+				if raw.Section == elf.SHN_UNDEF || elf.ST_TYPE(raw.Info) != elf.STT_FUNC {
+					return nil, fmt.Errorf("bofloader: ELF/ppc64le symbol %q has local-entry metadata but is not a defined function", raw.Name)
+				}
+				if raw.Size != 0 && localEntry >= raw.Size {
+					return nil, fmt.Errorf("bofloader: ELF/ppc64le symbol %q local entry offset %#x exceeds function size %#x", raw.Name, localEntry, raw.Size)
+				}
+				if section >= 0 {
+					sectionSize := result.sections[section].size
+					if value > sectionSize || localEntry > sectionSize-value {
+						return nil, fmt.Errorf("bofloader: ELF/ppc64le symbol %q local entry exceeds section %q", raw.Name, result.sections[section].name)
+					}
+				}
+			}
+		}
 		result.symbols[index] = objectSymbol{
-			index:   index,
-			name:    raw.Name,
-			section: section,
-			value:   value,
-			size:    raw.Size,
-			weak:    elf.ST_BIND(raw.Info) == elf.STB_WEAK,
+			index:      index,
+			name:       raw.Name,
+			section:    section,
+			value:      value,
+			size:       raw.Size,
+			localEntry: localEntry,
+			weak:       elf.ST_BIND(raw.Info) == elf.STB_WEAK,
 		}
 	}
 	if commonOffset != 0 {
@@ -196,6 +271,9 @@ func parseELF(data []byte) (object *objectFile, err error) {
 		if !result.sections[targetSection].mapped {
 			continue
 		}
+		if (arch == "riscv64" || arch == "ppc64le") && section.Type != elf.SHT_RELA {
+			return nil, fmt.Errorf("bofloader: ELF/%s relocation section %q must use RELA encoding", arch, section.Name)
+		}
 		contents, dataErr := section.Data()
 		if dataErr != nil {
 			return nil, fmt.Errorf("bofloader: read ELF relocation section %q: %w", section.Name, dataErr)
@@ -213,7 +291,22 @@ func parseELF(data []byte) (object *objectFile, err error) {
 			result.relocations = append(result.relocations, relocation)
 		}
 	}
+	if arch == "riscv64" {
+		if err := prepareELFRISCV64Pairs(result); err != nil {
+			return nil, err
+		}
+	}
+	if arch == "ppc64le" {
+		if err := validateELFPPC64LERelocations(result); err != nil {
+			return nil, err
+		}
+	}
 	return result, nil
+}
+
+func ppc64LocalEntryOffset(other byte) uint64 {
+	encoding := (other & ppc64LocalEntryMask) >> 5
+	return (uint64(1) << encoding) &^ uint64(3)
 }
 
 func preflightELFHeader(data []byte) error {

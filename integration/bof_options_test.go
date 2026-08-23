@@ -15,7 +15,6 @@ import (
 var bofOptionsHostData = uintptr(0x43)
 
 func TestBOFLoadWithOptions(t *testing.T) {
-	requireCommand(t, "zig")
 	target, ok := nativeBOFTarget()
 	if !ok {
 		t.Fatalf("missing BOF fixture target for %s/%s", runtime.GOOS, runtime.GOARCH)

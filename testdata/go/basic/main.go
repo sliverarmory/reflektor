@@ -23,6 +23,8 @@ func markerPath() string {
 }
 
 func runRuntimeWork() {
+	exercisePlatformRuntime()
+
 	readyPath := os.Getenv("REFLEKTOR_READY")
 	releasePath := os.Getenv("REFLEKTOR_RELEASE")
 	done := make(chan struct{})

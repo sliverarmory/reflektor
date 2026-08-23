@@ -294,6 +294,76 @@ jobs:
           docker rm --force "${CONTAINER_NAME}" 2>/dev/null || true
           docker image rm --force "${IMAGE_NAME}" 2>/dev/null || true
 
+  linux-emulated:
+    name: sliver-linux-${{ matrix.label }}-qemu
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: arm-v7
+            platform: linux/arm/v7
+            qemu_platform: arm
+          - label: ppc64le
+            platform: linux/ppc64le
+            qemu_platform: ppc64le
+          - label: riscv64
+            platform: linux/riscv64
+            qemu_platform: riscv64
+    env:
+      CONTAINER_NAME: reflektor-sliver-linux-${{ matrix.label }}-${{ github.run_id }}-${{ github.run_attempt }}
+      IMAGE_NAME: reflektor-sliver-linux-${{ matrix.label }}:${{ github.run_id }}-${{ github.run_attempt }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out Reflektor
+        uses: actions/checkout@v4
+
+      - name: Download prepared Sliver source
+        uses: actions/download-artifact@v4
+        with:
+          name: sliver-e2e-source
+          path: ${{ runner.temp }}/sliver-e2e-artifact
+
+      - name: Extract and verify current Reflektor overlay
+        run: |
+          set -euo pipefail
+          mkdir -p sliver-e2e-checkout
+          tar -xzf "${RUNNER_TEMP}/sliver-e2e-artifact/sliver-e2e.tar.gz" -C sliver-e2e-checkout
+          ./test/sliver-e2e/overlay.sh verify "${GITHUB_WORKSPACE}" "${GITHUB_WORKSPACE}/sliver-e2e-checkout"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: ${{ matrix.qemu_platform }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ${{ matrix.platform }} Sliver E2E image
+        run: |
+          set -euo pipefail
+          go_version="$(awk '$1 == "go" { print $2; exit }' go.mod)"
+          docker buildx build \
+            --load \
+            --platform "${{ matrix.platform }}" \
+            --build-arg "GO_VERSION=${go_version}" \
+            --file test/sliver-e2e/Dockerfile.linux-emulated \
+            --tag "${IMAGE_NAME}" \
+            .
+
+      - name: Exercise real Sliver implant and native extension lifecycle
+        run: docker run --name "${CONTAINER_NAME}" --platform "${{ matrix.platform }}" "${IMAGE_NAME}"
+
+      - name: Clean up emulated Linux Docker resources
+        if: ${{ always() }}
+        run: |
+          docker rm --force "${CONTAINER_NAME}" 2>/dev/null || true
+          docker image rm --force "${IMAGE_NAME}" 2>/dev/null || true
+
   windows:
     name: sliver-windows-${{ matrix.goarch }}
     needs: prepare

@@ -1,4 +1,4 @@
-//go:build linux && (386 || amd64 || arm64)
+//go:build linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)
 
 package memmod
 
@@ -72,6 +72,12 @@ func buildLinuxTestSO(t *testing.T, output string) {
 		zigTarget = "x86_64-linux-gnu"
 	case "arm64":
 		zigTarget = "aarch64-linux-gnu"
+	case "arm":
+		zigTarget = "arm-linux-gnueabihf"
+	case "riscv64":
+		zigTarget = "riscv64-linux-gnu"
+	case "ppc64le":
+		zigTarget = "powerpc64le-linux-gnu"
 	default:
 		t.Fatalf("unsupported GOARCH for linux test: %s", runtime.GOARCH)
 	}

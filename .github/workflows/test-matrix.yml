@@ -281,6 +281,198 @@ jobs:
           docker build --platform linux/386 -f testdata/docker/linux-memmod.Dockerfile -t reflektor-linux-386-ci .
           docker run --rm --platform linux/386 reflektor-linux-386-ci
 
+  linux-arm-bof:
+    name: linux-arm-full-qemu
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out Situational Awareness BOF corpus
+        uses: actions/checkout@v4
+        with:
+          repository: sliverarmory/Situational-Awareness-BOFs
+          ref: 693174ff525595c5ec61b08fdccb5f057ad52c94
+          path: test/corpus/Situational-Awareness-BOFs
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.0
+      - name: Build and inspect linux/arm BOF fixtures
+        run: |
+          set -euo pipefail
+          mkdir -p test/bof-fixtures
+          REFLEKTOR_BOF_FIXTURE_DIR="${GITHUB_WORKSPACE}/test/bof-fixtures" \
+            CGO_ENABLED=0 go test ./integration \
+              -run '^TestBuildBOFMatrix$/^linux-arm$' -count=1 -v | tee linux-arm-fixture-build-test.log
+          if ! grep -Fq -- '--- PASS: TestBuildBOFMatrix ' linux-arm-fixture-build-test.log; then
+            echo "The linux/arm BOF fixture build and inspection did not pass."
+            exit 1
+          fi
+          test -s test/bof-fixtures/fixture_linux_arm.o
+          test -s test/bof-fixtures/options_fixture_linux_arm.o
+      - name: Prepare pinned linux/arm BOF corpus
+        working-directory: test/corpus/Situational-Awareness-BOFs
+        run: |
+          set -euo pipefail
+          git apply "${GITHUB_WORKSPACE}/testdata/corpus/situational-awareness-linux-arm.patch"
+          manifest_tmp="$(mktemp)"
+          jq '
+            .artifacts += [
+              .artifacts[]
+              | select(.os == "linux" and .arch == "arm64")
+              | .os = "linux"
+              | .arch = "arm"
+              | .path |= sub("^dist/linux/arm64/"; "dist/linux/arm/")
+            ]
+          ' testdata/e2e-manifest.json > "${manifest_tmp}"
+          mv "${manifest_tmp}" testdata/e2e-manifest.json
+          ./scripts/build-target.sh linux arm
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm
+      - uses: docker/setup-buildx-action@v3
+      - name: Run full linux/arm BOF and shared-library tests under QEMU
+        run: |
+          set -euo pipefail
+          docker build --platform linux/arm/v7 -f testdata/docker/linux-bof.Dockerfile -t reflektor-linux-arm-bof-ci .
+          docker run --rm --platform linux/arm/v7 reflektor-linux-arm-bof-ci
+
+  linux-riscv64-bof:
+    name: linux-riscv64-full-qemu
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out Situational Awareness BOF corpus
+        uses: actions/checkout@v4
+        with:
+          repository: sliverarmory/Situational-Awareness-BOFs
+          ref: 693174ff525595c5ec61b08fdccb5f057ad52c94
+          path: test/corpus/Situational-Awareness-BOFs
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.0
+      - name: Build and inspect linux/riscv64 BOF fixtures
+        run: |
+          set -euo pipefail
+          mkdir -p test/bof-fixtures
+          REFLEKTOR_BOF_FIXTURE_DIR="${GITHUB_WORKSPACE}/test/bof-fixtures" \
+            CGO_ENABLED=0 go test ./integration \
+              -run '^TestBuildBOFMatrix$/^linux-riscv64$' -count=1 -v | tee linux-riscv64-fixture-build-test.log
+          if ! grep -Fq -- '--- PASS: TestBuildBOFMatrix ' linux-riscv64-fixture-build-test.log; then
+            echo "The linux/riscv64 BOF fixture build and inspection did not pass."
+            exit 1
+          fi
+          test -s test/bof-fixtures/fixture_linux_riscv64.o
+          test -s test/bof-fixtures/options_fixture_linux_riscv64.o
+      - name: Prepare pinned linux/riscv64 BOF corpus
+        working-directory: test/corpus/Situational-Awareness-BOFs
+        run: |
+          set -euo pipefail
+          git apply "${GITHUB_WORKSPACE}/testdata/corpus/situational-awareness-linux-riscv64.patch"
+          manifest_tmp="$(mktemp)"
+          jq '
+            .artifacts += [
+              .artifacts[]
+              | select(.os == "linux" and .arch == "arm64")
+              | .os = "linux"
+              | .arch = "riscv64"
+              | .path |= sub("^dist/linux/arm64/"; "dist/linux/riscv64/")
+            ]
+          ' testdata/e2e-manifest.json > "${manifest_tmp}"
+          mv "${manifest_tmp}" testdata/e2e-manifest.json
+          ./scripts/build-target.sh linux riscv64
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: riscv64
+      - uses: docker/setup-buildx-action@v3
+      - name: Run full linux/riscv64 BOF and shared-library tests under QEMU
+        run: |
+          set -euo pipefail
+          docker build --platform linux/riscv64 -f testdata/docker/linux-riscv64-bof.Dockerfile -t reflektor-linux-riscv64-bof-ci .
+          docker run --rm --platform linux/riscv64 reflektor-linux-riscv64-bof-ci
+
+  linux-ppc64le-bof:
+    name: linux-ppc64le-full-qemu
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out Situational Awareness BOF corpus
+        uses: actions/checkout@v4
+        with:
+          repository: sliverarmory/Situational-Awareness-BOFs
+          ref: 693174ff525595c5ec61b08fdccb5f057ad52c94
+          path: test/corpus/Situational-Awareness-BOFs
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.0
+      - name: Build and inspect linux/ppc64le BOF fixtures
+        run: |
+          set -euo pipefail
+          mkdir -p test/bof-fixtures
+          REFLEKTOR_BOF_FIXTURE_DIR="${GITHUB_WORKSPACE}/test/bof-fixtures" \
+            CGO_ENABLED=0 go test ./integration \
+              -run '^TestBuildBOFMatrix$/^linux-ppc64le$' -count=1 -v | tee linux-ppc64le-fixture-build-test.log
+          if ! grep -Fq -- '--- PASS: TestBuildBOFMatrix ' linux-ppc64le-fixture-build-test.log; then
+            echo "The linux/ppc64le BOF fixture build and inspection did not pass."
+            exit 1
+          fi
+          test -s test/bof-fixtures/fixture_linux_ppc64le.o
+          test -s test/bof-fixtures/options_fixture_linux_ppc64le.o
+      - name: Prepare pinned linux/ppc64le BOF corpus
+        working-directory: test/corpus/Situational-Awareness-BOFs
+        run: |
+          set -euo pipefail
+          git apply "${GITHUB_WORKSPACE}/testdata/corpus/situational-awareness-linux-ppc64le.patch"
+          manifest_tmp="$(mktemp)"
+          jq '
+            .artifacts += [
+              .artifacts[]
+              | select(.os == "linux" and .arch == "arm64")
+              | .os = "linux"
+              | .arch = "ppc64le"
+              | .path |= sub("^dist/linux/arm64/"; "dist/linux/ppc64le/")
+            ]
+          ' testdata/e2e-manifest.json > "${manifest_tmp}"
+          mv "${manifest_tmp}" testdata/e2e-manifest.json
+          ./scripts/build-target.sh linux ppc64le
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: ppc64le
+      - uses: docker/setup-buildx-action@v3
+      - name: Run full linux/ppc64le BOF and shared-library tests under QEMU
+        run: |
+          set -euo pipefail
+          docker build --platform linux/ppc64le -f testdata/docker/linux-ppc64le-bof.Dockerfile -t reflektor-linux-ppc64le-bof-ci .
+          docker run --rm --platform linux/ppc64le reflektor-linux-ppc64le-bof-ci
+
   windows:
     name: windows-${{ matrix.goarch }}
     strategy:
@@ -428,13 +620,20 @@ jobs:
           set -euo pipefail
           while read -r goos goarch; do
             echo "Building ./native for ${goos}/${goarch} with CGO_ENABLED=0"
-            CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go build -trimpath ./native
+            if [[ "${goos}/${goarch}" == "linux/arm" ]]; then
+              CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" GOARM=7 go build -trimpath ./native
+            else
+              CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go build -trimpath ./native
+            fi
           done <<'TARGETS'
           darwin amd64
           darwin arm64
           linux 386
           linux amd64
+          linux arm
           linux arm64
+          linux ppc64le
+          linux riscv64
           windows 386
           windows amd64
           windows arm64
@@ -452,18 +651,50 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Build all packages with BOF support without cgo or tags
+      - name: Validate the platform capability manifest
+        run: go test ./integration -run '^TestPlatformSupportManifest$' -count=1
+      - name: Build BOF packages without cgo or tags
         run: |
           set -euo pipefail
           while read -r goos goarch; do
-            echo "Building all packages for ${goos}/${goarch} with CGO_ENABLED=0"
-            CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go build -trimpath ./...
+            echo "Building BOF packages for ${goos}/${goarch} with CGO_ENABLED=0"
+            if [[ "${goos}/${goarch}" == "linux/arm" ]]; then
+              CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" GOARM=7 go build -trimpath ./bof ./internal/bofloader
+            else
+              CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go build -trimpath ./bof ./internal/bofloader
+            fi
           done <<'TARGETS'
           darwin amd64
           darwin arm64
           linux 386
           linux amd64
+          linux arm
           linux arm64
+          linux ppc64le
+          linux riscv64
+          windows 386
+          windows amd64
+          windows arm64
+          TARGETS
+      - name: Build all packages on full shared-library targets
+        run: |
+          set -euo pipefail
+          while read -r goos goarch; do
+            echo "Building all packages for full-support target ${goos}/${goarch} with CGO_ENABLED=0"
+            if [[ "${goos}/${goarch}" == "linux/arm" ]]; then
+              CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" GOARM=7 go build -trimpath ./...
+            else
+              CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go build -trimpath ./...
+            fi
+          done <<'TARGETS'
+          darwin amd64
+          darwin arm64
+          linux 386
+          linux amd64
+          linux arm
+          linux arm64
+          linux ppc64le
+          linux riscv64
           windows 386
           windows amd64
           windows arm64

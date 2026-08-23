@@ -1,4 +1,4 @@
-//go:build linux && cgo && (386 || amd64 || arm64)
+//go:build linux && cgo && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)
 
 package reflektor_test
 
@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"unsafe"
 
 	"github.com/sliverarmory/reflektor/native"
 )
@@ -25,10 +26,7 @@ func TestNativePackageCSharedConsumerLinux(t *testing.T) {
 		}
 		defer consumer.Close()
 
-		wordSize := uint64(4)
-		if runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64" {
-			wordSize = 8
-		}
+		wordSize := uint64(unsafe.Sizeof(uintptr(0)))
 		reflektorPoolSize := uint64(64 * 2 * wordSize)
 		maxGoRuntimeTLS := 2 * wordSize
 

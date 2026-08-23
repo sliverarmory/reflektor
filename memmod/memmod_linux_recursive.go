@@ -1,4 +1,4 @@
-//go:build linux && (386 || amd64 || arm64)
+//go:build linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)
 
 package memmod
 
@@ -198,7 +198,7 @@ func (loader *linuxRecursiveLoader) parseCustomNode(data []byte, path string) (*
 		}
 	}()
 
-	if err := validateELFHeaders(f); err != nil {
+	if err := validateELFHeaders(f, data); err != nil {
 		return nil, err
 	}
 	initInfo, err := parseDynamicInitInfo(f)
@@ -411,6 +411,9 @@ func (loader *linuxRecursiveLoader) relocateAll() error {
 
 func (loader *linuxRecursiveLoader) protectAndCollectLifecycle() error {
 	for _, node := range loader.group.nodes {
+		if err := flushELFInstructionCache(node.mapped); err != nil {
+			return fmt.Errorf("flush recursive dependency %q: %w", node.path, err)
+		}
 		if err := applySegmentProtections(node.mapped); err != nil {
 			return fmt.Errorf("protect recursive dependency %q: %w", node.path, err)
 		}
@@ -878,6 +881,19 @@ func hasRecursiveIRelative(f *elf.File) bool {
 				if elf.R_AARCH64(relocationType) == elf.R_AARCH64_IRELATIVE {
 					return true
 				}
+			case elf.EM_ARM:
+				if elf.R_ARM(relocationType) == elf.R_ARM_IRELATIVE {
+					return true
+				}
+			case elf.EM_RISCV:
+				// The psABI assigns relocation 58 to R_RISCV_IRELATIVE.
+				if relocationType == 58 {
+					return true
+				}
+			case elf.EM_PPC64:
+				if elf.R_PPC64(relocationType) == elf.R_PPC64_IRELATIVE {
+					return true
+				}
 			}
 		}
 	}
@@ -892,6 +908,8 @@ func resolveWithLinuxHandle(api *linuxDynAPI, handle uintptr, name string, versi
 	if err != nil {
 		return 0, err
 	}
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	if api.dlerror != 0 {
 		_ = callExportFunction(api.dlerror)
 	}
@@ -912,7 +930,7 @@ func resolveWithLinuxHandle(api *linuxDynAPI, handle uintptr, name string, versi
 	}
 	runtime.KeepAlive(nameBytes)
 	if api.dlerror != 0 {
-		if err := lastDLError(api); err != nil {
+		if err := lastDLErrorLocked(api); err != nil {
 			return 0, err
 		}
 	}
@@ -926,6 +944,8 @@ func closeWithDL(api *linuxDynAPI, handle uintptr) {
 	if api == nil || api.dlclose == 0 || handle == 0 {
 		return
 	}
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	if api.dlerror != 0 {
 		_ = callExportFunction(api.dlerror)
 	}

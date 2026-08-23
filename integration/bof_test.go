@@ -31,7 +31,10 @@ var bofTargets = []bofTarget{
 	{goos: "darwin", goarch: "arm64", zigTarget: "aarch64-macos-none", format: "macho"},
 	{goos: "linux", goarch: "386", zigTarget: "x86-linux-none", format: "elf"},
 	{goos: "linux", goarch: "amd64", zigTarget: "x86_64-linux-none", format: "elf"},
+	{goos: "linux", goarch: "arm", zigTarget: "arm-linux-none", format: "elf"},
 	{goos: "linux", goarch: "arm64", zigTarget: "aarch64-linux-none", format: "elf"},
+	{goos: "linux", goarch: "ppc64le", zigTarget: "powerpc64le-linux-none", format: "elf"},
+	{goos: "linux", goarch: "riscv64", zigTarget: "riscv64-linux-none", format: "elf"},
 	{goos: "windows", goarch: "386", zigTarget: "x86-windows-gnu", format: "coff"},
 	{goos: "windows", goarch: "amd64", zigTarget: "x86_64-windows-gnu", format: "coff"},
 	{goos: "windows", goarch: "arm64", zigTarget: "aarch64-windows-gnu", format: "coff"},
@@ -52,6 +55,14 @@ func TestBuildBOFMatrix(t *testing.T) {
 		t.Run(target.goos+"-"+target.goarch, func(t *testing.T) {
 			path := buildBOFFixture(t, outputDirectory, target)
 			validateBOFObject(t, path, target)
+			// The emulated Linux runtimes deliberately have no native Zig
+			// dependency, so seed and inspect their options fixture alongside the
+			// primary fixture. Other targets continue to build it in their native
+			// LoadWithOptions execution test.
+			if target.goos == "linux" && (target.goarch == "arm" || target.goarch == "ppc64le" || target.goarch == "riscv64") {
+				optionsPath := buildBOFSource(t, outputDirectory, target, "options_fixture", "options_fixture.c")
+				validateBOFObject(t, optionsPath, target)
+			}
 			if target.goos == "darwin" && target.goarch == "arm64" {
 				validateDarwinARM64ReservedRegister(t, path)
 			}
@@ -78,7 +89,6 @@ func validateDarwinARM64ReservedRegister(t *testing.T, path string) {
 }
 
 func TestLoadAndExecuteGeneratedBOF(t *testing.T) {
-	requireCommand(t, "zig")
 	target, ok := nativeBOFTarget()
 	if !ok {
 		t.Fatalf("missing BOF fixture target for %s/%s", runtime.GOOS, runtime.GOARCH)
@@ -119,11 +129,20 @@ func testLoadAndExecuteGeneratedBOF(t *testing.T, target bofTarget) {
 			t.Errorf("Execute() error = %v", executeErr)
 			return
 		}
-		if len(outputs) != 3 ||
-			outputs[0].Type != bof.OutputDefault || string(outputs[0].Data) != "bof-e2e-ok" ||
-			outputs[1].Type != bof.OutputDefault || string(outputs[1].Data) != "bof-printf=7:callback-ok" ||
-			outputs[2].Type != bof.OutputDefault || string(outputs[2].Data) != "bof-pic-defined-global" {
+		want := []string{"bof-e2e-ok", "bof-printf=7:callback-ok"}
+		if target.goos == "linux" && target.goarch == "arm" {
+			want = append(want, "bof-arm-align=7:1122334455667788")
+		}
+		want = append(want, "bof-pic-defined-global")
+		if len(outputs) != len(want) {
 			t.Errorf("Execute() outputs = %#v", outputs)
+			return
+		}
+		for index, output := range outputs {
+			if output.Type != bof.OutputDefault || string(output.Data) != want[index] {
+				t.Errorf("Execute() outputs = %#v", outputs)
+				return
+			}
 		}
 	}
 	assertRun()
@@ -170,6 +189,10 @@ func buildBOFFixture(t *testing.T, outputDirectory string, target bofTarget) str
 func buildBOFSource(t *testing.T, outputDirectory string, target bofTarget, name, source string, extraArguments ...string) string {
 	t.Helper()
 	outputPath := filepath.Join(outputDirectory, fmt.Sprintf("%s_%s_%s.o", name, target.goos, target.goarch))
+	if seededPath := seededBOFSource(t, outputDirectory, target, name); seededPath != "" {
+		return seededPath
+	}
+	requireCommand(t, "zig")
 	arguments := []string{
 		"cc", "-target", target.zigTarget, "-c", "-O1", "-g0",
 		"-fno-stack-protector",
@@ -209,6 +232,38 @@ func buildBOFSource(t *testing.T, outputDirectory string, target bofTarget, name
 	return outputPath
 }
 
+func seededBOFSource(t *testing.T, outputDirectory string, target bofTarget, name string) string {
+	t.Helper()
+	seedDirectory := os.Getenv("REFLEKTOR_BOF_FIXTURE_DIR")
+	if seedDirectory == "" {
+		return ""
+	}
+	seedDirectoryPath, err := filepath.Abs(seedDirectory)
+	if err != nil {
+		t.Fatalf("resolve BOF fixture seed directory: %v", err)
+	}
+	outputDirectoryPath, err := filepath.Abs(outputDirectory)
+	if err != nil {
+		t.Fatalf("resolve BOF fixture output directory: %v", err)
+	}
+	// TestBuildBOFMatrix points its output at the configured seed directory to
+	// produce fresh, inspected objects. Runtime tests use a different temporary
+	// output directory and consume those objects without requiring a native Zig
+	// binary on an emulated runner.
+	if filepath.Clean(seedDirectoryPath) == filepath.Clean(outputDirectoryPath) {
+		return ""
+	}
+	seedPath := filepath.Join(seedDirectoryPath, fmt.Sprintf("%s_%s_%s.o", name, target.goos, target.goarch))
+	info, err := os.Stat(seedPath)
+	if err != nil {
+		t.Fatalf("stat prebuilt BOF fixture %s: %v", seedPath, err)
+	}
+	if !info.Mode().IsRegular() || info.Size() == 0 {
+		t.Fatalf("prebuilt BOF fixture %s must be a non-empty regular file", seedPath)
+	}
+	return seedPath
+}
+
 func validateBOFObject(t *testing.T, path string, target bofTarget) {
 	t.Helper()
 	image, err := os.ReadFile(path)
@@ -241,9 +296,44 @@ func validateBOFObject(t *testing.T, path string, target bofTarget) {
 		if file.Type != elf.ET_REL {
 			t.Fatalf("ELF type = %s, want ET_REL", file.Type)
 		}
-		wantMachine := map[string]elf.Machine{"386": elf.EM_386, "amd64": elf.EM_X86_64, "arm64": elf.EM_AARCH64}[target.goarch]
+		if file.Data != elf.ELFDATA2LSB {
+			t.Fatalf("ELF data encoding = %s, want ELFDATA2LSB", file.Data)
+		}
+		wantClass := map[string]elf.Class{"386": elf.ELFCLASS32, "amd64": elf.ELFCLASS64, "arm": elf.ELFCLASS32, "arm64": elf.ELFCLASS64, "ppc64le": elf.ELFCLASS64, "riscv64": elf.ELFCLASS64}[target.goarch]
+		if file.Class != wantClass {
+			t.Fatalf("ELF class = %s, want %s", file.Class, wantClass)
+		}
+		wantMachine := map[string]elf.Machine{"386": elf.EM_386, "amd64": elf.EM_X86_64, "arm": elf.EM_ARM, "arm64": elf.EM_AARCH64, "ppc64le": elf.EM_PPC64, "riscv64": elf.EM_RISCV}[target.goarch]
 		if file.Machine != wantMachine {
 			t.Fatalf("ELF machine = %s, want %s", file.Machine, wantMachine)
+		}
+		if target.goarch == "arm" {
+			flags := binary.LittleEndian.Uint32(image[36:40])
+			if flags&0xff000000 != 0x05000000 || flags&0x00000600 != 0x00000400 {
+				t.Fatalf("ELF/arm flags = %#08x, want EABI5 hard-float", flags)
+			}
+		}
+		if target.goarch == "ppc64le" {
+			const efPPC64ABIV2 = 2
+			flags := binary.LittleEndian.Uint32(image[48:52])
+			if flags != efPPC64ABIV2 {
+				t.Fatalf("ELF/ppc64le flags = %#08x, want ELFv2 ABI (%#x)", flags, efPPC64ABIV2)
+			}
+		}
+		if target.goarch == "riscv64" {
+			const (
+				efRISCVRVC            = 0x1
+				efRISCVFloatABIMask   = 0x6
+				efRISCVFloatABIDouble = 0x4
+				efRISCVRVE            = 0x8
+				efRISCVTSO            = 0x10
+				efRISCVKnownFlags     = efRISCVRVC | efRISCVFloatABIMask | efRISCVRVE | efRISCVTSO
+			)
+			flags := binary.LittleEndian.Uint32(image[48:52])
+			if flags&efRISCVFloatABIMask != efRISCVFloatABIDouble ||
+				flags&(efRISCVRVE|efRISCVTSO) != 0 || flags&^efRISCVKnownFlags != 0 {
+				t.Fatalf("ELF/riscv64 flags = %#08x, want LP64D with optional RVC and no RVE, RVTSO, or unknown flags", flags)
+			}
 		}
 	case "coff":
 		file, parseErr := pe.NewFile(bytes.NewReader(image))

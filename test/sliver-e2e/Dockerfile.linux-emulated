@@ -1,0 +1,150 @@
+# syntax=docker/dockerfile:1.7
+
+ARG GO_VERSION=1.26.6
+
+FROM --platform=$BUILDPLATFORM alpine:3.23 AS target-go
+
+ARG GO_VERSION
+ARG TARGETARCH
+
+RUN apk add --no-cache ca-certificates
+
+RUN set -eux; \
+	case "${TARGETARCH}" in \
+		arm) archive_arch="armv6l"; sha256="e1379a2fe77bd30fa29833074388247e7c65416e09279f746f20de2d5cf4dfea" ;; \
+		ppc64le) archive_arch="ppc64le"; sha256="232b65543a42eda95df6a63f76235c1795bb535eba5c74e509faec71bc648388" ;; \
+		riscv64) archive_arch="riscv64"; sha256="7b3b526099181b40f5122c8ebf5c851486c7c92977e1f7f39dba9456c6ce42ff" ;; \
+		*) echo "unsupported target Go architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+	esac; \
+	wget -q "https://go.dev/dl/go${GO_VERSION}.linux-${archive_arch}.tar.gz" -O /tmp/go-target.tar.gz; \
+	echo "${sha256}  /tmp/go-target.tar.gz" | sha256sum -c -; \
+	mkdir -p /opt; \
+	tar -C /opt -xzf /tmp/go-target.tar.gz
+
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-bookworm AS reflektor-modules
+
+WORKDIR /reflektor
+COPY go.mod go.sum ./
+RUN go mod download all
+
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-bookworm AS server-build
+
+WORKDIR /workspace
+COPY sliver-e2e-checkout/ .
+
+RUN --mount=type=cache,id=reflektor-sliver-emulated-server-go-build,target=/root/.cache/go-build,sharing=locked \
+	set -eux; \
+	mkdir -p /out; \
+	go run -buildvcs=false -mod=vendor ./util/cmd/assets; \
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+		go build -buildvcs=false -mod=vendor -trimpath -tags go_sqlite,server \
+		-o /out/sliver-server ./server; \
+	rm -rf /workspace/server/assets/fs
+
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-bookworm AS driver-build
+
+ARG TARGETARCH
+ARG TARGETVARIANT
+
+WORKDIR /workspace
+COPY sliver-e2e-checkout/ .
+
+RUN --mount=type=cache,id=reflektor-sliver-emulated-driver-go-build,target=/root/.cache/go-build,sharing=locked \
+	set -eux; \
+	mkdir -p /out; \
+	if [ "${TARGETARCH}/${TARGETVARIANT}" = "arm/v7" ]; then \
+		CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 \
+			go build -buildvcs=false -mod=vendor -trimpath -tags client,go_sqlite \
+			-o /out/sliver-reflektor-e2e ./test/reflektor; \
+	else \
+		CGO_ENABLED=0 GOOS=linux GOARCH="${TARGETARCH}" \
+			go build -buildvcs=false -mod=vendor -trimpath -tags client,go_sqlite \
+			-o /out/sliver-reflektor-e2e ./test/reflektor; \
+	fi
+
+FROM --platform=$TARGETPLATFORM debian:trixie-slim AS reflektor-build
+
+ARG TARGETARCH
+ARG TARGETVARIANT
+
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends build-essential ca-certificates \
+	&& rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+	case "${TARGETARCH}" in \
+		arm) \
+			test -e /lib/ld-linux-armhf.so.3; \
+			if [ ! -e /lib/ld-linux.so.3 ]; then ln -s /lib/ld-linux-armhf.so.3 /lib/ld-linux.so.3; fi \
+			;; \
+		riscv64) \
+			test -e /lib/ld-linux-riscv64-lp64d.so.1; \
+			if [ ! -e /lib/ld.so.1 ]; then ln -s /lib/ld-linux-riscv64-lp64d.so.1 /lib/ld.so.1; fi \
+			;; \
+		ppc64le) test -e /lib64/ld64.so.2 ;; \
+	esac
+
+COPY --from=target-go /opt/go /usr/local/go
+COPY --from=reflektor-modules /go/pkg/mod /go/pkg/mod
+
+ENV PATH=/usr/local/go/bin:${PATH}
+ENV GOCACHE=/tmp/go-build-cache
+ENV GOPATH=/go
+ENV GOPROXY=off
+ENV GOTOOLCHAIN=local
+
+WORKDIR /reflektor
+COPY go.mod go.sum reflektor.go ./
+COPY cli ./cli
+COPY memmod ./memmod
+
+RUN set -eux; \
+	mkdir -p /out; \
+	if [ "${TARGETARCH}/${TARGETVARIANT}" = "arm/v7" ]; then \
+		CGO_ENABLED=1 GOOS=linux GOARCH=arm GOARM=7 \
+			go build -buildvcs=false -trimpath -o /out/reflektor ./cli; \
+	else \
+		CGO_ENABLED=1 GOOS=linux GOARCH="${TARGETARCH}" \
+			go build -buildvcs=false -trimpath -o /out/reflektor ./cli; \
+	fi
+
+FROM --platform=$TARGETPLATFORM debian:trixie-slim AS runtime
+
+ARG TARGETARCH
+ARG TARGETVARIANT
+
+RUN test "${TARGETARCH}/${TARGETVARIANT}" = "arm/v7" \
+	|| test "${TARGETARCH}" = "ppc64le" \
+	|| test "${TARGETARCH}" = "riscv64"
+
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends build-essential ca-certificates git \
+	&& rm -rf /var/lib/apt/lists/*
+
+# PureGo target binaries name the architecture's generic glibc interpreter.
+# Debian uses ABI-qualified names on ARM and RISC-V, so retain compatible links.
+RUN set -eux; \
+	case "${TARGETARCH}" in \
+		arm) \
+			test -e /lib/ld-linux-armhf.so.3; \
+			if [ ! -e /lib/ld-linux.so.3 ]; then ln -s /lib/ld-linux-armhf.so.3 /lib/ld-linux.so.3; fi \
+			;; \
+		riscv64) \
+			test -e /lib/ld-linux-riscv64-lp64d.so.1; \
+			if [ ! -e /lib/ld.so.1 ]; then ln -s /lib/ld-linux-riscv64-lp64d.so.1 /lib/ld.so.1; fi \
+			;; \
+		ppc64le) \
+			test -e /lib64/ld64.so.2; \
+			;; \
+	esac
+
+ENV TARGET_ARCH=${TARGETARCH}
+
+WORKDIR /workspace
+COPY sliver-e2e-checkout/go.mod sliver-e2e-checkout/go.sum ./
+COPY sliver-e2e-checkout/test/reflektor/fixtures /workspace/test/reflektor/fixtures
+COPY --from=server-build /out/sliver-server /workspace/sliver-server
+COPY --from=driver-build /out/sliver-reflektor-e2e /usr/local/bin/sliver-reflektor-e2e
+COPY --from=reflektor-build /out/reflektor /usr/local/bin/reflektor
+
+CMD ["/bin/sh", "-c", "if [ \"${TARGET_ARCH}\" = arm ]; then export GOARM=7,hardfloat; fi; exec sliver-reflektor-e2e -repo /workspace -server /workspace/sliver-server -reflektor /usr/local/bin/reflektor -target-os linux -target-arch \"${TARGET_ARCH}\" -timeout 120m -startup-timeout 20m -session-timeout 5m"]

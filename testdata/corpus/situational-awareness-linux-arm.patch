@@ -1,0 +1,11 @@
+diff --git a/scripts/build-target.sh b/scripts/build-target.sh
+--- a/scripts/build-target.sh
++++ b/scripts/build-target.sh
+@@ -19,6 +19,7 @@ case "$goos/$goarch" in
+     windows/arm64) zig_target=aarch64-windows-gnu; object_pattern="COFF"; object_machine=64aa ;;
+     linux/386) zig_target=x86-linux-none; platform_define=BOF_LINUX; object_pattern="ELF 32-bit LSB relocatable, Intel 80386" ;;
+     linux/amd64) zig_target=x86_64-linux-none; platform_define=BOF_LINUX; object_pattern="ELF 64-bit LSB relocatable, x86-64" ;;
++    linux/arm) zig_target=arm-linux-none; platform_define=BOF_LINUX; object_pattern="ELF 32-bit LSB relocatable, ARM" ;;
+     linux/arm64) zig_target=aarch64-linux-none; platform_define=BOF_LINUX; object_pattern="ELF 64-bit LSB relocatable, ARM aarch64" ;;
+     darwin/amd64) zig_target=x86_64-macos-none; platform_define=BOF_DARWIN; object_pattern="Mach-O"; macho_cpu=07000001 ;;
+     darwin/arm64) zig_target=aarch64-macos-none; platform_define=BOF_DARWIN; object_pattern="Mach-O"; macho_cpu=0c000001 ;;

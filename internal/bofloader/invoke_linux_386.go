@@ -1,4 +1,4 @@
-//go:build linux && 386
+//go:build linux && !android && 386
 
 package bofloader
 
