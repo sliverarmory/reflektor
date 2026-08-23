@@ -1,4 +1,4 @@
-//go:build linux && !cgo && arm64
+//go:build linux && !android && !cgo && arm64
 
 #include "textflag.h"
 

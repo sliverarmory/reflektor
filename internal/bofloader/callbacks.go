@@ -415,17 +415,26 @@ func beaconPrintf(typeValue, formatAddress, a0, a1, a2, a3, a4, a5, a6, a7, a8, 
 }
 
 type printfArguments struct {
-	values [maxPrintfArgument]uintptr
-	index  int
+	values          [maxPrintfArgument]uintptr
+	index           int
+	wordSize        int
+	alignDoubleWord bool
 }
 
 func (arguments *printfArguments) next(bits int) (uint64, error) {
+	if arguments.wordSize == 4 && bits == 64 && arguments.alignDoubleWord && arguments.index&1 != 0 {
+		// AAPCS32 aligns double-word variadic arguments to an even core
+		// register or stack slot. BeaconPrintf's two fixed arguments end at
+		// r1, so the relative variadic slot index has the same parity as the
+		// underlying register/stack slot.
+		arguments.index++
+	}
 	if arguments.index >= len(arguments.values) {
 		return 0, errors.New("format string requires more than 10 machine-word arguments")
 	}
 	low := uint64(arguments.values[arguments.index])
 	arguments.index++
-	if pointerSize() == 4 && bits == 64 {
+	if arguments.wordSize == 4 && bits == 64 {
 		if arguments.index >= len(arguments.values) {
 			return 0, errors.New("64-bit format argument is missing its high word")
 		}
@@ -444,7 +453,11 @@ func formatPrintf(address uintptr, values [maxPrintfArgument]uintptr) (string, e
 	if err != nil {
 		return "", err
 	}
-	arguments := printfArguments{values: values}
+	arguments := printfArguments{
+		values:          values,
+		wordSize:        pointerSize(),
+		alignDoubleWord: runtime.GOARCH == "arm",
+	}
 	var output strings.Builder
 	var formatErrors []error
 

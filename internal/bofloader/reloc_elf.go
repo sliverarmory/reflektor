@@ -24,6 +24,13 @@ func elfRelocationWidth(arch string, typeID uint32) (int, bool, error) {
 			elf.R_386_GOTOFF, elf.R_386_GOTPC, elf.R_386_SIZE32, elf.R_386_GOT32X:
 			return 4, false, nil
 		}
+	case "arm":
+		switch elf.R_ARM(typeID) {
+		case elf.R_ARM_PC24, elf.R_ARM_ABS32, elf.R_ARM_REL32,
+			elf.R_ARM_PLT32, elf.R_ARM_CALL, elf.R_ARM_JUMP24,
+			elf.R_ARM_PREL31, elf.R_ARM_GOT_PREL:
+			return 4, false, nil
+		}
 	case "arm64":
 		switch elf.R_AARCH64(typeID) {
 		case elf.R_AARCH64_ABS64, elf.R_AARCH64_PREL64:
@@ -39,6 +46,26 @@ func elfRelocationWidth(arch string, typeID uint32) (int, bool, error) {
 			elf.R_AARCH64_LDST16_ABS_LO12_NC, elf.R_AARCH64_LDST32_ABS_LO12_NC,
 			elf.R_AARCH64_LDST64_ABS_LO12_NC, elf.R_AARCH64_LDST128_ABS_LO12_NC,
 			elf.R_AARCH64_ADR_GOT_PAGE, elf.R_AARCH64_LD64_GOT_LO12_NC:
+			return 4, false, nil
+		}
+	case "riscv64":
+		switch elf.R_RISCV(typeID) {
+		case elf.R_RISCV_64, elf.R_RISCV_CALL, elf.R_RISCV_CALL_PLT:
+			return 8, false, nil
+		case elf.R_RISCV_GOT_HI20, elf.R_RISCV_PCREL_HI20,
+			elf.R_RISCV_PCREL_LO12_I, elf.R_RISCV_PCREL_LO12_S:
+			return 4, false, nil
+		case elf.R_RISCV_ALIGN, elf.R_RISCV_RELAX:
+			// Reflektor never performs linker relaxation, so the original
+			// padding and instruction sequence remain valid as emitted.
+			return 0, true, nil
+		}
+	case "ppc64le":
+		switch elf.R_PPC64(typeID) {
+		case elf.R_PPC64_ADDR64:
+			return 8, false, nil
+		case elf.R_PPC64_REL24, elf.R_PPC64_REL16_HA, elf.R_PPC64_REL16_LO,
+			elf.R_PPC64_TOC16_HA, elf.R_PPC64_TOC16_LO, elf.R_PPC64_TOC16_LO_DS:
 			return 4, false, nil
 		}
 	default:
@@ -60,11 +87,17 @@ func elfRelocationNeedsGOT(arch string, typeID uint32) bool {
 		case elf.R_386_GOT32, elf.R_386_GOT32X:
 			return true
 		}
+	case "arm":
+		return elf.R_ARM(typeID) == elf.R_ARM_GOT_PREL
 	case "arm64":
 		switch elf.R_AARCH64(typeID) {
 		case elf.R_AARCH64_ADR_GOT_PAGE, elf.R_AARCH64_LD64_GOT_LO12_NC:
 			return true
 		}
+	case "riscv64":
+		return elf.R_RISCV(typeID) == elf.R_RISCV_GOT_HI20
+	case "ppc64le":
+		return false
 	}
 	return false
 }
@@ -75,8 +108,14 @@ func applyELFRelocation(object *objectFile, relocation objectRelocation, locatio
 		return applyELFAMD64Relocation(relocation, location, place, linked, externals)
 	case "386":
 		return applyELFI386Relocation(relocation, location, place, linked, externals)
+	case "arm":
+		return applyELFARMRelocation(relocation, location, place, linked)
 	case "arm64":
 		return applyELFARM64Relocation(relocation, location, place, linked)
+	case "riscv64":
+		return applyELFRISCV64Relocation(object, relocation, location, place, linked, externals)
+	case "ppc64le":
+		return applyELFPPC64LERelocation(object, relocation, location, place, linked)
 	default:
 		return fmt.Errorf("unsupported ELF architecture %q", object.arch)
 	}

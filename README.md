@@ -12,12 +12,25 @@ It exposes a stable root package (`reflektor`) so other projects can import it d
 
 ## Platform Support
 
+The table below describes the root `reflektor` shared-library loader, the
+`native` package, and recursive shared-library loading. BOF support is tracked
+separately because it can cover a host without implying shared-library parity.
+
 | OS | Architectures | Shared Library Format | Status | Loader Notes |
 | --- | --- | --- | --- | --- |
 | Windows | `386`, `amd64`, `arm64` | PE (`.dll`) | Supported | In-memory PE loader |
 | Darwin | `amd64`, `arm64` | Mach-O (`.dylib`, bundle) | Supported | Dyld4 root-image loader with system dependencies registered through public dyld; supports no-cgo builds and avoids temp-file legacy NS APIs. |
-| Linux | `386`, `amd64`, `arm64` | ELF (`.so`) | Supported | Pure Go in-memory ELF loader (maps PT_LOAD segments, applies relocations, resolves externals from runtime modules/`dlsym`); no `memfd`, no `/dev/shm`, no temp-file disk writes. |
+| Linux | `386`, `amd64`, `arm64`, `ppc64le`, `riscv64`; ARMv7 hard-float (`GOARM=7`) | ELF (`.so`) | Supported | Pure Go in-memory ELF loader (maps PT_LOAD segments, applies relocations, resolves externals from runtime modules/`dlsym`); no `memfd`, no `/dev/shm`, no temp-file disk writes. ARMv7, ppc64le, and riscv64 receive QEMU runtime proof. |
 | Other | - | - | Unsupported | Returns an explicit unsupported-platform error. |
+
+The machine-readable [platform capability manifest](platform-support.json)
+lists every non-Wasm `go tool dist list` target and records BOF format,
+endianness, CGO requirements, shared-library surfaces, Go `c-shared`
+availability, architecture variants where required, and the runtime proof for
+each target. `runtime` means CI executes
+the surface, `runtime-emulated` means CI executes it through emulation,
+`unsupported` means Reflektor has not implemented that surface, and `n-a`
+means the pinned Go toolchain does not provide the applicable build mode.
 
 ## Public API
 
@@ -101,12 +114,17 @@ of shared-library-only consumers. BOF-only consumers can likewise import this
 subpackage without pulling in the root package's `memmod` shared-library
 backend.
 
-`bof.Load` accepts the native relocatable-object convention used by each host:
+`bof.Load` accepts the native relocatable-object convention used by each host.
+Linux/ARMv7 hard-float (`GOARM=7`), Linux/ppc64le, and Linux/riscv64 also have
+full root, `native`, recursive, C, Rust, and Go `c-shared` test coverage. ARMv5,
+ARMv6, soft-float, and Thumb-compiled BOFs are not included in the ARM support
+claim. PowerPC64 objects must use the little-endian ELFv2 ABI; ELFv1,
+big-endian, NOTOC/P9NOTOC calls, and external tail branches are rejected.
 
 | Host | BOF object format | Entry ABI |
 | --- | --- | --- |
 | Windows `386`, `amd64`, `arm64` | COFF (`.o`) | `go(char *, int32)` using the Windows ABI |
-| Linux `386`, `amd64`, `arm64` | ELF `ET_REL` (`.o`) | `go(char *, int32)` using the host ABI |
+| Linux `386`, `amd64`, `arm64`, `ppc64le`, `riscv64`; ARMv7 hard-float (`GOARM=7`, ARM-state objects) | ELF `ET_REL` (`.o`) | `go(char *, int32)` using the host ABI |
 | Darwin `amd64`, `arm64` | Mach-O `MH_OBJECT` (`.o`); legacy ELF `ET_REL` accepted for compatibility | `go(char *, int32)` using the host ABI |
 
 Compile native Darwin objects with Zig's `x86_64-macos-none` or
@@ -116,6 +134,14 @@ platform-register reservation automatically. The earlier constrained ELF
 Darwin interchange format remains accepted for backwards compatibility; those
 Linux-targeted arm64 objects must explicitly reserve x18.
 Windows COFF machine code is not portable to Linux or Darwin.
+The ARMv7 hard-float, ppc64le, and riscv64 rows run BOFs without CGO under QEMU,
+including generated fixtures, load options, repeated and concurrent execution,
+close behavior, and the portable external BOF corpus. The same target images
+exercise C and Rust shared libraries through root, `native`, recursive, and CLI
+lifecycles with both CGO modes. Go `c-shared` exercises the cgo-enabled root,
+recursive, and CLI lifecycles, while `native` proves its intentional Go-image
+rejection. ARM uses a `linux/arm/v7` image; ppc64le and riscv64 use native Debian
+images with checksummed target Go toolchains under user-mode emulation.
 
 ```go
 var arguments bof.Arguments
@@ -181,12 +207,13 @@ lib, err := native.LoadLibrary(payload)
 
 It exposes the same `CallExport`, `CallExportWithArgs`, and `Close` lifecycle
 for byte-backed native images. On Linux, its import graph deliberately excludes
-the root loader's Go c-shared TLS reservation. Linux `amd64` and `arm64` use
-the PureGo call bridge in both CGO modes, while Linux `386` uses Reflektor's
-integer-only `runtime.cgocall` dispatcher. Valid Go c-shared payloads are
-rejected before mapping with `native.ErrGoSharedLibraryUnsupported`; use the
-root `reflektor` package when Go c-shared loading is required. File and
-recursive loading remain root-package features.
+the root loader's Go c-shared TLS reservation. Linux `amd64`, `arm64`,
+`ppc64le`, and `riscv64` use the PureGo call bridge in both CGO modes; ARMv7
+uses its hard-float bridge, while Linux `386` uses Reflektor's integer-only
+`runtime.cgocall` dispatcher. Valid Go c-shared payloads are rejected before
+mapping with `native.ErrGoSharedLibraryUnsupported`; use the cgo-enabled root
+`reflektor` package when Go c-shared loading is required. File and recursive
+loading remain root-package features.
 
 ## CLI
 
@@ -245,6 +272,7 @@ C test shared libraries are generated from:
 
 - `reflektor/testdata/c/args.c`
 - `reflektor/testdata/c/basic.c`
+- `reflektor/testdata/c/native_lifecycle.c`
 - `reflektor/testdata/c/recursive_leaf.c`
 - `reflektor/testdata/c/recursive_middle.c`
 - `reflektor/testdata/c/recursive_root.c`
@@ -255,7 +283,17 @@ loader module registry, then renames the dependency directory before calling
 `StartW`. On Darwin the rename happens before the lazy dyld transaction. These
 checks prove the custom dependencies came from bytes captured by Reflektor.
 
-The Rust HTTPS fixture is built from `reflektor/testdata/rust`. It exports `StartW`, performs a bounded `GET https://example.com/` through libcurl on Darwin/Linux or WinHTTP on Windows, and records `ok:200` after receiving a non-empty successful response. The fixture is dependency-free Rust (`no_std`) so it does not require unsupported thread-local runtime state from the in-memory loaders.
+The Rust fixtures are built from `reflektor/testdata/rust` and
+`reflektor/testdata/rust/native_args.rs`. The HTTPS fixture exports `StartW`,
+performs a bounded `GET https://example.com/` through libcurl on Darwin/Linux or
+WinHTTP on Windows, and records `ok:200` after receiving a non-empty successful
+response. Both fixtures are dependency-free Rust (`no_std`) so they do not
+require unsupported thread-local runtime state from the in-memory loaders.
+
+The generated Linux Go `c-shared` fixture also resolves the current user
+through libc NSS before starting its scheduler work. This exercises native
+loader selection for system GNU IFUNC symbols (including RISC-V `memcpy`) in
+both the legacy and recursive load paths.
 
 Build test shared libraries for the full matrix:
 
@@ -271,10 +309,21 @@ go test ./...
 
 The Rust fixture test requires Cargo with Rust 1.94.0 and outbound HTTPS access. Linux also requires the libcurl development package so the fixture can link against the system TLS client.
 
-Linux cross-arch Docker harness:
+Linux cross-architecture Docker/QEMU harnesses:
 
-- `reflektor/testdata/docker/linux-memmod.Dockerfile`
-- `reflektor/testdata/docker/run-linux-memmod-matrix.sh`
+- Shared-library matrix: `testdata/docker/linux-memmod.Dockerfile` and
+  `testdata/docker/run-linux-memmod-matrix.sh`
+- ARMv7 BOFs and shared libraries: `testdata/docker/linux-bof.Dockerfile` and
+  `testdata/docker/run-linux-bof-tests.sh`
+- RISC-V BOFs and shared libraries: `testdata/docker/linux-riscv64-bof.Dockerfile` and
+  `testdata/docker/run-linux-riscv64-bof-tests.sh`
+- PPC64LE BOFs and shared libraries: `testdata/docker/linux-ppc64le-bof.Dockerfile` and
+  `testdata/docker/run-linux-ppc64le-bof-tests.sh`
+
+The emulated runners reject every unexpected skip and require named passes for
+the C, Rust, Go `c-shared`, legacy byte, file, recursive dependency, native,
+CLI, BOF fixture, and 25-object BOF corpus lifecycles. The Sliver E2E workflow
+also builds and runs a real shared implant and native extension for each target.
 
 ## Repository Layout
 

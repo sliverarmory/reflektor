@@ -1,0 +1,11 @@
+diff --git a/scripts/build-target.sh b/scripts/build-target.sh
+--- a/scripts/build-target.sh
++++ b/scripts/build-target.sh
+@@ -20,6 +20,7 @@ case "$goos/$goarch" in
+     linux/386) zig_target=x86-linux-none; platform_define=BOF_LINUX; object_pattern="ELF 32-bit LSB relocatable, Intel 80386" ;;
+     linux/amd64) zig_target=x86_64-linux-none; platform_define=BOF_LINUX; object_pattern="ELF 64-bit LSB relocatable, x86-64" ;;
+     linux/arm64) zig_target=aarch64-linux-none; platform_define=BOF_LINUX; object_pattern="ELF 64-bit LSB relocatable, ARM aarch64" ;;
++    linux/riscv64) zig_target=riscv64-linux-none; platform_define=BOF_LINUX; object_pattern="ELF 64-bit LSB relocatable, UCB RISC-V" ;;
+     darwin/amd64) zig_target=x86_64-macos-none; platform_define=BOF_DARWIN; object_pattern="Mach-O"; macho_cpu=07000001 ;;
+     darwin/arm64) zig_target=aarch64-macos-none; platform_define=BOF_DARWIN; object_pattern="Mach-O"; macho_cpu=0c000001 ;;
+     *) echo "error: unsupported target $goos/$goarch" >&2; exit 2 ;;

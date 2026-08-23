@@ -55,6 +55,16 @@ func applyRelocations(object *objectFile, region *memoryRegion, externals map[ui
 		if err != nil {
 			return relocationError(object, relocation, err)
 		}
+		if object.format == "elf" && object.arch == "ppc64le" && ppc64RelocationNeedsRestoreSlot(relocation, location, linked) {
+			const callSpan = uint64(8)
+			if relocation.offset > section.size || callSpan > section.size-relocation.offset {
+				return relocationError(object, relocation, fmt.Errorf("external ELFv2 call and TOC restore slot exceed target section size %d", section.size))
+			}
+			if imageOffset > uint64(len(region.data)) || callSpan > uint64(len(region.data))-imageOffset {
+				return relocationError(object, relocation, errors.New("external ELFv2 call and TOC restore slot exceed mapped image"))
+			}
+			location = region.data[imageOffset : imageOffset+callSpan]
+		}
 		switch object.format {
 		case "coff":
 			err = applyCOFFRelocation(object, relocation, location, place, linked)

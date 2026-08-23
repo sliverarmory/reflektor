@@ -15,8 +15,31 @@ immutable commit. Once BishopFox/sliver#2336 is merged, the fallback should be
 replaced with its immutable merge commit. The workflow never depends on a
 feature branch name.
 
+The pinned Sliver commit predates compiler-matrix entries for Linux ARMv7,
+ppc64le, and riscv64. During `prepare`, `overlay.sh` verifies and applies the
+checked-in `sliver-new-linux-targets.patch`. That narrow patch adds the three
+server and client generator/compiler targets, their Zig triples, the integration
+driver whitelist, and the production client native-extension console filters.
+It also selects the existing Unix and Linux native-extension implementations
+while excluding the unsupported Linux implementation on those architectures,
+and supplies the generated RISC-V C integer aliases omitted from Sliver's
+vendored PTY package so its shared implant can compile.
+Preparation fails if the patch no longer applies exactly; verification checks
+every compiler map, client filter, driver entry, and mutually exclusive source
+constraint. This is test-only source adaptation and does not claim those targets
+are supported by the unpatched pinned Sliver revision.
+
 Each native runner builds the current root-package CLI and passes it to Sliver's
 integration driver with `-reflektor`. Darwin and Linux build that CLI with cgo
 enabled because it loads Sliver's Go c-shared implant. Windows remains cgo-free.
 Linux/386 performs the same flow under Docker/QEMU and builds the CLI with the
 container's native i386 GCC toolchain.
+Linux ARMv7 hard-float, ppc64le, and riscv64 use
+`Dockerfile.linux-emulated`. The driver and cgo-enabled Reflektor CLI are target
+binaries executed under QEMU, while the static Sliver server remains
+linux/amd64 so its embedded Go and Zig build assets remain self-contained and
+native to the Actions host. The ARM runtime explicitly exports
+`GOARM=7,hardfloat` so Sliver's inherited implant build environment cannot drift
+to a different ARM ABI. The generated target shared implant is loaded by
+the target CLI, connects a real session, and then loads, initializes, calls,
+and lists a target-native C extension.

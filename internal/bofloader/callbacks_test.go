@@ -130,6 +130,25 @@ func TestBeaconPrintfFormatting(t *testing.T) {
 	}
 }
 
+func TestPrintfArgumentsAAPCS32DoubleWordAlignment(t *testing.T) {
+	arguments := printfArguments{
+		values:          [maxPrintfArgument]uintptr{0x11, 0xdeadbeef, 0x55667788, 0x11223344},
+		index:           1,
+		wordSize:        4,
+		alignDoubleWord: true,
+	}
+	value, err := arguments.next(64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value != 0x1122334455667788 {
+		t.Fatalf("aligned 64-bit argument = %#x, want %#x", value, uint64(0x1122334455667788))
+	}
+	if arguments.index != 4 {
+		t.Fatalf("argument index = %d, want 4", arguments.index)
+	}
+}
+
 func TestBeaconPrintfWidePrecisionDoesNotSplitUTF8(t *testing.T) {
 	format := append([]byte("%.1ls|%.2ls|%.3ls"), 0)
 	var wide16 = [...]uint16{'é', 'x', 0}
@@ -186,13 +205,15 @@ func TestMalformedCallbackIsReported(t *testing.T) {
 }
 
 func TestWriteThunk(t *testing.T) {
-	buffer := make([]byte, 16)
+	buffer := make([]byte, importThunkStride(runtime.GOARCH))
 	target := uintptr(0x12345678)
+	got := uintptr(0x2000)
+	toc := uintptr(0xa000)
 	if pointerSize() == 8 {
 		wideTarget := uint64(0x1234567812345678)
 		target = uintptr(wideTarget)
 	}
-	if err := writeThunk(buffer, target); err != nil {
+	if err := writeThunk(buffer, target, 0, got, toc); err != nil {
 		t.Fatal(err)
 	}
 	switch runtime.GOARCH {
@@ -204,9 +225,31 @@ func TestWriteThunk(t *testing.T) {
 		if !bytes.Equal(buffer[:6], []byte{0xff, 0x25, 0, 0, 0, 0}) || binary.LittleEndian.Uint64(buffer[6:14]) != uint64(target) {
 			t.Fatalf("amd64 thunk = %x", buffer)
 		}
+	case "arm":
+		if binary.LittleEndian.Uint32(buffer[0:4]) != 0xe59fc000 || binary.LittleEndian.Uint32(buffer[4:8]) != 0xe12fff1c || binary.LittleEndian.Uint32(buffer[8:12]) != uint32(target) {
+			t.Fatalf("arm thunk = %x", buffer)
+		}
 	case "arm64":
 		if binary.LittleEndian.Uint32(buffer[:4]) != 0x58000050 || binary.LittleEndian.Uint32(buffer[4:8]) != 0xd61f0200 || binary.LittleEndian.Uint64(buffer[8:]) != uint64(target) {
 			t.Fatalf("arm64 thunk = %x", buffer)
+		}
+	case "ppc64le":
+		want := []uint32{0xf8410018, 0x3d820000, 0xe98c8000, 0x7d8903a6, 0x4e800420}
+		for index, word := range want {
+			if got := binary.LittleEndian.Uint32(buffer[index*4:]); got != word {
+				t.Fatalf("ppc64le thunk word %d = %#08x, want %#08x", index, got, word)
+			}
+		}
+	}
+}
+
+func TestWriteARMThunk(t *testing.T) {
+	buffer := bytes.Repeat([]byte{0xff}, 16)
+	writeARMThunk(buffer, 0x12345679)
+	want := []uint32{0xe59fc000, 0xe12fff1c, 0x12345679}
+	for index, word := range want {
+		if got := binary.LittleEndian.Uint32(buffer[index*4:]); got != word {
+			t.Fatalf("ARM thunk word %d = %#x, want %#x", index, got, word)
 		}
 	}
 }

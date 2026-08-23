@@ -1,4 +1,4 @@
-//go:build linux && (386 || amd64 || arm64)
+//go:build linux && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)
 
 package reflektor_test
 
@@ -112,12 +112,41 @@ func assertNativeLinuxBridgeFiles(t *testing.T, cgoEnabled string, modulePath st
 		if slices.Contains(linuxBackend.GoFiles, "call_64.go") {
 			t.Fatalf("linux/386 unexpectedly selected call_64.go: %v", linuxBackend.GoFiles)
 		}
-	case "amd64", "arm64":
+		if !slices.Contains(linuxBackend.GoFiles, "cache_flush_x86.go") {
+			t.Fatalf("linux/386 GoFiles = %v, want cache_flush_x86.go", linuxBackend.GoFiles)
+		}
+	case "arm":
+		if !slices.Contains(linuxBackend.GoFiles, "call_arm.go") || !slices.Contains(linuxBackend.GoFiles, "cache_flush_arm.go") {
+			t.Fatalf("linux/arm bridge files: GoFiles=%v SFiles=%v", linuxBackend.GoFiles, linuxBackend.SFiles)
+		}
+		if slices.Contains(linuxBackend.GoFiles, "call_386.go") || slices.Contains(linuxBackend.GoFiles, "call_64.go") {
+			t.Fatalf("linux/arm selected another architecture's dispatcher: %v", linuxBackend.GoFiles)
+		}
+	case "amd64", "arm64", "riscv64":
 		if !slices.Contains(linuxBackend.GoFiles, "call_64.go") {
 			t.Fatalf("linux/%s GoFiles = %v, want purego call_64.go", runtime.GOARCH, linuxBackend.GoFiles)
 		}
 		if slices.Contains(linuxBackend.GoFiles, "call_386.go") || slices.Contains(linuxBackend.SFiles, "call_386.s") {
 			t.Fatalf("linux/%s unexpectedly selected 386 dispatcher: GoFiles=%v SFiles=%v", runtime.GOARCH, linuxBackend.GoFiles, linuxBackend.SFiles)
+		}
+		wantCacheFile := map[string]string{
+			"amd64":   "cache_flush_x86.go",
+			"arm64":   "cache_flush_arm64.go",
+			"riscv64": "cache_flush_riscv64.go",
+		}[runtime.GOARCH]
+		if !slices.Contains(linuxBackend.GoFiles, wantCacheFile) {
+			t.Fatalf("linux/%s GoFiles = %v, want %s", runtime.GOARCH, linuxBackend.GoFiles, wantCacheFile)
+		}
+	case "ppc64le":
+		if !slices.Contains(linuxBackend.GoFiles, "call_64.go") {
+			t.Fatalf("linux/ppc64le bridge files: GoFiles=%v SFiles=%v", linuxBackend.GoFiles, linuxBackend.SFiles)
+		}
+		if cgoEnabled == "0" {
+			if !slices.Contains(linuxBackend.GoFiles, "cache_flush_ppc64le.go") || !slices.Contains(linuxBackend.SFiles, "cache_flush_ppc64le.s") || slices.Contains(linuxBackend.GoFiles, "cache_flush_ppc64le_cgo.go") {
+				t.Fatalf("linux/ppc64le CGO-free cache-flush files: GoFiles=%v SFiles=%v", linuxBackend.GoFiles, linuxBackend.SFiles)
+			}
+		} else if !slices.Contains(linuxBackend.GoFiles, "cache_flush_ppc64le_cgo.go") || slices.Contains(linuxBackend.SFiles, "cache_flush_ppc64le.s") {
+			t.Fatalf("linux/ppc64le cgo cache-flush files: GoFiles=%v SFiles=%v", linuxBackend.GoFiles, linuxBackend.SFiles)
 		}
 	default:
 		t.Fatalf("unsupported Linux architecture %s", runtime.GOARCH)

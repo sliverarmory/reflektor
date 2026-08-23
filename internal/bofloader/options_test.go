@@ -3,6 +3,7 @@ package bofloader
 import (
 	"errors"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -120,6 +121,10 @@ func TestResolveExternalSymbolsCachesExactImportNames(t *testing.T) {
 		1: {index: 1, name: "HOST$Same", section: sectionUndefined, weak: true},
 		2: {index: 2, name: "HOST$Same", section: sectionUndefined},
 	}}
+	object.arch = runtime.GOARCH
+	if runtime.GOARCH == "ppc64le" {
+		object.ppc64TOC = region.base() + uintptr(systemPageSize()) + uintptr(ppc64TOCBias)
+	}
 	referenced := []uint32{1, 2}
 	imports := objectImports(object, referenced)
 	resolverCalls := 0

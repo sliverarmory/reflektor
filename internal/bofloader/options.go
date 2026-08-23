@@ -39,7 +39,8 @@ func objectImports(object *objectFile, referenced []uint32) []Import {
 	byName := make(map[string]Import)
 	for _, index := range referenced {
 		symbol, ok := object.symbols[index]
-		if !ok || symbol.section != sectionUndefined || (object.format == "elf" && symbol.name == "_GLOBAL_OFFSET_TABLE_") {
+		if !ok || symbol.section != sectionUndefined ||
+			(object.format == "elf" && (symbol.name == "_GLOBAL_OFFSET_TABLE_" || object.arch == "ppc64le" && symbol.name == ".TOC.")) {
 			continue
 		}
 		imported := classifyImport(symbol)

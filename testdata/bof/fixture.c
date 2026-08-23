@@ -58,5 +58,11 @@ void go(char *buffer, int32_t length) {
 #else
     BeaconPrintf(0, "bof-printf=%d:%s", 7, "callback-ok");
 #endif
+#if defined(__linux__) && defined(__arm__)
+    // AAPCS32 leaves an alignment slot between the int and long long. Keep
+    // this in the runtime fixture so the callback bridge proves that it
+    // decodes aligned variadic arguments rather than only adjacent words.
+    BeaconPrintf(0, "bof-arm-align=%d:%llx", 7, (unsigned long long)0x1122334455667788ULL);
+#endif
     BeaconOutput(0, bof_pic_global, (int32_t)(sizeof(bof_pic_global) - 1));
 }

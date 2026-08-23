@@ -1,4 +1,4 @@
-//go:build linux && (386 || amd64 || arm64)
+//go:build linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)
 
 package linuxmem
 
@@ -183,5 +183,134 @@ func TestResolverNeededFailureRetainsCleanupOwnership(t *testing.T) {
 	resolver.closeOwnedLibraries()
 	if len(closeCalls) != 1 || closeCalls[0] != 77 {
 		t.Fatalf("failure cleanup dlclose calls = %v, want [77]", closeCalls)
+	}
+}
+
+func TestNewLinuxArchitectureRelocations(t *testing.T) {
+	t.Run("arm", func(t *testing.T) {
+		var word uint32
+		place := uintptr(unsafe.Pointer(&word))
+		if err := applyARMReloc(uint32(elf.R_ARM_RELATIVE), place, 0x1000, 0, 0x234, 0, false); err != nil {
+			t.Fatal(err)
+		}
+		if word != 0x1234 {
+			t.Fatalf("R_ARM_RELATIVE = %#x, want %#x", word, uint32(0x1234))
+		}
+		if err := applyARMReloc(uint32(elf.R_ARM_GLOB_DAT), place, 0, 0x5678, 0x99, 0, false); err != nil {
+			t.Fatal(err)
+		}
+		if word != 0x5678 {
+			t.Fatalf("R_ARM_GLOB_DAT = %#x, want %#x", word, uint32(0x5678))
+		}
+		if err := applyARMReloc(uint32(elf.R_ARM_TLS_TPOFF32), place, 0, 0, 0, 0, false); err == nil {
+			t.Fatal("R_ARM_TLS_TPOFF32 without a TLS slot succeeded")
+		}
+	})
+
+	t.Run("riscv64", func(t *testing.T) {
+		var word uint64
+		place := uintptr(unsafe.Pointer(&word))
+		if err := applyRISCV64Reloc(uint32(elf.R_RISCV_RELATIVE), place, 0x1000, 0, 0x234, 0, false); err != nil {
+			t.Fatal(err)
+		}
+		if word != 0x1234 {
+			t.Fatalf("R_RISCV_RELATIVE = %#x, want %#x", word, uint64(0x1234))
+		}
+		if err := applyRISCV64Reloc(uint32(elf.R_RISCV_64), place, 0, 0x5000, 0x678, 0, false); err != nil {
+			t.Fatal(err)
+		}
+		if word != 0x5678 {
+			t.Fatalf("R_RISCV_64 = %#x, want %#x", word, uint64(0x5678))
+		}
+		if err := applyRISCV64Reloc(uint32(elf.R_RISCV_TLS_TPREL64), place, 0, 0, 0, 0, false); err == nil {
+			t.Fatal("R_RISCV_TLS_TPREL64 without a TLS slot succeeded")
+		}
+	})
+
+	t.Run("ppc64le", func(t *testing.T) {
+		var word uint64
+		place := uintptr(unsafe.Pointer(&word))
+		if err := applyPPC64LEReloc(uint32(elf.R_PPC64_RELATIVE), place, 0x1000, 0, 0x234, 0, false); err != nil {
+			t.Fatal(err)
+		}
+		if word != 0x1234 {
+			t.Fatalf("R_PPC64_RELATIVE = %#x, want %#x", word, uint64(0x1234))
+		}
+		if err := applyPPC64LEReloc(uint32(elf.R_PPC64_ADDR64), place, 0, 0x5000, 0x678, 0, false); err != nil {
+			t.Fatal(err)
+		}
+		if word != 0x5678 {
+			t.Fatalf("R_PPC64_ADDR64 = %#x, want %#x", word, uint64(0x5678))
+		}
+		if err := applyPPC64LEReloc(uint32(elf.R_PPC64_TPREL64), place, 0, 0, 0, 0, false); err == nil {
+			t.Fatal("R_PPC64_TPREL64 without a TLS slot succeeded")
+		}
+	})
+}
+
+func TestNewLinuxArchitectureABIFlags(t *testing.T) {
+	tests := []struct {
+		name    string
+		machine elf.Machine
+		flags   uint32
+		wantErr bool
+	}{
+		{name: "arm EABI5 hard-float", machine: elf.EM_ARM, flags: armELFEABI5 | armELFFloatHard},
+		{name: "arm EABI5 soft-float", machine: elf.EM_ARM, flags: armELFEABI5 | armELFFloatSoft, wantErr: true},
+		{name: "riscv64 LP64D", machine: elf.EM_RISCV, flags: riscvELFFloatABIDouble},
+		{name: "riscv64 LP64D RVC", machine: elf.EM_RISCV, flags: riscvELFFloatABIDouble | riscvELFRVC},
+		{name: "riscv64 soft-float", machine: elf.EM_RISCV, flags: riscvELFRVC, wantErr: true},
+		{name: "riscv64 RVE", machine: elf.EM_RISCV, flags: riscvELFFloatABIDouble | riscvELFRVE, wantErr: true},
+		{name: "riscv64 TSO", machine: elf.EM_RISCV, flags: riscvELFFloatABIDouble | riscvELFTSO, wantErr: true},
+		{name: "riscv64 unknown", machine: elf.EM_RISCV, flags: riscvELFFloatABIDouble | 0x20, wantErr: true},
+		{name: "ppc64le ELFv2", machine: elf.EM_PPC64, flags: ppc64ELFABI2},
+		{name: "ppc64 ELFv1", machine: elf.EM_PPC64, flags: 1, wantErr: true},
+		{name: "ppc64 unspecified ABI", machine: elf.EM_PPC64, flags: 0, wantErr: true},
+		{name: "ppc64 unknown", machine: elf.EM_PPC64, flags: ppc64ELFABI2 | 0x4, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateELFArchitectureFlags(test.machine, test.flags)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("validateELFArchitectureFlags(%s, %#x) error = %v, wantErr=%v", test.machine, test.flags, err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestApplySegmentProtectionsRejectsWritableExecutableSegment(t *testing.T) {
+	mapping, err := unix.Mmap(-1, 0, unix.Getpagesize(), unix.PROT_READ|unix.PROT_WRITE, unix.MAP_PRIVATE|unix.MAP_ANON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unix.Munmap(mapping)
+
+	mapped := mappedELF{
+		mapping:  mapping,
+		loadBias: uintptr(unsafe.Pointer(unsafe.SliceData(mapping))),
+		progs: []*elf.Prog{{ProgHeader: elf.ProgHeader{
+			Type:  elf.PT_LOAD,
+			Flags: elf.PF_R | elf.PF_W | elf.PF_X,
+			Memsz: uint64(len(mapping)),
+		}}},
+	}
+	if err := applySegmentProtections(mapped); err == nil || !strings.Contains(err.Error(), "writable and executable") {
+		t.Fatalf("applySegmentProtections error = %v, want W+X rejection", err)
+	}
+}
+
+func TestMatchSymbolOffsetSkipsGNUIFUNCResolvers(t *testing.T) {
+	ifuncInfo := byte(elf.STB_GLOBAL)<<4 | byte(elf.STT_GNU_IFUNC)
+	funcInfo := byte(elf.STB_GLOBAL)<<4 | byte(elf.STT_FUNC)
+	symbols := []elf.Symbol{
+		{Name: "memcpy", Info: ifuncInfo, Value: 0x1000},
+		{Name: "memcpy", Info: funcInfo, Value: 0x2000},
+	}
+
+	if got, ok := matchSymbolOffset(symbols, "memcpy"); !ok || got != 0x2000 {
+		t.Fatalf("matchSymbolOffset(memcpy) = (%#x, %v), want (%#x, true)", got, ok, uintptr(0x2000))
+	}
+	if got, ok := matchSymbolOffset(symbols[:1], "memcpy"); ok || got != 0 {
+		t.Fatalf("matchSymbolOffset(IFUNC-only memcpy) = (%#x, %v), want (0, false)", got, ok)
 	}
 }

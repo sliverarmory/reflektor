@@ -1,0 +1,12 @@
+*
+!go.mod
+!go.sum
+!reflektor.go
+!cli/
+!cli/**
+!memmod/
+!memmod/**
+!sliver-e2e-checkout/
+!sliver-e2e-checkout/**
+.git
+sliver-e2e-checkout/.git

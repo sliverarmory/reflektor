@@ -95,8 +95,14 @@ func zigTargetFor(goos string, goarch string) (string, bool) {
 		return "x86-linux-gnu", true
 	case goos == "linux" && goarch == "amd64":
 		return "x86_64-linux-gnu", true
+	case goos == "linux" && goarch == "arm":
+		return "arm-linux-gnueabihf", true
 	case goos == "linux" && goarch == "arm64":
 		return "aarch64-linux-gnu", true
+	case goos == "linux" && goarch == "ppc64le":
+		return "powerpc64le-linux-gnu", true
+	case goos == "linux" && goarch == "riscv64":
+		return "riscv64-linux-gnu", true
 	case goos == "windows" && goarch == "386":
 		return "x86-windows-gnu", true
 	case goos == "windows" && goarch == "amd64":
