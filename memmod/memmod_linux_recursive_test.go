@@ -1,4 +1,4 @@
-//go:build linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)
+//go:build (linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)) || (freebsd && (amd64 || arm64))
 
 package memmod
 
@@ -6,6 +6,7 @@ import (
 	"debug/elf"
 	"errors"
 	"reflect"
+	"runtime"
 	"testing"
 )
 
@@ -99,7 +100,20 @@ func TestLinuxPathWithinRootUsesDirectoryBoundary(t *testing.T) {
 }
 
 func TestLinuxNativeDependencyNames(t *testing.T) {
-	for _, name := range []string{"libc.so.6", "libcurl.so.4", "ld-linux-x86-64.so.2", "ld-musl-aarch64.so.1"} {
+	names := []string{"libc.so.6", "libcurl.so.4", "ld-linux-x86-64.so.2", "ld-musl-aarch64.so.1"}
+	if runtime.GOOS == "freebsd" {
+		names = []string{
+			"libc++.so.1",
+			"libc.so.7",
+			"libcxxrt.so.1",
+			"libcurl.so.4",
+			"libsys.so.7",
+			"libthr.so.3",
+			"libutil.so.10",
+			"ld-elf.so.1",
+		}
+	}
+	for _, name := range names {
 		if !isLinuxNativeDependencyName(name) {
 			t.Fatalf("expected %q to use native system fallback", name)
 		}

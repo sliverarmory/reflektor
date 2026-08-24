@@ -9,11 +9,10 @@ Reflektor source rather than the version previously committed to Sliver's
 vendor directory.
 
 The GitHub workflow accepts only an immutable 40-hex Sliver commit. Automatic
-push and pull request runs use the signed native-package bootstrap commit
-`ada79c8ecdad89b495b2d9e840551abd01b80ca0`; manual runs may supply another
-immutable commit. Once BishopFox/sliver#2336 is merged, the fallback should be
-replaced with its immutable merge commit. The workflow never depends on a
-feature branch name.
+push and pull request runs use the signed merge commit for
+BishopFox/sliver#2336,
+`b428274515a9274aa47d940035d24087df1d564a`; manual runs may supply another
+immutable commit. The workflow never depends on a feature branch name.
 
 The pinned Sliver commit predates compiler-matrix entries for Linux ARMv7,
 ppc64le, and riscv64. During `prepare`, `overlay.sh` verifies and applies the
@@ -43,3 +42,12 @@ native to the Actions host. The ARM runtime explicitly exports
 to a different ARM ABI. The generated target shared implant is loaded by
 the target CLI, connects a real session, and then loads, initializes, calls,
 and lists a target-native C extension.
+
+FreeBSD is intentionally absent from this Sliver harness. At the pinned Sliver
+commit, the exact server build used here fails for both `freebsd/amd64` and
+`freebsd/arm64`: `implant/sliver/transports/wireguard/wireguard_generic.go`
+references undefined `net`, `device`, and `errors` names, and the server has no
+FreeBSD `assetsFs` binding. The integration driver independently lacks its
+FreeBSD process helpers. Reflektor's standalone FreeBSD QEMU jobs still execute
+the complete BOF and shared-library lifecycle; the Sliver layer can be added
+after upstream Sliver itself compiles for those targets.

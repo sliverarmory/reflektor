@@ -1,4 +1,4 @@
-//go:build (darwin && !ios && (amd64 || arm64)) || (linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64))
+//go:build (darwin && !ios && (amd64 || arm64)) || (freebsd && (amd64 || arm64)) || (linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64))
 
 package bofloader
 
@@ -99,6 +99,24 @@ func openUnixSystemLibrary(name string) (uintptr, error) {
 func unixSystemLibraryCandidates(goos, name string) []string {
 	candidates := []string{name}
 	switch goos {
+	case "freebsd":
+		if strings.Contains(name, ".so") {
+			return candidates
+		}
+		stem := name
+		if !strings.HasPrefix(stem, "lib") {
+			stem = "lib" + stem
+		}
+		switch stem {
+		case "libc":
+			return append(candidates, "libc.so.7", "libc.so")
+		case "libm":
+			return append(candidates, "libm.so.5", "libm.so")
+		case "libpthread", "libthr":
+			return append(candidates, "libthr.so.3", "libthr.so")
+		default:
+			return append(candidates, stem+".so")
+		}
 	case "linux":
 		if strings.Contains(name, ".so") {
 			return candidates

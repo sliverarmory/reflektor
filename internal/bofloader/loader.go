@@ -302,7 +302,7 @@ func validateHost(object *objectFile) error {
 			return fmt.Errorf("bofloader: COFF BOFs require a Windows host; use an ELF relocatable BOF on %s", runtime.GOOS)
 		}
 	case "elf":
-		if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		if runtime.GOOS != "linux" && runtime.GOOS != "darwin" && runtime.GOOS != "freebsd" {
 			return fmt.Errorf("bofloader: ELF BOFs are unsupported on %s", runtime.GOOS)
 		}
 	case "macho":

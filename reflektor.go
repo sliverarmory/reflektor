@@ -114,6 +114,7 @@ func memoryLibraryOrigin(data []byte) (string, error) {
 	}
 	ext := map[string]string{
 		"darwin":  ".dylib",
+		"freebsd": ".so",
 		"linux":   ".so",
 		"windows": ".dll",
 	}[runtime.GOOS]
@@ -272,7 +273,7 @@ func dependencyEnvironmentDirs() []string {
 	switch runtime.GOOS {
 	case "darwin":
 		keys = []string{"DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH"}
-	case "linux":
+	case "freebsd", "linux":
 		keys = []string{"LD_LIBRARY_PATH"}
 	case "windows":
 		// Recursive Windows resolution receives explicit importer/root search
@@ -294,6 +295,8 @@ func dependencySystemDirs() []string {
 	switch runtime.GOOS {
 	case "darwin":
 		return []string{"/usr/local/lib", "/opt/homebrew/lib", "/usr/lib", "/System/Library/Frameworks"}
+	case "freebsd":
+		return []string{"/lib", "/usr/lib", "/usr/local/lib", "/usr/local/lib/compat", "/libexec", "/usr/libexec"}
 	case "linux":
 		dirs := []string{"/usr/local/lib", "/lib", "/lib64", "/usr/lib", "/usr/lib64"}
 		switch runtime.GOARCH {

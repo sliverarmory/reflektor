@@ -101,8 +101,8 @@ func assertNativeLinuxBridgeFiles(t *testing.T, cgoEnabled string, modulePath st
 	}
 
 	linuxBackend := packages[modulePath+"/native/internal/linuxmem"]
-	if !slices.Contains(linuxBackend.GoFiles, "loader_linux.go") {
-		t.Fatalf("linuxmem GoFiles = %v, want loader_linux.go", linuxBackend.GoFiles)
+	if !slices.Contains(linuxBackend.GoFiles, "loader_elf.go") {
+		t.Fatalf("linuxmem GoFiles = %v, want loader_elf.go", linuxBackend.GoFiles)
 	}
 	switch runtime.GOARCH {
 	case "386":

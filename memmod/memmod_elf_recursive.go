@@ -1,4 +1,4 @@
-//go:build linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)
+//go:build (linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)) || (freebsd && (amd64 || arm64))
 
 package memmod
 
@@ -107,7 +107,7 @@ type linuxRecursiveLoader struct {
 	totalBytes   uint64
 }
 
-// LoadLibraryRecursive maps a Linux ELF root and each non-system DT_NEEDED
+// LoadLibraryRecursive maps an ELF root and each non-system DT_NEEDED
 // dependency into one private Reflektor load group. The legacy LoadLibrary path
 // intentionally remains separate and continues to resolve dependencies through
 // the process loader.
@@ -128,7 +128,7 @@ func LoadLibraryRecursive(data []byte, origin string, reader DependencyReader) (
 	}
 	api, err := getLinuxDynAPI()
 	if err != nil {
-		return nil, fmt.Errorf("initialize Linux dynamic API for recursive load: %w", err)
+		return nil, fmt.Errorf("initialize ELF dynamic API for recursive load: %w", err)
 	}
 
 	loader := &linuxRecursiveLoader{
@@ -495,7 +495,7 @@ func (loader *linuxRecursiveLoader) resolveExternal(requester *linuxRecursiveNod
 		}
 	}
 
-	if address, err := resolveWithLinuxHandle(loader.group.api, 0, symbol.Name, symbol.Version); err == nil && address != 0 {
+	if address, err := resolveWithLinuxHandle(loader.group.api, loader.group.api.defaultHandle, symbol.Name, symbol.Version); err == nil && address != 0 {
 		return address, nil
 	}
 	return 0, fmt.Errorf("unresolved recursive external symbol %q (version=%q library=%q) for %q", symbol.Name, symbol.Version, symbol.Library, requester.path)
@@ -973,6 +973,9 @@ func canonicalRecursivePath(path string) (string, error) {
 
 func linuxRecursiveSystemRoots() []string {
 	configured := []string{"/lib", "/lib64", "/usr/lib", "/usr/lib64"}
+	if runtime.GOOS == "freebsd" {
+		configured = []string{"/lib", "/usr/lib", "/usr/local/lib", "/usr/local/lib/compat", "/libexec", "/usr/libexec"}
+	}
 	seen := make(map[string]struct{}, len(configured))
 	var roots []string
 	for _, root := range configured {
@@ -1009,6 +1012,29 @@ func linuxPathWithinRoot(path string, root string) bool {
 
 func isLinuxNativeDependencyName(name string) bool {
 	base := filepath.Base(strings.TrimSpace(name))
+	if runtime.GOOS == "freebsd" {
+		switch base {
+		case "ld-elf.so.1",
+			"libc++.so", "libc++.so.1",
+			"libc.so", "libc.so.7",
+			"libcxxrt.so", "libcxxrt.so.1",
+			"libcrypto.so", "libcrypto.so.30", "libcrypto.so.111", "libcrypto.so.3",
+			"libcurl.so", "libcurl.so.4",
+			"libgcc_s.so", "libgcc_s.so.1",
+			"libm.so", "libm.so.5",
+			"libpthread.so", "libthr.so", "libthr.so.3",
+			"libresolv.so", "libresolv.so.2",
+			"librt.so", "librt.so.1",
+			"libssl.so", "libssl.so.30", "libssl.so.111", "libssl.so.3",
+			"libstdc++.so", "libstdc++.so.6",
+			"libsys.so", "libsys.so.7",
+			"libutil.so", "libutil.so.9", "libutil.so.10",
+			"libz.so", "libz.so.6", "libz.so.1":
+			return true
+		default:
+			return false
+		}
+	}
 	if strings.HasPrefix(base, "ld-linux-") || strings.HasPrefix(base, "ld-musl-") {
 		return true
 	}

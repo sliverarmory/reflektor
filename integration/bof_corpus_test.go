@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,12 +54,17 @@ type bofCorpusDirectoryFixture struct {
 }
 
 type bofCorpusArtifact struct {
-	Name   string                `json:"name"`
-	OS     string                `json:"os"`
-	Arch   string                `json:"arch"`
-	Path   string                `json:"path"`
-	Args   []bofCorpusArgument   `json:"args"`
-	Expect bofCorpusExpectations `json:"expect"`
+	Name        string                `json:"name"`
+	OS          string                `json:"os"`
+	Arch        string                `json:"arch"`
+	Path        string                `json:"path"`
+	Args        []bofCorpusArgument   `json:"args"`
+	TCPListener *bofCorpusTCPListener `json:"tcp_listener,omitempty"`
+	Expect      bofCorpusExpectations `json:"expect"`
+}
+
+type bofCorpusTCPListener struct {
+	PortArgument int `json:"port_argument"`
 }
 
 type bofCorpusArgument struct {
@@ -69,6 +75,8 @@ type bofCorpusArgument struct {
 type bofCorpusExpectations struct {
 	Types           []int    `json:"types"`
 	ContainsAny     []string `json:"contains_any"`
+	ContainsAll     []string `json:"contains_all"`
+	NotContains     []string `json:"not_contains"`
 	CaseInsensitive bool     `json:"case_insensitive"`
 	MinCallbacks    int      `json:"min_callbacks"`
 }
@@ -132,6 +140,8 @@ func TestSituationalAwarenessBOFCorpusChild(t *testing.T) {
 		t.Fatalf("artifact %q targets %s/%s, child is %s/%s", artifact.Path, artifact.OS, artifact.Arch, runtime.GOOS, runtime.GOARCH)
 	}
 
+	closeTCPListener := startBOFCorpusTCPListener(t, artifact)
+	defer closeTCPListener()
 	arguments := packBOFCorpusArguments(t, artifact.Args)
 	objectPath, err := secureCorpusJoin(repository, artifact.Path)
 	if err != nil {
@@ -241,6 +251,15 @@ func validateBOFCorpusManifest(t *testing.T, repository string, manifest bofCorp
 		}
 		seenTargets[targetName] = struct{}{}
 		validateBOFCorpusArguments(t, location, artifact.Args)
+		if artifact.TCPListener != nil {
+			portArgument := artifact.TCPListener.PortArgument
+			if portArgument < 0 || portArgument >= len(artifact.Args) {
+				t.Fatalf("%s.tcp_listener.port_argument = %d, want an argument index in [0, %d)", location, portArgument, len(artifact.Args))
+			}
+			if artifact.Args[portArgument].Type != "int32" {
+				t.Fatalf("%s.args[%d].type = %q, want int32 for tcp_listener.port_argument", location, portArgument, artifact.Args[portArgument].Type)
+			}
+		}
 		if artifact.Expect.MinCallbacks < 0 {
 			t.Fatalf("%s.expect.min_callbacks = %d, want non-negative", location, artifact.Expect.MinCallbacks)
 		}
@@ -260,6 +279,16 @@ func validateBOFCorpusManifest(t *testing.T, repository string, manifest bofCorp
 		for _, substring := range artifact.Expect.ContainsAny {
 			if substring == "" {
 				t.Fatalf("%s.expect.contains_any contains an empty string", location)
+			}
+		}
+		for _, substring := range artifact.Expect.ContainsAll {
+			if substring == "" {
+				t.Fatalf("%s.expect.contains_all contains an empty string", location)
+			}
+		}
+		for _, substring := range artifact.Expect.NotContains {
+			if substring == "" {
+				t.Fatalf("%s.expect.not_contains contains an empty string", location)
 			}
 		}
 	}
@@ -294,10 +323,30 @@ func validateBOFCorpusArguments(t *testing.T, location string, arguments []bofCo
 
 func validBOFCorpusTarget(goos string, goarch string) bool {
 	switch goos + "/" + goarch {
-	case "darwin/amd64", "darwin/arm64", "linux/386", "linux/amd64", "linux/arm", "linux/arm64", "linux/ppc64le", "linux/riscv64", "windows/386", "windows/amd64", "windows/arm64":
+	case "darwin/amd64", "darwin/arm64", "freebsd/amd64", "freebsd/arm64", "linux/386", "linux/amd64", "linux/arm", "linux/arm64", "linux/ppc64le", "linux/riscv64", "windows/386", "windows/amd64", "windows/arm64":
 		return true
 	default:
 		return false
+	}
+}
+
+func TestValidBOFCorpusTarget(t *testing.T) {
+	for _, test := range []struct {
+		goos   string
+		goarch string
+		want   bool
+	}{
+		{goos: "freebsd", goarch: "amd64", want: true},
+		{goos: "freebsd", goarch: "arm64", want: true},
+		{goos: "freebsd", goarch: "386", want: false},
+		{goos: "js", goarch: "wasm", want: false},
+		{goos: "wasip1", goarch: "wasm", want: false},
+	} {
+		t.Run(test.goos+"-"+test.goarch, func(t *testing.T) {
+			if got := validBOFCorpusTarget(test.goos, test.goarch); got != test.want {
+				t.Fatalf("validBOFCorpusTarget(%q, %q) = %v, want %v", test.goos, test.goarch, got, test.want)
+			}
+		})
 	}
 }
 
@@ -412,6 +461,65 @@ func runBOFCorpusArtifact(t *testing.T, repository string, artifact bofCorpusArt
 	t.Logf("%s", bytes.TrimSpace(output))
 }
 
+func startBOFCorpusTCPListener(t *testing.T, artifact *bofCorpusArtifact) func() {
+	t.Helper()
+	if artifact.TCPListener == nil {
+		return func() {}
+	}
+	portArgument := artifact.TCPListener.PortArgument
+	if portArgument < 0 || portArgument >= len(artifact.Args) || artifact.Args[portArgument].Type != "int32" {
+		t.Fatalf("invalid tcp_listener port argument %d for %s", portArgument, artifact.Path)
+	}
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen for %s TCP fixture: %v", artifact.Path, err)
+	}
+	tcpAddress, ok := listener.Addr().(*net.TCPAddr)
+	if !ok || tcpAddress.Port < 1 || tcpAddress.Port > 65535 {
+		_ = listener.Close()
+		t.Fatalf("listen for %s TCP fixture returned invalid address %v", artifact.Path, listener.Addr())
+	}
+	artifact.Args = append([]bofCorpusArgument(nil), artifact.Args...)
+	artifact.Args[portArgument].Value = json.RawMessage(strconv.Itoa(tcpAddress.Port))
+	return func() {
+		if err := listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close %s TCP fixture: %v", artifact.Path, err)
+		}
+	}
+}
+
+func TestStartBOFCorpusTCPListener(t *testing.T) {
+	arguments := []bofCorpusArgument{
+		{Type: "string", Value: json.RawMessage(`"127.0.0.1"`)},
+		{Type: "int32", Value: json.RawMessage("1")},
+	}
+	artifact := bofCorpusArtifact{
+		Path:        "dist/freebsd/amd64/probe.o",
+		Args:        arguments,
+		TCPListener: &bofCorpusTCPListener{PortArgument: 1},
+	}
+	closeListener := startBOFCorpusTCPListener(t, &artifact)
+	t.Cleanup(closeListener)
+
+	port, err := parseCorpusInteger(artifact.Args[1].Value, 32)
+	if err != nil {
+		t.Fatalf("parse assigned TCP fixture port: %v", err)
+	}
+	if port < 1 || port > 65535 {
+		t.Fatalf("assigned TCP fixture port = %d, want 1..65535", port)
+	}
+	if string(arguments[1].Value) != "1" {
+		t.Fatalf("startBOFCorpusTCPListener mutated manifest arguments: %s", arguments[1].Value)
+	}
+	connection, err := net.DialTimeout("tcp4", net.JoinHostPort("127.0.0.1", strconv.FormatInt(port, 10)), time.Second)
+	if err != nil {
+		t.Fatalf("connect to TCP fixture: %v", err)
+	}
+	if err := connection.Close(); err != nil {
+		t.Fatalf("close TCP fixture connection: %v", err)
+	}
+}
+
 func packBOFCorpusArguments(t *testing.T, arguments []bofCorpusArgument) []byte {
 	t.Helper()
 	var packed bof.Arguments
@@ -514,12 +622,30 @@ func assertBOFCorpusOutput(t *testing.T, artifact bofCorpusArtifact, outputs []b
 		}
 		combined.Write(output.Data)
 	}
-	if len(artifact.Expect.ContainsAny) == 0 {
-		return
-	}
 	haystack := combined.String()
 	if artifact.Expect.CaseInsensitive {
 		haystack = strings.ToLower(haystack)
+	}
+	for _, substring := range artifact.Expect.ContainsAll {
+		original := substring
+		if artifact.Expect.CaseInsensitive {
+			substring = strings.ToLower(substring)
+		}
+		if !strings.Contains(haystack, substring) {
+			t.Fatalf("%s output did not contain required marker %q; output=%q", artifact.Path, original, truncateBOFOutput(combined.Bytes(), 4096))
+		}
+	}
+	for _, substring := range artifact.Expect.NotContains {
+		original := substring
+		if artifact.Expect.CaseInsensitive {
+			substring = strings.ToLower(substring)
+		}
+		if strings.Contains(haystack, substring) {
+			t.Fatalf("%s output contained forbidden marker %q; output=%q", artifact.Path, original, truncateBOFOutput(combined.Bytes(), 4096))
+		}
+	}
+	if len(artifact.Expect.ContainsAny) == 0 {
+		return
 	}
 	for _, substring := range artifact.Expect.ContainsAny {
 		if artifact.Expect.CaseInsensitive {

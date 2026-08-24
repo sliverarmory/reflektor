@@ -183,6 +183,7 @@ func TestExactBOFFixtureSymbol(t *testing.T) {
 		{name: "windows-386", target: bofTarget{goos: "windows", goarch: "386", format: "coff"}, want: "_custom_entry"},
 		{name: "windows-amd64", target: bofTarget{goos: "windows", goarch: "amd64", format: "coff"}, want: "custom_entry"},
 		{name: "darwin-macho", target: bofTarget{goos: "darwin", goarch: "arm64", format: "macho"}, want: "_custom_entry"},
+		{name: "freebsd-elf", target: bofTarget{goos: "freebsd", goarch: "arm64", format: "elf"}, want: "custom_entry"},
 		{name: "linux-elf", target: bofTarget{goos: "linux", goarch: "amd64", format: "elf"}, want: "custom_entry"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

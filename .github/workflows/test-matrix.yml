@@ -129,6 +129,89 @@ jobs:
             exit 1
           fi
 
+  freebsd:
+    name: freebsd-${{ matrix.goarch }}-qemu
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: amd64
+            vm_arch: x86-64
+            go_sha256: 9c805b762d9cd33c04c0dd414c1f4e86065a6ddce06e97e194e9bc806b120fc7
+            zig_arch: x86_64
+            zig_sha256: 390379bfaf6b89b001c6bb4035b8fcbc5c12193fd9fd5048c3a0fe39e5d1cf72
+          - goarch: arm64
+            vm_arch: arm64
+            go_sha256: 577a874da5171c0a31ceafe10d75faddcf6a17baad99c2c471062bde2c9ec49b
+            zig_arch: aarch64
+            zig_sha256: 0a441f50696a34cfb9f9a0b3c510fd49a56b18b364e03c26525cb7999959c969
+    env:
+      GOARCH: ${{ matrix.goarch }}
+      GO_SHA256: ${{ matrix.go_sha256 }}
+      ZIG_ARCH: ${{ matrix.zig_arch }}
+      ZIG_SHA256: ${{ matrix.zig_sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out Situational Awareness BOF corpus
+        uses: actions/checkout@v4
+        with:
+          repository: sliverarmory/Situational-Awareness-BOFs
+          ref: 693174ff525595c5ec61b08fdccb5f057ad52c94
+          path: test/corpus/Situational-Awareness-BOFs
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.0
+      - name: Prepare and build FreeBSD BOF corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash testdata/corpus/prepare-situational-awareness-freebsd.sh "${REFLEKTOR_BOF_CORPUS_DIR}"
+          "${REFLEKTOR_BOF_CORPUS_DIR}/scripts/build-target.sh" freebsd "${GOARCH}"
+      - name: Start FreeBSD 15.1 ${{ matrix.vm_arch }} VM
+        uses: cross-platform-actions/action@5ea7e8e4677bd726033a10b094ba1c5762b15dee # v1.3.0
+        with:
+          operating_system: freebsd
+          architecture: ${{ matrix.vm_arch }}
+          version: "15.1"
+          shell: bash
+          memory: 6G
+          cpu_count: 4
+          environment_variables: GOARCH GO_SHA256 ZIG_ARCH ZIG_SHA256 REFLEKTOR_BOF_CORPUS_DIR
+      - name: Install FreeBSD toolchains and pinned Go
+        shell: cpa.sh {0} --sync-files runner-to-vm
+        run: |
+          set -eux
+          sudo env ASSUME_ALWAYS_YES=yes pkg bootstrap -f
+          sudo pkg install -y bash binutils ca_root_nss curl file git jq pkgconf rust
+          go_archive="/tmp/go1.26.6.freebsd-${GOARCH}.tar.gz"
+          fetch -o "${go_archive}" "https://go.dev/dl/go1.26.6.freebsd-${GOARCH}.tar.gz"
+          test "$(sha256 -q "${go_archive}")" = "${GO_SHA256}"
+          sudo rm -rf /usr/local/go
+          sudo tar -C /usr/local -xzf "${go_archive}"
+          zig_archive="/tmp/zig-0.16.0-${ZIG_ARCH}-freebsd.tar.xz"
+          fetch -o "${zig_archive}" "https://ziglang.org/download/0.16.0/zig-${ZIG_ARCH}-freebsd-0.16.0.tar.xz"
+          test "$(sha256 -q "${zig_archive}")" = "${ZIG_SHA256}"
+          sudo rm -rf /usr/local/zig
+          sudo mkdir -p /usr/local/zig
+          sudo tar -C /usr/local/zig --strip-components=1 -xJf "${zig_archive}"
+          /usr/local/go/bin/go version
+          /usr/local/zig/zig version
+          rustc --version
+          cargo --version
+          freebsd-version
+          uname -m
+      - name: Run FreeBSD BOF and shared-library E2E
+        shell: cpa.sh {0} --sync-files runner-to-vm
+        run: |
+          set -eux
+          export PATH="/usr/local/go/bin:/usr/local/zig:/usr/local/bin:/usr/bin:/bin"
+          export GOTOOLCHAIN=local
+          ./testdata/freebsd/run-freebsd-tests.sh
+
   linux-native:
     name: linux-${{ matrix.goarch }}-native
     strategy:
@@ -622,12 +705,17 @@ jobs:
             echo "Building ./native for ${goos}/${goarch} with CGO_ENABLED=0"
             if [[ "${goos}/${goarch}" == "linux/arm" ]]; then
               CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" GOARM=7 go build -trimpath ./native
+            elif [[ "${goos}" == "freebsd" ]]; then
+              CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" \
+                go build -gcflags=github.com/ebitengine/purego/internal/fakecgo=-std -trimpath ./native
             else
               CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go build -trimpath ./native
             fi
           done <<'TARGETS'
           darwin amd64
           darwin arm64
+          freebsd amd64
+          freebsd arm64
           linux 386
           linux amd64
           linux arm
@@ -660,12 +748,17 @@ jobs:
             echo "Building BOF packages for ${goos}/${goarch} with CGO_ENABLED=0"
             if [[ "${goos}/${goarch}" == "linux/arm" ]]; then
               CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" GOARM=7 go build -trimpath ./bof ./internal/bofloader
+            elif [[ "${goos}" == "freebsd" ]]; then
+              CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" \
+                go build -gcflags=github.com/ebitengine/purego/internal/fakecgo=-std -trimpath ./bof ./internal/bofloader
             else
               CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go build -trimpath ./bof ./internal/bofloader
             fi
           done <<'TARGETS'
           darwin amd64
           darwin arm64
+          freebsd amd64
+          freebsd arm64
           linux 386
           linux amd64
           linux arm
@@ -683,12 +776,17 @@ jobs:
             echo "Building all packages for full-support target ${goos}/${goarch} with CGO_ENABLED=0"
             if [[ "${goos}/${goarch}" == "linux/arm" ]]; then
               CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" GOARM=7 go build -trimpath ./...
+            elif [[ "${goos}" == "freebsd" ]]; then
+              CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" \
+                go build -gcflags=github.com/ebitengine/purego/internal/fakecgo=-std -trimpath ./...
             else
               CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go build -trimpath ./...
             fi
           done <<'TARGETS'
           darwin amd64
           darwin arm64
+          freebsd amd64
+          freebsd arm64
           linux 386
           linux amd64
           linux arm
