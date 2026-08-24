@@ -47,11 +47,16 @@ jobs:
       - name: Build all corpus and generated-object seeds
         run: |
           set -euo pipefail
+          bash testdata/corpus/prepare-situational-awareness-freebsd.sh "${REFLEKTOR_BOF_CORPUS_DIR}"
           make -C "${REFLEKTOR_BOF_CORPUS_DIR}" matrix
           mkdir -p "${REFLEKTOR_BOF_FIXTURE_DIR}"
           CGO_ENABLED=0 go test ./integration -run '^TestBuildBOFMatrix$' -count=1 -v | tee bof-fixture-seeds.log
           find "${REFLEKTOR_BOF_CORPUS_DIR}/dist" "${REFLEKTOR_BOF_FIXTURE_DIR}" -type f \( -name '*.o' -o -name '*.obj' \) -print | LC_ALL=C sort > bof-fuzz-seeds.txt
-          test "$(wc -l < bof-fuzz-seeds.txt | tr -d '[:space:]')" -eq 325
+          corpus_seed_count="$(find "${REFLEKTOR_BOF_CORPUS_DIR}/dist" -type f \( -name '*.o' -o -name '*.obj' \) | wc -l | tr -d '[:space:]')"
+          fixture_seed_count="$(find "${REFLEKTOR_BOF_FIXTURE_DIR}" -type f \( -name '*.o' -o -name '*.obj' \) | wc -l | tr -d '[:space:]')"
+          test "${corpus_seed_count}" -eq 367
+          test "${fixture_seed_count}" -eq 18
+          test "$(wc -l < bof-fuzz-seeds.txt | tr -d '[:space:]')" -eq 385
       - name: Run parser and callback seed corpus
         run: |
           set -euo pipefail

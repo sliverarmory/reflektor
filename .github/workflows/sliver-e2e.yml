@@ -31,17 +31,16 @@ on:
       sliver_ref:
         description: Immutable 40-hex BishopFox/sliver commit with native-package integration
         required: false
-        default: ada79c8ecdad89b495b2d9e840551abd01b80ca0
+        default: b428274515a9274aa47d940035d24087df1d564a
         type: string
 
 permissions:
   contents: read
 
 env:
-  # Bootstrap against the immutable native-package commit while the Sliver PR
-  # is in flight. Replace this fallback with its immutable merge commit after
-  # BishopFox/sliver#2336 lands; never use a feature branch name here.
-  SLIVER_REF: ${{ inputs.sliver_ref || 'ada79c8ecdad89b495b2d9e840551abd01b80ca0' }}
+  # Pin the immutable merge commit for BishopFox/sliver#2336; never use a
+  # feature branch name here.
+  SLIVER_REF: ${{ inputs.sliver_ref || 'b428274515a9274aa47d940035d24087df1d564a' }}
 
 jobs:
   prepare:

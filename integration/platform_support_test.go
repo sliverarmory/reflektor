@@ -74,7 +74,7 @@ func TestPlatformSupportManifest(t *testing.T) {
 	if !slices.Equal(manifest.BOFFormatValues, []string{"elf", "macho", "coff", "xcoff", "undefined"}) {
 		t.Fatalf("bof_format_values = %v, want the declared native object formats", manifest.BOFFormatValues)
 	}
-	if !slices.Equal(manifest.RunnerValues, []string{"github-native", "github-container", "github-qemu-arm-v7", "github-qemu-ppc64le", "github-qemu-riscv64", "none"}) {
+	if !slices.Equal(manifest.RunnerValues, []string{"github-native", "github-container", "github-qemu-freebsd-amd64", "github-qemu-freebsd-arm64", "github-qemu-arm-v7", "github-qemu-ppc64le", "github-qemu-riscv64", "none"}) {
 		t.Fatalf("runner_values = %v, want the checked-in CI proof types", manifest.RunnerValues)
 	}
 
@@ -172,17 +172,43 @@ func TestPlatformSupportManifest(t *testing.T) {
 	assertManifestSurfaceTargets(t, manifest.Targets, "root_shared", func(target platformSupportTarget) string { return target.RootShared }, sharedTargets)
 	assertManifestSurfaceTargets(t, manifest.Targets, "native_shared", func(target platformSupportTarget) string { return target.NativeShared }, sharedTargets)
 	assertManifestSurfaceTargets(t, manifest.Targets, "recursive_shared", func(target platformSupportTarget) string { return target.RecursiveShared }, sharedTargets)
+	goCSharedRuntimeTargets := make([]string, 0, len(sharedTargets))
+	for _, target := range sharedTargets {
+		if _, supported := cSharedTargets[target]; supported {
+			goCSharedRuntimeTargets = append(goCSharedRuntimeTargets, target)
+		}
+	}
 	assertManifestSurfaceTargets(t, manifest.Targets, "go_c_shared_runtime", func(target platformSupportTarget) string {
 		if target.GoCShared == "runtime" || target.GoCShared == "runtime-emulated" {
 			return "runtime"
 		}
 		return unsupportedPlatformStatus
-	}, sharedTargets)
+	}, goCSharedRuntimeTargets)
 
 	sawLinuxARM := false
 	sawLinuxPPC64LE := false
 	sawLinuxRISCV64 := false
+	sawFreeBSDAMD64 := false
+	sawFreeBSDARM64 := false
 	for _, target := range manifest.Targets {
+		if target.GOOS == "freebsd" && target.GOARCH == "amd64" {
+			if target.BOF != "runtime-emulated" || !target.BOFCGOFree ||
+				target.RootShared != "runtime-emulated" || target.NativeShared != "runtime-emulated" ||
+				target.RecursiveShared != "runtime-emulated" || target.GoCShared != "runtime-emulated" ||
+				!target.SharedCGOFree || target.Runner != "github-qemu-freebsd-amd64" {
+				t.Fatalf("freebsd/amd64 capabilities = %#v, want full QEMU runtime support with Go c-shared and CGO-free C/Rust loading", target)
+			}
+			sawFreeBSDAMD64 = true
+		}
+		if target.GOOS == "freebsd" && target.GOARCH == "arm64" {
+			if target.BOF != "runtime-emulated" || !target.BOFCGOFree ||
+				target.RootShared != "runtime-emulated" || target.NativeShared != "runtime-emulated" ||
+				target.RecursiveShared != "runtime-emulated" || target.GoCShared != "n-a" ||
+				!target.SharedCGOFree || target.Runner != "github-qemu-freebsd-arm64" {
+				t.Fatalf("freebsd/arm64 capabilities = %#v, want full QEMU runtime support with CGO-free C/Rust loading and Go c-shared n-a", target)
+			}
+			sawFreeBSDARM64 = true
+		}
 		if target.GOOS == "linux" && target.GOARCH == "arm" {
 			if target.GOARM != "7,hardfloat" || target.BOF != "runtime-emulated" || !target.BOFCGOFree ||
 				target.RootShared != "runtime-emulated" || target.NativeShared != "runtime-emulated" ||
@@ -210,6 +236,9 @@ func TestPlatformSupportManifest(t *testing.T) {
 			}
 			sawLinuxPPC64LE = true
 		}
+	}
+	if !sawFreeBSDAMD64 || !sawFreeBSDARM64 {
+		t.Fatalf("platform support manifest emulated FreeBSD targets: amd64=%v arm64=%v, want both", sawFreeBSDAMD64, sawFreeBSDARM64)
 	}
 	if !sawLinuxARM || !sawLinuxPPC64LE || !sawLinuxRISCV64 {
 		t.Fatalf("platform support manifest emulated Linux targets: arm=%v ppc64le=%v riscv64=%v, want all three", sawLinuxARM, sawLinuxPPC64LE, sawLinuxRISCV64)

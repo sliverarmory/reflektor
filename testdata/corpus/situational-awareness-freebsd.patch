@@ -1,0 +1,1614 @@
+diff --git a/portable/src/portable.c b/portable/src/portable.c
+index 7265388..4ba067a 100644
+--- a/portable/src/portable.c
++++ b/portable/src/portable.c
+@@ -17,7 +17,7 @@ struct bof_addrinfo {
+     int socket_type;
+     int protocol;
+     bof_u32 address_length;
+-#if defined(BOF_DARWIN)
++#if defined(BOF_DARWIN) || defined(BOF_FREEBSD)
+     char *canonical_name;
+     void *address;
+ #else
+@@ -95,6 +95,12 @@ extern int clock_gettime(int clock_id, void *time_value);
+ #define BOF_NI_NUMERICHOST 2
+ #define BOF_O_NONBLOCK 0x0004
+ #define BOF_TCP_CONNECTIONTIMEOUT 0x20
++#elif defined(BOF_FREEBSD)
++#define BOF_AF_INET6 28
++#define BOF_SOL_SOCKET 0xffff
++#define BOF_SO_ERROR 0x1007
++#define BOF_NI_NUMERICHOST 2
++#define BOF_O_NONBLOCK 0x0004
+ #else
+ #define BOF_AF_INET6 10
+ #define BOF_SOL_SOCKET 1
+@@ -217,6 +223,8 @@ static const char *bof_dirent_name(void *entry) {
+     bof_u8 *raw = (bof_u8 *)entry;
+ #if defined(BOF_DARWIN)
+     return (const char *)(raw + 21U);
++#elif defined(BOF_FREEBSD)
++    return (const char *)(raw + 24U);
+ #elif defined(__i386__)
+     return (const char *)(raw + 11U);
+ #else
+@@ -235,6 +243,8 @@ static int bof_monotonic_milliseconds(bof_u64 *milliseconds) {
+     bof_timespec value;
+ #if defined(BOF_DARWIN)
+     const int clock_id = 6; /* CLOCK_MONOTONIC */
++#elif defined(BOF_FREEBSD)
++    const int clock_id = 4; /* CLOCK_MONOTONIC */
+ #else
+     const int clock_id = 1; /* CLOCK_MONOTONIC */
+ #endif
+@@ -279,7 +289,7 @@ static void run_command(char *buffer, int length) {
+     (void)length;
+     bof_writer_init(&writer, CALLBACK_OUTPUT);
+     bof_puts(&writer, "ARP table:\n");
+-#if defined(BOF_DARWIN)
++#if defined(BOF_DARWIN) || defined(BOF_FREEBSD)
+     bof_file *stream = popen("/usr/sbin/arp -an", "r");
+     bof_uptr amount;
+     if (stream == (bof_file *)0) {
+@@ -289,7 +299,14 @@ static void run_command(char *buffer, int length) {
+     while ((amount = fread(chunk, 1U, sizeof(chunk), stream)) != 0U) {
+         bof_write(&writer, (const char *)chunk, amount);
+     }
++#if defined(BOF_FREEBSD)
++    if (pclose(stream) != 0) {
++        bof_error("/usr/sbin/arp returned an error");
++        return;
++    }
++#else
+     (void)pclose(stream);
++#endif
+ #else
+     int descriptor = open("/proc/net/arp", BOF_O_RDONLY);
+     bof_sptr amount;
+@@ -329,6 +346,12 @@ static void run_command(char *buffer, int length) {
+         bof_puts(&writer, *environment++);
+         bof_putc(&writer, '\n');
+     }
++#elif defined(BOF_FREEBSD)
++    bof_writer_init(&writer, CALLBACK_OUTPUT);
++    if (!bof_emit_command(&writer, "/usr/bin/env")) {
++        bof_error("unable to enumerate environment");
++        return;
++    }
+ #else
+     int descriptor = open("/proc/self/environ", BOF_O_RDONLY);
+     bof_u8 chunk[2048];
+@@ -420,6 +443,8 @@ static void run_command(char *buffer, int length) {
+     bof_timespec uptime;
+ #if defined(BOF_DARWIN)
+     const int clock_id = 6; /* CLOCK_MONOTONIC */
++#elif defined(BOF_FREEBSD)
++    const int clock_id = 5; /* CLOCK_UPTIME */
+ #else
+     const int clock_id = 7; /* CLOCK_BOOTTIME */
+ #endif
+@@ -441,7 +466,7 @@ static void run_command(char *buffer, int length) {
+ 
+ static int bof_sockaddr_family(const void *address) {
+     const bof_u8 *raw = (const bof_u8 *)address;
+-#if defined(BOF_DARWIN)
++#if defined(BOF_DARWIN) || defined(BOF_FREEBSD)
+     return (int)raw[1];
+ #else
+     return (int)((bof_u16)raw[0] | ((bof_u16)raw[1] << 8U));
+@@ -449,7 +474,7 @@ static int bof_sockaddr_family(const void *address) {
+ }
+ 
+ static bof_u32 bof_sockaddr_length(const void *address, int family) {
+-#if defined(BOF_DARWIN)
++#if defined(BOF_DARWIN) || defined(BOF_FREEBSD)
+     const bof_u8 *raw = (const bof_u8 *)address;
+     if (raw[0] != 0U) {
+         return (bof_u32)raw[0];
+@@ -566,6 +591,13 @@ static void run_command(char *buffer, int length) {
+     if (!bof_emit_command(&writer, "/usr/sbin/netstat -an")) {
+         bof_puts(&writer, "netstat unavailable\n");
+     }
++#elif defined(BOF_FREEBSD)
++    bof_puts(&writer, "requested_filter=");
++    bof_put_uint(&writer, (unsigned long)(unsigned int)filter);
++    bof_putc(&writer, '\n');
++    if (!bof_emit_command(&writer, "/usr/bin/netstat -an")) {
++        bof_puts(&writer, "netstat unavailable\n");
++    }
+ #else
+     if ((filter & 0x0001) != 0) bof_netstat_file(&writer, "TCP IPv4:", "/proc/net/tcp");
+     if ((filter & 0x0010) != 0) bof_netstat_file(&writer, "TCP IPv6:", "/proc/net/tcp6");
+@@ -793,6 +825,11 @@ static void run_command(char *buffer, int length) {
+ #if defined(BOF_DARWIN)
+     bof_puts(&writer, "Memory:\n");
+     if (!bof_emit_command(&writer, "/usr/bin/vm_stat")) bof_puts(&writer, "unavailable\n");
++#elif defined(BOF_FREEBSD)
++    bof_puts(&writer, "Memory and load:\n");
++    if (!bof_emit_command(&writer, "/sbin/sysctl hw.physmem hw.usermem vm.loadavg")) {
++        bof_puts(&writer, "unavailable\n");
++    }
+ #else
+     bof_puts(&writer, "Memory:\n");
+     if (!bof_emit_file(&writer, "/proc/meminfo")) bof_puts(&writer, "unavailable\n");
+@@ -816,6 +853,10 @@ static void run_command(char *buffer, int length) {
+     if (!bof_emit_command(&writer, "/usr/sbin/netstat -rn")) {
+         bof_puts(&writer, "routing information unavailable\n");
+     }
++#elif defined(BOF_FREEBSD)
++    if (!bof_emit_command(&writer, "/usr/bin/netstat -rn")) {
++        bof_puts(&writer, "routing information unavailable\n");
++    }
+ #else
+     bof_puts(&writer, "IPv4:\n");
+     if (!bof_emit_file(&writer, "/proc/net/route")) bof_puts(&writer, "unavailable\n");
+@@ -868,6 +909,10 @@ static void run_command(char *buffer, int length) {
+     if (!bof_emit_command(&writer, "/bin/ps -axo pid=,ppid=,comm=")) {
+         bof_puts(&writer, "process enumeration unavailable\n");
+     }
++#elif defined(BOF_FREEBSD)
++    if (!bof_emit_command(&writer, "/bin/ps ax -o pid= -o ppid= -o comm=")) {
++        bof_puts(&writer, "process enumeration unavailable\n");
++    }
+ #else
+     {
+         bof_dir *directory = opendir("/proc");
+diff --git a/portable/src/posix.c b/portable/src/posix.c
+index 5120cdf..c721353 100644
+--- a/portable/src/posix.c
++++ b/portable/src/posix.c
+@@ -2,7 +2,7 @@
+ #include "output.h"
+ 
+ #if defined(_WIN32)
+-#error "posix.c implements only Linux and Darwin BOFs"
++#error "posix.c implements only supported Unix BOFs"
+ #endif
+ 
+ #if (defined(BOF_COMMAND_CACLS) + defined(BOF_COMMAND_ENUM_LOCAL_SESSIONS) + \
+@@ -41,7 +41,7 @@ typedef struct posix_group {
+     char **members;
+ } posix_group;
+ 
+-#if defined(BOF_DARWIN)
++#if defined(BOF_DARWIN) || defined(BOF_FREEBSD)
+ typedef struct posix_passwd {
+     char *name;
+     char *password;
+@@ -82,6 +82,14 @@ extern posix_group *getgrgid(posix_gid gid);
+ extern unsigned int _dyld_image_count(void);
+ extern const char *_dyld_get_image_name(unsigned int index);
+ extern const char *getprogname(void);
++#elif defined(BOF_FREEBSD)
++extern const char *getprogname(void);
++typedef struct {
++    bof_uptr address;
++    const char *name;
++} posix_dl_phdr_info;
++typedef int (*posix_dl_phdr_callback)(posix_dl_phdr_info *info, bof_uptr size, void *context);
++extern int dl_iterate_phdr(posix_dl_phdr_callback callback, void *context);
+ #endif
+ 
+ static int posix_ascii_lower(int value) {
+@@ -357,7 +365,7 @@ static int posix_same_string(const char *left, const char *right) {
+     return *left == *right;
+ }
+ 
+-#if !defined(BOF_DARWIN)
++#if defined(BOF_LINUX)
+ static int posix_current_process_name(char *output, bof_uptr capacity) {
+     int descriptor;
+     bof_sptr amount;
+@@ -376,7 +384,7 @@ static int posix_current_process_name(char *output, bof_uptr capacity) {
+ #endif
+ 
+ static const char *posix_process_name(char *storage, bof_uptr capacity) {
+-#if defined(BOF_DARWIN)
++#if defined(BOF_DARWIN) || defined(BOF_FREEBSD)
+     const char *name = getprogname();
+     (void)storage;
+     (void)capacity;
+@@ -389,7 +397,7 @@ static const char *posix_process_name(char *storage, bof_uptr capacity) {
+ #endif
+ }
+ 
+-#if !defined(BOF_DARWIN)
++#if defined(BOF_LINUX)
+ static void posix_process_maps_line(bof_writer *writer, const char *line, bof_uptr length,
+                                     const char *filter, char *last_path,
+                                     bof_uptr last_capacity, unsigned long *count) {
+@@ -415,6 +423,30 @@ static void posix_process_maps_line(bof_writer *writer, const char *line, bof_up
+ }
+ #endif
+ 
++#if defined(BOF_FREEBSD)
++typedef struct {
++    bof_writer *writer;
++    const char *filter;
++    unsigned long count;
++} posix_module_context;
++
++static int posix_freebsd_module(posix_dl_phdr_info *info, bof_uptr size, void *opaque) {
++    posix_module_context *context = (posix_module_context *)opaque;
++    const char *path;
++    (void)size;
++    if (info == (posix_dl_phdr_info *)0) return 0;
++    path = info->name;
++    if (path != (const char *)0 && path[0] != '\0' &&
++        posix_contains_casefold(path, context->filter)) {
++        bof_puts(context->writer, "- ");
++        bof_puts(context->writer, path);
++        bof_putc(context->writer, '\n');
++        context->count++;
++    }
++    return 0;
++}
++#endif
++
+ static unsigned long posix_list_current_modules(bof_writer *writer, const char *filter) {
+     unsigned long count = 0UL;
+ #if defined(BOF_DARWIN)
+@@ -427,6 +459,15 @@ static unsigned long posix_list_current_modules(bof_writer *writer, const char *
+             count++;
+         }
+     }
++#elif defined(BOF_FREEBSD)
++    posix_module_context context;
++    context.writer = writer;
++    context.filter = filter;
++    context.count = 0UL;
++    if (dl_iterate_phdr(posix_freebsd_module, &context) != 0) {
++        bof_error("unable to enumerate current-process modules");
++    }
++    count = context.count;
+ #else
+     int descriptor = open("/proc/self/maps", POSIX_O_RDONLY);
+     char input[2048];
+diff --git a/scripts/build-matrix.sh b/scripts/build-matrix.sh
+index c25782a..f7f2058 100755
+--- a/scripts/build-matrix.sh
++++ b/scripts/build-matrix.sh
+@@ -7,6 +7,7 @@ cd "$repo_root"
+ targets=(
+     "windows 386" "windows amd64" "windows arm64"
+     "linux 386" "linux amd64" "linux arm64"
++    "freebsd amd64" "freebsd arm64"
+     "darwin amd64" "darwin arm64"
+ )
+ for target in "${targets[@]}"; do
+diff --git a/scripts/build-target.sh b/scripts/build-target.sh
+index c3c8250..406a5fc 100755
+--- a/scripts/build-target.sh
++++ b/scripts/build-target.sh
+@@ -20,6 +20,8 @@ case "$goos/$goarch" in
+     linux/386) zig_target=x86-linux-none; platform_define=BOF_LINUX; object_pattern="ELF 32-bit LSB relocatable, Intel 80386" ;;
+     linux/amd64) zig_target=x86_64-linux-none; platform_define=BOF_LINUX; object_pattern="ELF 64-bit LSB relocatable, x86-64" ;;
+     linux/arm64) zig_target=aarch64-linux-none; platform_define=BOF_LINUX; object_pattern="ELF 64-bit LSB relocatable, ARM aarch64" ;;
++    freebsd/amd64) zig_target=x86_64-freebsd-none; platform_define=BOF_FREEBSD; object_pattern="ELF 64-bit LSB relocatable, x86-64" ;;
++    freebsd/arm64) zig_target=aarch64-freebsd-none; platform_define=BOF_FREEBSD; object_pattern="ELF 64-bit LSB relocatable, ARM aarch64" ;;
+     darwin/amd64) zig_target=x86_64-macos-none; platform_define=BOF_DARWIN; object_pattern="Mach-O"; macho_cpu=07000001 ;;
+     darwin/arm64) zig_target=aarch64-macos-none; platform_define=BOF_DARWIN; object_pattern="Mach-O"; macho_cpu=0c000001 ;;
+     *) echo "error: unsupported target $goos/$goarch" >&2; exit 2 ;;
+diff --git a/scripts/generate-e2e-manifest.mjs b/scripts/generate-e2e-manifest.mjs
+index 5f753e6..bb7f9ca 100755
+--- a/scripts/generate-e2e-manifest.mjs
++++ b/scripts/generate-e2e-manifest.mjs
+@@ -142,6 +142,18 @@ const portableExplicitArguments = {
+   probe: explicitArguments.probe,
+ };
+ 
++const freeBSDExplicitArguments = {
++  netuser: [
++    { type: "wstring", value: "root" },
++    { type: "wstring", value: "" },
++  ],
++  nslookup: [
++    { type: "string", value: "localhost" },
++    { type: "string", value: "" },
++    { type: "int16", value: 28 },
++  ],
++};
++
+ const argumentType = (type) => {
+   if (type === "integer") return "int32";
+   if (type === "short") return "int16";
+@@ -187,7 +199,59 @@ const digestExpectations = {
+   sha256: "74ccef2214ea8b89387bf7363ab01a4caccbb502417c0af7e42a578d67f1c9cb",
+ };
+ 
++const freeBSDExpectations = {
++  arp: ["ARP table:"],
++  cacls: ["POSIX current-process file access:", "Exists: yes", "Total entries: 1"],
++  dir: ["Contents of", "marker.txt"],
++  enumLocalSessions: ["Local sessions:", "Total sessions:"],
++  env: ["="],
++  findLoadedModule: ["Current-process loaded module matches:", "libc.so.7"],
++  ipconfig: ["Network interfaces:", "lo0 IPv4 127.0.0.1"],
++  listmods: ["Loaded modules:", "libc.so.7"],
++  locale: ["Locale:"],
++  md5: [digestExpectations.md5],
++  netlocalgroup: ["Local groups:", "- wheel (gid=0)"],
++  netloggedon: ["Users logged on (local POSIX host):", "Total sessions:"],
++  netloggedon2: ["Structured local POSIX sessions:", "Total sessions:"],
++  netstat: ["Network connections:", "requested_filter=4369", "Active Internet connections"],
++  netuser: [
++    "Local POSIX user information:",
++    "User name: root",
++    "UID: 0",
++    "Primary GID: 0",
++    "Full name/comment: Charlie &",
++    "Home: /root",
++    "Shell: /bin/",
++    "- wheel (primary)",
++  ],
++  netuserenum: ["Local POSIX users:", "- root (uid=0)"],
++  nslookup: ["DNS results for localhost:", "::1"],
++  probe: ["Probe 127.0.0.1:", " OPEN"],
++  resources: ["System resources:", "Memory and load:", "hw.physmem:", "hw.usermem:", "vm.loadavg:", "Disk:", "Filesystem"],
++  routeprint: ["Routing table:", "Routing tables", "Destination"],
++  sha1: [digestExpectations.sha1],
++  sha256: [digestExpectations.sha256],
++  tasklist: ["Processes:", "kernel", "init"],
++  uptime: ["uptime_seconds="],
++  whoami: ["uid=", "euid=", "gid=", "egid="],
++};
++
++const freeBSDForbiddenMarkers = {
++  netstat: ["netstat unavailable"],
++  resources: ["unavailable"],
++  routeprint: ["routing information unavailable"],
++  tasklist: ["process enumeration unavailable"],
++};
++
+ function expectation(command, os) {
++  if (os === "freebsd" && freeBSDExpectations[command]) {
++    return {
++      types: [0],
++      contains_all: freeBSDExpectations[command],
++      not_contains: freeBSDForbiddenMarkers[command] ?? [],
++      min_callbacks: 1,
++    };
++  }
+   if (digestExpectations[command]) {
+     return { types: [0, 13], contains_any: [digestExpectations[command]], case_insensitive: true, min_callbacks: 1 };
+   }
+@@ -245,7 +309,7 @@ for (const arch of ["386", "amd64", "arm64"]) {
+     });
+   }
+ }
+-for (const [os, arches] of [["linux", ["386", "amd64", "arm64"]], ["darwin", ["amd64", "arm64"]]]) {
++for (const [os, arches] of [["linux", ["386", "amd64", "arm64"]], ["freebsd", ["amd64", "arm64"]], ["darwin", ["amd64", "arm64"]]]) {
+   for (const arch of arches) {
+     for (const command of portableCommands) {
+       let args = [];
+@@ -253,10 +317,14 @@ for (const [os, arches] of [["linux", ["386", "amd64", "arm64"]], ["darwin", ["a
+         args = [{ type: "string", value: fixtureDir }, { type: "int16", value: 0 }];
+       } else if (digestExpectations[command]) {
+         args = [{ type: "string", value: fixtureFile }];
++      } else if (os === "freebsd" && freeBSDExplicitArguments[command]) {
++        args = freeBSDExplicitArguments[command];
+       } else if (portableExplicitArguments[command]) {
+         args = portableExplicitArguments[command];
+       }
+-      artifacts.push({ name: command, os, arch, path: `dist/${os}/${arch}/${command}.o`, args, expect: expectation(command, os) });
++      const artifact = { name: command, os, arch, path: `dist/${os}/${arch}/${command}.o`, args, expect: expectation(command, os) };
++      if (os === "freebsd" && command === "probe") artifact.tcp_listener = { port_argument: 1 };
++      artifacts.push(artifact);
+     }
+   }
+ }
+diff --git a/scripts/verify-matrix.sh b/scripts/verify-matrix.sh
+index 230c50e..5129aa7 100755
+--- a/scripts/verify-matrix.sh
++++ b/scripts/verify-matrix.sh
+@@ -14,7 +14,7 @@ while IFS= read -r command; do
+     windows_commands+=("$command")
+ done < <(find src/SA -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | LC_ALL=C sort)
+ windows_targets=(windows/386 windows/amd64 windows/arm64)
+-unix_targets=(linux/386 linux/amd64 linux/arm64 darwin/amd64 darwin/arm64)
++unix_targets=(linux/386 linux/amd64 linux/arm64 freebsd/amd64 freebsd/arm64 darwin/amd64 darwin/arm64)
+ 
+ failures=0
+ verify_artifact() {
+@@ -40,6 +40,8 @@ verify_artifact() {
+         linux/386) expected="ELF 32-bit LSB relocatable, Intel 80386" ;;
+         linux/amd64) expected="ELF 64-bit LSB relocatable, x86-64" ;;
+         linux/arm64) expected="ELF 64-bit LSB relocatable, ARM aarch64" ;;
++        freebsd/amd64) expected="ELF 64-bit LSB relocatable, x86-64" ;;
++        freebsd/arm64) expected="ELF 64-bit LSB relocatable, ARM aarch64" ;;
+         darwin/amd64) expected="Mach-O"; expected_macho_cpu=07000001 ;;
+         darwin/arm64) expected="Mach-O"; expected_macho_cpu=0c000001 ;;
+     esac
+@@ -110,7 +112,7 @@ if ! diff -u \
+         } | LC_ALL=C sort
+     ) \
+     <(find dist -type f -name '*.o' | LC_ALL=C sort); then
+-    echo "dist does not contain the exact 317-object matrix" >&2
++    echo "dist does not contain the exact expected object matrix" >&2
+     exit 1
+ fi
+ 
+diff --git a/testdata/e2e-manifest.json b/testdata/e2e-manifest.json
+index 6214a11..b6f92c9 100644
+--- a/testdata/e2e-manifest.json
++++ b/testdata/e2e-manifest.json
+@@ -6071,6 +6071,1178 @@
+         "min_callbacks": 1
+       }
+     },
++    {
++      "name": "arp",
++      "os": "freebsd",
++      "arch": "amd64",
++      "path": "dist/freebsd/amd64/arp.o",
++      "args": [],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "ARP table:"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "cacls",
++      "os": "freebsd",
++      "arch": "amd64",
++      "path": "dist/freebsd/amd64/cacls.o",
++      "args": [
++        {
++          "type": "wstring",
++          "value": "${FIXTURE_FILE}"
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "POSIX current-process file access:",
++          "Exists: yes",
++          "Total entries: 1"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "dir",
++      "os": "freebsd",
++      "arch": "amd64",
++      "path": "dist/freebsd/amd64/dir.o",
++      "args": [
++        {
++          "type": "string",
++          "value": "${FIXTURE_DIR}"
++        },
++        {
++          "type": "int16",
++          "value": 0
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Contents of",
++          "marker.txt"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "enumLocalSessions",
++      "os": "freebsd",
++      "arch": "amd64",
++      "path": "dist/freebsd/amd64/enumLocalSessions.o",
++      "args": [],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Local sessions:",
++          "Total sessions:"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "env",
++      "os": "freebsd",
++      "arch": "amd64",
++      "path": "dist/freebsd/amd64/env.o",
++      "args": [],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "="
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "findLoadedModule",
++      "os": "freebsd",
++      "arch": "amd64",
++      "path": "dist/freebsd/amd64/findLoadedModule.o",
++      "args": [
++        {
++          "type": "string",
++          "value": "lib"
++        },
++        {
++          "type": "string",
++          "value": ""
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Current-process loaded module matches:",
++          "libc.so.7"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "ipconfig",
++      "os": "freebsd",
++      "arch": "amd64",
++      "path": "dist/freebsd/amd64/ipconfig.o",
++      "args": [],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Network interfaces:",
++          "lo0 IPv4 127.0.0.1"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "listmods",
++      "os": "freebsd",
++      "arch": "amd64",
++      "path": "dist/freebsd/amd64/listmods.o",
++      "args": [
++        {
++          "type": "int32",
++          "value": 0
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Loaded modules:",
++          "libc.so.7"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "locale",
++      "os": "freebsd",
++      "arch": "amd64",
++      "path": "dist/freebsd/amd64/locale.o",
++      "args": [],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Locale:"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "md5",
++      "os": "freebsd",
++      "arch": "amd64",
++      "path": "dist/freebsd/amd64/md5.o",
++      "args": [
++        {
++          "type": "string",
++          "value": "${FIXTURE_FILE}"
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "b9b3a37829baa40ee941e901aab8671b"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "netlocalgroup",
++      "os": "freebsd",
++      "arch": "amd64",
++      "path": "dist/freebsd/amd64/netlocalgroup.o",
++      "args": [
++        {
++          "type": "int16",
++          "value": 0
++        },
++        {
++          "type": "wstring",
++          "value": ""
++        },
++        {
++          "type": "wstring",
++          "value": ""
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Local groups:",
++          "- wheel (gid=0)"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "netloggedon",
++      "os": "freebsd",
++      "arch": "amd64",
++      "path": "dist/freebsd/amd64/netloggedon.o",
++      "args": [
++        {
++          "type": "wstring",
++          "value": ""
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Users logged on (local POSIX host):",
++          "Total sessions:"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "netloggedon2",
++      "os": "freebsd",
++      "arch": "amd64",
++      "path": "dist/freebsd/amd64/netloggedon2.o",
++      "args": [
++        {
++          "type": "wstring",
++          "value": ""
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Structured local POSIX sessions:",
++          "Total sessions:"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "netstat",
++      "os": "freebsd",
++      "arch": "amd64",
++      "path": "dist/freebsd/amd64/netstat.o",
++      "args": [
++        {
++          "type": "int32",
++          "value": 4369
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Network connections:",
++          "requested_filter=4369",
++          "Active Internet connections"
++        ],
++        "not_contains": [
++          "netstat unavailable"
++        ],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "netuser",
++      "os": "freebsd",
++      "arch": "amd64",
++      "path": "dist/freebsd/amd64/netuser.o",
++      "args": [
++        {
++          "type": "wstring",
++          "value": "root"
++        },
++        {
++          "type": "wstring",
++          "value": ""
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Local POSIX user information:",
++          "User name: root",
++          "UID: 0",
++          "Primary GID: 0",
++          "Full name/comment: Charlie &",
++          "Home: /root",
++          "Shell: /bin/",
++          "- wheel (primary)"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "netuserenum",
++      "os": "freebsd",
++      "arch": "amd64",
++      "path": "dist/freebsd/amd64/netuserenum.o",
++      "args": [
++        {
++          "type": "int32",
++          "value": 0
++        },
++        {
++          "type": "int32",
++          "value": 1
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Local POSIX users:",
++          "- root (uid=0)"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "nslookup",
++      "os": "freebsd",
++      "arch": "amd64",
++      "path": "dist/freebsd/amd64/nslookup.o",
++      "args": [
++        {
++          "type": "string",
++          "value": "localhost"
++        },
++        {
++          "type": "string",
++          "value": ""
++        },
++        {
++          "type": "int16",
++          "value": 28
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "DNS results for localhost:",
++          "::1"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "probe",
++      "os": "freebsd",
++      "arch": "amd64",
++      "path": "dist/freebsd/amd64/probe.o",
++      "args": [
++        {
++          "type": "string",
++          "value": "127.0.0.1"
++        },
++        {
++          "type": "int32",
++          "value": 1
++        },
++        {
++          "type": "int32",
++          "value": 1
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Probe 127.0.0.1:",
++          " OPEN"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      },
++      "tcp_listener": {
++        "port_argument": 1
++      }
++    },
++    {
++      "name": "resources",
++      "os": "freebsd",
++      "arch": "amd64",
++      "path": "dist/freebsd/amd64/resources.o",
++      "args": [],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "System resources:",
++          "Memory and load:",
++          "hw.physmem:",
++          "hw.usermem:",
++          "vm.loadavg:",
++          "Disk:",
++          "Filesystem"
++        ],
++        "not_contains": [
++          "unavailable"
++        ],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "routeprint",
++      "os": "freebsd",
++      "arch": "amd64",
++      "path": "dist/freebsd/amd64/routeprint.o",
++      "args": [],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Routing table:",
++          "Routing tables",
++          "Destination"
++        ],
++        "not_contains": [
++          "routing information unavailable"
++        ],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "sha1",
++      "os": "freebsd",
++      "arch": "amd64",
++      "path": "dist/freebsd/amd64/sha1.o",
++      "args": [
++        {
++          "type": "string",
++          "value": "${FIXTURE_FILE}"
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "a7251fd58489a73e2823956299fb6fa7c250d393"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "sha256",
++      "os": "freebsd",
++      "arch": "amd64",
++      "path": "dist/freebsd/amd64/sha256.o",
++      "args": [
++        {
++          "type": "string",
++          "value": "${FIXTURE_FILE}"
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "74ccef2214ea8b89387bf7363ab01a4caccbb502417c0af7e42a578d67f1c9cb"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "tasklist",
++      "os": "freebsd",
++      "arch": "amd64",
++      "path": "dist/freebsd/amd64/tasklist.o",
++      "args": [],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Processes:",
++          "kernel",
++          "init"
++        ],
++        "not_contains": [
++          "process enumeration unavailable"
++        ],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "uptime",
++      "os": "freebsd",
++      "arch": "amd64",
++      "path": "dist/freebsd/amd64/uptime.o",
++      "args": [],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "uptime_seconds="
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "whoami",
++      "os": "freebsd",
++      "arch": "amd64",
++      "path": "dist/freebsd/amd64/whoami.o",
++      "args": [],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "uid=",
++          "euid=",
++          "gid=",
++          "egid="
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "arp",
++      "os": "freebsd",
++      "arch": "arm64",
++      "path": "dist/freebsd/arm64/arp.o",
++      "args": [],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "ARP table:"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "cacls",
++      "os": "freebsd",
++      "arch": "arm64",
++      "path": "dist/freebsd/arm64/cacls.o",
++      "args": [
++        {
++          "type": "wstring",
++          "value": "${FIXTURE_FILE}"
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "POSIX current-process file access:",
++          "Exists: yes",
++          "Total entries: 1"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "dir",
++      "os": "freebsd",
++      "arch": "arm64",
++      "path": "dist/freebsd/arm64/dir.o",
++      "args": [
++        {
++          "type": "string",
++          "value": "${FIXTURE_DIR}"
++        },
++        {
++          "type": "int16",
++          "value": 0
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Contents of",
++          "marker.txt"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "enumLocalSessions",
++      "os": "freebsd",
++      "arch": "arm64",
++      "path": "dist/freebsd/arm64/enumLocalSessions.o",
++      "args": [],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Local sessions:",
++          "Total sessions:"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "env",
++      "os": "freebsd",
++      "arch": "arm64",
++      "path": "dist/freebsd/arm64/env.o",
++      "args": [],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "="
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "findLoadedModule",
++      "os": "freebsd",
++      "arch": "arm64",
++      "path": "dist/freebsd/arm64/findLoadedModule.o",
++      "args": [
++        {
++          "type": "string",
++          "value": "lib"
++        },
++        {
++          "type": "string",
++          "value": ""
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Current-process loaded module matches:",
++          "libc.so.7"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "ipconfig",
++      "os": "freebsd",
++      "arch": "arm64",
++      "path": "dist/freebsd/arm64/ipconfig.o",
++      "args": [],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Network interfaces:",
++          "lo0 IPv4 127.0.0.1"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "listmods",
++      "os": "freebsd",
++      "arch": "arm64",
++      "path": "dist/freebsd/arm64/listmods.o",
++      "args": [
++        {
++          "type": "int32",
++          "value": 0
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Loaded modules:",
++          "libc.so.7"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "locale",
++      "os": "freebsd",
++      "arch": "arm64",
++      "path": "dist/freebsd/arm64/locale.o",
++      "args": [],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Locale:"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "md5",
++      "os": "freebsd",
++      "arch": "arm64",
++      "path": "dist/freebsd/arm64/md5.o",
++      "args": [
++        {
++          "type": "string",
++          "value": "${FIXTURE_FILE}"
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "b9b3a37829baa40ee941e901aab8671b"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "netlocalgroup",
++      "os": "freebsd",
++      "arch": "arm64",
++      "path": "dist/freebsd/arm64/netlocalgroup.o",
++      "args": [
++        {
++          "type": "int16",
++          "value": 0
++        },
++        {
++          "type": "wstring",
++          "value": ""
++        },
++        {
++          "type": "wstring",
++          "value": ""
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Local groups:",
++          "- wheel (gid=0)"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "netloggedon",
++      "os": "freebsd",
++      "arch": "arm64",
++      "path": "dist/freebsd/arm64/netloggedon.o",
++      "args": [
++        {
++          "type": "wstring",
++          "value": ""
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Users logged on (local POSIX host):",
++          "Total sessions:"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "netloggedon2",
++      "os": "freebsd",
++      "arch": "arm64",
++      "path": "dist/freebsd/arm64/netloggedon2.o",
++      "args": [
++        {
++          "type": "wstring",
++          "value": ""
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Structured local POSIX sessions:",
++          "Total sessions:"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "netstat",
++      "os": "freebsd",
++      "arch": "arm64",
++      "path": "dist/freebsd/arm64/netstat.o",
++      "args": [
++        {
++          "type": "int32",
++          "value": 4369
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Network connections:",
++          "requested_filter=4369",
++          "Active Internet connections"
++        ],
++        "not_contains": [
++          "netstat unavailable"
++        ],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "netuser",
++      "os": "freebsd",
++      "arch": "arm64",
++      "path": "dist/freebsd/arm64/netuser.o",
++      "args": [
++        {
++          "type": "wstring",
++          "value": "root"
++        },
++        {
++          "type": "wstring",
++          "value": ""
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Local POSIX user information:",
++          "User name: root",
++          "UID: 0",
++          "Primary GID: 0",
++          "Full name/comment: Charlie &",
++          "Home: /root",
++          "Shell: /bin/",
++          "- wheel (primary)"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "netuserenum",
++      "os": "freebsd",
++      "arch": "arm64",
++      "path": "dist/freebsd/arm64/netuserenum.o",
++      "args": [
++        {
++          "type": "int32",
++          "value": 0
++        },
++        {
++          "type": "int32",
++          "value": 1
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Local POSIX users:",
++          "- root (uid=0)"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "nslookup",
++      "os": "freebsd",
++      "arch": "arm64",
++      "path": "dist/freebsd/arm64/nslookup.o",
++      "args": [
++        {
++          "type": "string",
++          "value": "localhost"
++        },
++        {
++          "type": "string",
++          "value": ""
++        },
++        {
++          "type": "int16",
++          "value": 28
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "DNS results for localhost:",
++          "::1"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "probe",
++      "os": "freebsd",
++      "arch": "arm64",
++      "path": "dist/freebsd/arm64/probe.o",
++      "args": [
++        {
++          "type": "string",
++          "value": "127.0.0.1"
++        },
++        {
++          "type": "int32",
++          "value": 1
++        },
++        {
++          "type": "int32",
++          "value": 1
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Probe 127.0.0.1:",
++          " OPEN"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      },
++      "tcp_listener": {
++        "port_argument": 1
++      }
++    },
++    {
++      "name": "resources",
++      "os": "freebsd",
++      "arch": "arm64",
++      "path": "dist/freebsd/arm64/resources.o",
++      "args": [],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "System resources:",
++          "Memory and load:",
++          "hw.physmem:",
++          "hw.usermem:",
++          "vm.loadavg:",
++          "Disk:",
++          "Filesystem"
++        ],
++        "not_contains": [
++          "unavailable"
++        ],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "routeprint",
++      "os": "freebsd",
++      "arch": "arm64",
++      "path": "dist/freebsd/arm64/routeprint.o",
++      "args": [],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Routing table:",
++          "Routing tables",
++          "Destination"
++        ],
++        "not_contains": [
++          "routing information unavailable"
++        ],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "sha1",
++      "os": "freebsd",
++      "arch": "arm64",
++      "path": "dist/freebsd/arm64/sha1.o",
++      "args": [
++        {
++          "type": "string",
++          "value": "${FIXTURE_FILE}"
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "a7251fd58489a73e2823956299fb6fa7c250d393"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "sha256",
++      "os": "freebsd",
++      "arch": "arm64",
++      "path": "dist/freebsd/arm64/sha256.o",
++      "args": [
++        {
++          "type": "string",
++          "value": "${FIXTURE_FILE}"
++        }
++      ],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "74ccef2214ea8b89387bf7363ab01a4caccbb502417c0af7e42a578d67f1c9cb"
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "tasklist",
++      "os": "freebsd",
++      "arch": "arm64",
++      "path": "dist/freebsd/arm64/tasklist.o",
++      "args": [],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "Processes:",
++          "kernel",
++          "init"
++        ],
++        "not_contains": [
++          "process enumeration unavailable"
++        ],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "uptime",
++      "os": "freebsd",
++      "arch": "arm64",
++      "path": "dist/freebsd/arm64/uptime.o",
++      "args": [],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "uptime_seconds="
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
++    {
++      "name": "whoami",
++      "os": "freebsd",
++      "arch": "arm64",
++      "path": "dist/freebsd/arm64/whoami.o",
++      "args": [],
++      "expect": {
++        "types": [
++          0
++        ],
++        "contains_all": [
++          "uid=",
++          "euid=",
++          "gid=",
++          "egid="
++        ],
++        "not_contains": [],
++        "min_callbacks": 1
++      }
++    },
+     {
+       "name": "arp",
+       "os": "darwin",

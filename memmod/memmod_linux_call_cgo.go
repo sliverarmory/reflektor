@@ -1,4 +1,4 @@
-//go:build linux && !android && cgo && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)
+//go:build cgo && ((linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)) || (freebsd && (amd64 || arm64)))
 
 package memmod
 
@@ -153,7 +153,7 @@ func callExportFunction(fn uintptr, args ...uintptr) uintptr {
 	case 3:
 		return cCall3(fn, args[0], args[1], args[2])
 	default:
-		panic("validated Linux export argument count is out of range")
+		panic("validated ELF export argument count is out of range")
 	}
 }
 

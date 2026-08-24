@@ -105,7 +105,7 @@ mod macos_thread {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "macos"))]
 mod platform {
     use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
     use core::ptr;

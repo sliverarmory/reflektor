@@ -54,7 +54,7 @@ func TestBuildRecursiveCSharedLibraryMatrix(t *testing.T) {
 				}
 			default:
 				if out := runCmd(t, "objdump", "-p", libraries.root); !strings.Contains(out, "libreflektor_middle.so") {
-					t.Fatalf("recursive Linux root is missing middle DT_NEEDED entry:\n%s", out)
+					t.Fatalf("recursive ELF root is missing middle DT_NEEDED entry:\n%s", out)
 				}
 			}
 		})
@@ -98,7 +98,7 @@ func buildRecursiveSharedLibs(t *testing.T, outDir string, goos string, goarch s
 			"-o", root, filepath.Join("..", "testdata", "c", "recursive_root.c"),
 			"-L" + outDir, "-lreflektor_middle",
 		})
-	case "linux":
+	case "freebsd", "linux":
 		buildRecursiveFixture(t, common, []string{
 			"-shared", "-fPIC", "-Wl,-z,now", "-Wl,-z,defs",
 			"-Wl,-soname,libreflektor_leaf.so",

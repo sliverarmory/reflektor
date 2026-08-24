@@ -20,6 +20,7 @@ separately because it can cover a host without implying shared-library parity.
 | --- | --- | --- | --- | --- |
 | Windows | `386`, `amd64`, `arm64` | PE (`.dll`) | Supported | In-memory PE loader |
 | Darwin | `amd64`, `arm64` | Mach-O (`.dylib`, bundle) | Supported | Dyld4 root-image loader with system dependencies registered through public dyld; supports no-cgo builds and avoids temp-file legacy NS APIs. |
+| FreeBSD | `amd64`, `arm64` | ELF (`.so`) | Supported | Pure Go in-memory ELF loader with FreeBSD rtld symbol resolution and real FreeBSD 15.1 QEMU runtime proof. C and Rust loading support both CGO modes; Go `c-shared` is supported on `amd64` and unavailable in the pinned Go toolchain on `arm64`. |
 | Linux | `386`, `amd64`, `arm64`, `ppc64le`, `riscv64`; ARMv7 hard-float (`GOARM=7`) | ELF (`.so`) | Supported | Pure Go in-memory ELF loader (maps PT_LOAD segments, applies relocations, resolves externals from runtime modules/`dlsym`); no `memfd`, no `/dev/shm`, no temp-file disk writes. ARMv7, ppc64le, and riscv64 receive QEMU runtime proof. |
 | Other | - | - | Unsupported | Returns an explicit unsupported-platform error. |
 
@@ -72,7 +73,7 @@ runtime.KeepAlive(input)
 This matches extension entry points such as
 `Run(char *buffer, uint32_t size, callback_fn callback)`. Convert a Go pointer
 to `uintptr` directly in the method call, as above, and keep the pointed-to
-object alive until the export returns. CGO-free Darwin and Linux callers can
+object alive until the export returns. CGO-free Darwin, FreeBSD, and Linux callers can
 create C-callable Go callbacks with `purego.NewCallback`; Windows callers can
 use `syscall.NewCallback`.
 
@@ -124,6 +125,7 @@ big-endian, NOTOC/P9NOTOC calls, and external tail branches are rejected.
 | Host | BOF object format | Entry ABI |
 | --- | --- | --- |
 | Windows `386`, `amd64`, `arm64` | COFF (`.o`) | `go(char *, int32)` using the Windows ABI |
+| FreeBSD `amd64`, `arm64` | ELF `ET_REL` (`.o`) | `go(char *, int32)` using the host ABI |
 | Linux `386`, `amd64`, `arm64`, `ppc64le`, `riscv64`; ARMv7 hard-float (`GOARM=7`, ARM-state objects) | ELF `ET_REL` (`.o`) | `go(char *, int32)` using the host ABI |
 | Darwin `amd64`, `arm64` | Mach-O `MH_OBJECT` (`.o`); legacy ELF `ET_REL` accepted for compatibility | `go(char *, int32)` using the host ABI |
 
@@ -133,7 +135,11 @@ imported Beacon/system functions. The native arm64 target follows Apple's x18
 platform-register reservation automatically. The earlier constrained ELF
 Darwin interchange format remains accepted for backwards compatibility; those
 Linux-targeted arm64 objects must explicitly reserve x18.
-Windows COFF machine code is not portable to Linux or Darwin.
+Windows COFF machine code is not portable to FreeBSD, Linux, or Darwin.
+The FreeBSD `amd64` and `arm64` rows run in FreeBSD 15.1 full-system QEMU
+guests. Each executes generated BOFs, load options, repeated and concurrent
+calls, close behavior, and all 25 objects from the pinned external BOF corpus
+without CGO.
 The ARMv7 hard-float, ppc64le, and riscv64 rows run BOFs without CGO under QEMU,
 including generated fixtures, load options, repeated and concurrent execution,
 close behavior, and the portable external BOF corpus. The same target images
@@ -206,9 +212,10 @@ lib, err := native.LoadLibrary(payload)
 ```
 
 It exposes the same `CallExport`, `CallExportWithArgs`, and `Close` lifecycle
-for byte-backed native images. On Linux, its import graph deliberately excludes
-the root loader's Go c-shared TLS reservation. Linux `amd64`, `arm64`,
-`ppc64le`, and `riscv64` use the PureGo call bridge in both CGO modes; ARMv7
+for byte-backed native images. On FreeBSD and Linux, its import graph
+deliberately excludes the root loader's Go c-shared TLS reservation. FreeBSD
+`amd64` and `arm64`, and Linux `amd64`, `arm64`, `ppc64le`, and `riscv64` use
+the PureGo call bridge in both CGO modes; ARMv7
 uses its hard-float bridge, while Linux `386` uses Reflektor's integer-only
 `runtime.cgocall` dispatcher. Valid Go c-shared payloads are rejected before
 mapping with `native.ErrGoSharedLibraryUnsupported`; use the cgo-enabled root
@@ -245,20 +252,23 @@ Usage:
   Consequently, `CGO_ENABLED=0` hosts importing either Reflektor package are
   dynamically linked against the platform's glibc loader; this is not a fully
   static or musl-portable build mode.
+- CGO-free FreeBSD builds import PureGo's pinned fake-CGO bridge and require
+  `-gcflags=github.com/ebitengine/purego/internal/fakecgo=-std`. Native
+  CGO-enabled FreeBSD builds do not require that flag.
 - Reflektor normalizes common symbol naming differences where possible (for example underscore-prefixed forms).
 - The root `reflektor.Library` API remains intentionally small:
   `CallExport()`, `CallExportWithArgs()`, and `Close()`.
 - Recursive mode maps file-backed application dependencies from their bytes and
   resolves imports within the in-memory graph. Platform runtime libraries remain
   delegated to the native loader: Darwin shared-cache libraries, Windows
-  System32/API-set libraries, and Linux libraries in trusted system roots. Those
+  System32/API-set libraries, and FreeBSD/Linux libraries in trusted system roots. Those
   libraries require OS-managed TLS, symbol versioning, loader registration, and
   other facilities that cannot be reproduced by simply reading a file—and some
   Darwin shared-cache images do not exist as standalone readable files.
-- Linux custom images reject general ELF TLS, IFUNC/IRELATIVE, and RELR with
+- FreeBSD and Linux custom images reject general ELF TLS, IFUNC/IRELATIVE, and RELR with
   explicit errors; those features remain available through the system-library
   carveout. Windows custom dependency cycles and delay-load import tables are
-  also rejected explicitly. Darwin and Linux graph cycles are deduplicated.
+  also rejected explicitly. Darwin, FreeBSD, and Linux graph cycles are deduplicated.
 - After the first export call, Darwin recursive mappings remain process-resident
   because dyld retains their loader records. Reusing a Darwin install-name in a
   later load follows dyld's first-loaded identity semantics. Calls made through
@@ -272,28 +282,35 @@ C test shared libraries are generated from:
 
 - `reflektor/testdata/c/args.c`
 - `reflektor/testdata/c/basic.c`
+- `reflektor/testdata/c/freebsd_ld_library_path_dependency.c`
+- `reflektor/testdata/c/freebsd_ld_library_path_root.c`
+- `reflektor/testdata/c/freebsd_system_dependency.c`
 - `reflektor/testdata/c/native_lifecycle.c`
 - `reflektor/testdata/c/recursive_leaf.c`
 - `reflektor/testdata/c/recursive_middle.c`
 - `reflektor/testdata/c/recursive_root.c`
 
 The recursive C fixture is a transitive root -> middle -> leaf graph. Its test
-checks that the graph is absent from Linux `/proc/self/maps` or the Windows
-loader module registry, then renames the dependency directory before calling
-`StartW`. On Darwin the rename happens before the lazy dyld transaction. These
+checks that the graph is absent from FreeBSD `procstat -v` mappings,
+Linux `/proc/self/maps`, or the Windows loader module registry, then renames
+the dependency directory before calling `StartW`. On Darwin the rename happens
+before the lazy dyld transaction. These
 checks prove the custom dependencies came from bytes captured by Reflektor.
 
 The Rust fixtures are built from `reflektor/testdata/rust` and
 `reflektor/testdata/rust/native_args.rs`. The HTTPS fixture exports `StartW`,
-performs a bounded `GET https://example.com/` through libcurl on Darwin/Linux or
+performs a bounded `GET https://example.com/` through libcurl on
+Darwin/FreeBSD/Linux or
 WinHTTP on Windows, and records `ok:200` after receiving a non-empty successful
 response. Both fixtures are dependency-free Rust (`no_std`) so they do not
 require unsupported thread-local runtime state from the in-memory loaders.
 
-The generated Linux Go `c-shared` fixture also resolves the current user
-through libc NSS before starting its scheduler work. This exercises native
-loader selection for system GNU IFUNC symbols (including RISC-V `memcpy`) in
-both the legacy and recursive load paths.
+The generated Linux Go `c-shared` fixture resolves the current user through
+libc NSS before starting its scheduler work. The FreeBSD/amd64 fixture exercises
+the same Go-runtime loader paths without the Linux-only NSS call. Together they
+exercise native loader selection in both the legacy and recursive load paths,
+including system GNU IFUNC symbols on Linux (such as RISC-V `memcpy`) and
+versioned `FBSD_1.0` imports on FreeBSD.
 
 Build test shared libraries for the full matrix:
 
@@ -307,7 +324,10 @@ Run tests:
 go test ./...
 ```
 
-The Rust fixture test requires Cargo with Rust 1.94.0 and outbound HTTPS access. Linux also requires the libcurl development package so the fixture can link against the system TLS client.
+The Rust fixture test requires Cargo with Rust 1.85 or newer and outbound HTTPS
+access; the native GitHub jobs currently pin Rust 1.94.0. FreeBSD and Linux also
+require libcurl development files so the fixture can link against the system
+TLS client.
 
 Linux cross-architecture Docker/QEMU harnesses:
 
@@ -320,10 +340,22 @@ Linux cross-architecture Docker/QEMU harnesses:
 - PPC64LE BOFs and shared libraries: `testdata/docker/linux-ppc64le-bof.Dockerfile` and
   `testdata/docker/run-linux-ppc64le-bof-tests.sh`
 
-The emulated runners reject every unexpected skip and require named passes for
-the C, Rust, Go `c-shared`, legacy byte, file, recursive dependency, native,
-CLI, BOF fixture, and 25-object BOF corpus lifecycles. The Sliver E2E workflow
-also builds and runs a real shared implant and native extension for each target.
+FreeBSD `amd64` and `arm64` use `testdata/freebsd/run-freebsd-tests.sh` inside
+FreeBSD 15.1 QEMU guests. The harness validates BOF plus C/Rust root, `native`,
+recursive, and CLI lifecycles in both CGO modes. It additionally validates Go
+`c-shared` on `amd64`; Go 1.26.6 reports that build mode as unavailable on
+FreeBSD/arm64, which the capability manifest records as `n-a`. The guests use
+checksum-pinned Go 1.26.6 and Zig 0.16.0 archives.
+
+The emulated runners reject every unexpected Go test skip and require named
+passes for the C, Rust, Go `c-shared`, legacy byte, file, recursive dependency,
+native, BOF fixture, and 25-object BOF corpus lifecycles. CLI cases assert their
+output and side-effect markers directly. The Sliver E2E workflow
+builds and runs a real shared implant and native extension for every target
+whose pinned Sliver server can compile. FreeBSD is the explicit exception: the
+pinned Sliver revision fails both FreeBSD server builds in its WireGuard
+transport (`net`, `device`, and `errors` are undefined) and lacks FreeBSD
+`assetsFs` bindings; its E2E driver also lacks FreeBSD process helpers.
 
 ## Repository Layout
 

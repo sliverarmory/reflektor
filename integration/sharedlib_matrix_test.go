@@ -19,6 +19,8 @@ type sharedLibTarget struct {
 var sharedLibTargets = []sharedLibTarget{
 	{goos: "darwin", goarch: "amd64", ext: "dylib", fileProbe: "x86_64"},
 	{goos: "darwin", goarch: "arm64", ext: "dylib", fileProbe: "arm64"},
+	{goos: "freebsd", goarch: "amd64", ext: "so", fileProbe: "x86-64"},
+	{goos: "freebsd", goarch: "arm64", ext: "so", fileProbe: "ARM aarch64"},
 	{goos: "linux", goarch: "386", ext: "so", fileProbe: "Intel 80386"},
 	{goos: "linux", goarch: "amd64", ext: "so", fileProbe: "x86-64"},
 	{goos: "linux", goarch: "arm", ext: "so", fileProbe: "ARM"},
@@ -110,6 +112,10 @@ func buildCSharedLib(t *testing.T, outDir string, goos string, goarch string, ba
 		zigTarget, ext = "x86_64-macos", "dylib"
 	case goos == "darwin" && goarch == "arm64":
 		zigTarget, ext = "aarch64-macos", "dylib"
+	case goos == "freebsd" && goarch == "amd64":
+		zigTarget, ext = "x86_64-freebsd", "so"
+	case goos == "freebsd" && goarch == "arm64":
+		zigTarget, ext = "aarch64-freebsd", "so"
 	case goos == "linux" && goarch == "386":
 		zigTarget, ext = "x86-linux-gnu", "so"
 	case goos == "linux" && goarch == "amd64":
@@ -138,7 +144,7 @@ func buildCSharedLib(t *testing.T, outDir string, goos string, goarch string, ba
 	switch goos {
 	case "darwin":
 		args = append(args, "-dynamiclib", "-fPIC")
-	case "linux":
+	case "freebsd", "linux":
 		args = append(args, "-shared", "-fPIC")
 	case "windows":
 		args = append(args, "-shared")

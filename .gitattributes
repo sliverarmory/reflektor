@@ -1,1 +1,2 @@
 test/sliver-e2e/*.patch -whitespace
+testdata/corpus/*.patch -whitespace
