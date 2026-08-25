@@ -1,0 +1,321 @@
+name: Reusable BOF Corpus
+
+on:
+  workflow_call:
+    inputs:
+      corpus_repository:
+        description: Public owner/repository containing the BOF corpus
+        required: true
+        type: string
+      corpus_ref:
+        description: Exact 40-character commit SHA to test
+        required: true
+        type: string
+      reflektor_ref:
+        description: Exact Reflektor commit SHA also pinned in the caller's uses field
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  REFLEKTOR_BOF_CORPUS_DIR: ${{ github.workspace }}/runtime/test/corpus/Situational-Awareness-BOFs
+
+jobs:
+  native:
+    name: bof-corpus-${{ matrix.goos }}-${{ matrix.goarch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            goos: darwin
+            goarch: amd64
+          - runner: macos-15
+            goos: darwin
+            goarch: arm64
+          - runner: ubuntu-24.04
+            goos: linux
+            goarch: amd64
+          - runner: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
+          - runner: windows-2022
+            goos: windows
+            goarch: 386
+          - runner: windows-2022
+            goos: windows
+            goarch: amd64
+          - runner: windows-11-arm
+            goos: windows
+            goarch: arm64
+    defaults:
+      run:
+        shell: bash
+    env:
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+    steps:
+      - name: Check out Reflektor workflow revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: sliverarmory/reflektor
+          ref: ${{ inputs.reflektor_ref }}
+          path: runtime
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out exact BOF corpus revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ inputs.corpus_repository }}
+          ref: ${{ inputs.corpus_ref }}
+          path: runtime/test/corpus/Situational-Awareness-BOFs
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify immutable revisions
+        env:
+          CORPUS_REF: ${{ inputs.corpus_ref }}
+          REFLEKTOR_REF: ${{ inputs.reflektor_ref }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$CORPUS_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "error: corpus_ref must be an exact 40-character commit SHA" >&2
+            exit 1
+          fi
+          if [[ ! "$REFLEKTOR_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "error: reflektor_ref must be an exact 40-character commit SHA" >&2
+            exit 1
+          fi
+          expected_corpus_ref="$(printf '%s' "$CORPUS_REF" | tr '[:upper:]' '[:lower:]')"
+          expected_reflektor_ref="$(printf '%s' "$REFLEKTOR_REF" | tr '[:upper:]' '[:lower:]')"
+          test "$(git -C "$REFLEKTOR_BOF_CORPUS_DIR" rev-parse HEAD)" = "$expected_corpus_ref"
+          test "$(git -C runtime rev-parse HEAD)" = "$expected_reflektor_ref"
+
+      - name: Set up pinned Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: runtime/go.mod
+          cache: true
+          cache-dependency-path: runtime/go.sum
+
+      - name: Set up pinned Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: 0.14.0
+
+      - name: Build and inspect host BOF corpus
+        working-directory: runtime/test/corpus/Situational-Awareness-BOFs
+        run: ./scripts/build-target.sh "$GOOS" "$GOARCH"
+
+      - name: Execute complete host BOF corpus without CGO
+        working-directory: runtime
+        env:
+          CGO_ENABLED: "0"
+        run: >-
+          ./testdata/corpus/run-bof-corpus.sh
+          "$GOOS" "$GOARCH" 45m
+
+      - name: Upload native corpus evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bof-corpus-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: runtime/bof-corpus-${{ matrix.goos }}-${{ matrix.goarch }}.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  linux-386:
+    name: bof-corpus-linux-386
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out Reflektor workflow revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: sliverarmory/reflektor
+          ref: ${{ inputs.reflektor_ref }}
+          path: runtime
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out exact BOF corpus revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ inputs.corpus_repository }}
+          ref: ${{ inputs.corpus_ref }}
+          path: runtime/test/corpus/Situational-Awareness-BOFs
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify immutable revisions
+        env:
+          CORPUS_REF: ${{ inputs.corpus_ref }}
+          REFLEKTOR_REF: ${{ inputs.reflektor_ref }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$CORPUS_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "error: corpus_ref must be an exact 40-character commit SHA" >&2
+            exit 1
+          fi
+          if [[ ! "$REFLEKTOR_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "error: reflektor_ref must be an exact 40-character commit SHA" >&2
+            exit 1
+          fi
+          expected_corpus_ref="$(printf '%s' "$CORPUS_REF" | tr '[:upper:]' '[:lower:]')"
+          expected_reflektor_ref="$(printf '%s' "$REFLEKTOR_REF" | tr '[:upper:]' '[:lower:]')"
+          test "$(git -C "$REFLEKTOR_BOF_CORPUS_DIR" rev-parse HEAD)" = "$expected_corpus_ref"
+          test "$(git -C runtime rev-parse HEAD)" = "$expected_reflektor_ref"
+
+      - name: Set up pinned Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: 0.14.0
+
+      - name: Build and inspect linux/386 BOF corpus
+        working-directory: runtime/test/corpus/Situational-Awareness-BOFs
+        run: ./scripts/build-target.sh linux 386
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Execute complete linux/386 corpus under QEMU
+        run: |
+          set -euo pipefail
+          image="reflektor-bof-corpus-linux-386"
+          log="runtime/bof-corpus-linux-386.log"
+          docker build --platform linux/386 \
+            -f runtime/testdata/docker/linux-memmod.Dockerfile \
+            -t "$image" runtime
+          docker run --rm --platform linux/386 \
+            --env CGO_ENABLED=0 \
+            --env REFLEKTOR_BOF_CORPUS_DIR=/workspace/test/corpus/Situational-Awareness-BOFs \
+            "$image" \
+            /bin/bash /workspace/testdata/corpus/run-bof-corpus.sh \
+              linux 386 45m /tmp/bof-corpus-linux-386.log 2>&1 | tee "$log"
+
+      - name: Upload linux/386 corpus evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bof-corpus-linux-386
+          path: runtime/bof-corpus-linux-386.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  linux-emulated:
+    name: bof-corpus-linux-${{ matrix.goarch }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: arm
+            platform: linux/arm/v7
+            qemu_platform: arm
+            dockerfile: testdata/docker/linux-bof.Dockerfile
+          - goarch: ppc64le
+            platform: linux/ppc64le
+            qemu_platform: ppc64le
+            dockerfile: testdata/docker/linux-ppc64le-bof.Dockerfile
+          - goarch: riscv64
+            platform: linux/riscv64
+            qemu_platform: riscv64
+            dockerfile: testdata/docker/linux-riscv64-bof.Dockerfile
+    defaults:
+      run:
+        shell: bash
+    env:
+      GOARCH: ${{ matrix.goarch }}
+    steps:
+      - name: Check out Reflektor workflow revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: sliverarmory/reflektor
+          ref: ${{ inputs.reflektor_ref }}
+          path: runtime
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out exact BOF corpus revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ inputs.corpus_repository }}
+          ref: ${{ inputs.corpus_ref }}
+          path: runtime/test/corpus/Situational-Awareness-BOFs
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify immutable revisions
+        env:
+          CORPUS_REF: ${{ inputs.corpus_ref }}
+          REFLEKTOR_REF: ${{ inputs.reflektor_ref }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$CORPUS_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "error: corpus_ref must be an exact 40-character commit SHA" >&2
+            exit 1
+          fi
+          if [[ ! "$REFLEKTOR_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "error: reflektor_ref must be an exact 40-character commit SHA" >&2
+            exit 1
+          fi
+          expected_corpus_ref="$(printf '%s' "$CORPUS_REF" | tr '[:upper:]' '[:lower:]')"
+          expected_reflektor_ref="$(printf '%s' "$REFLEKTOR_REF" | tr '[:upper:]' '[:lower:]')"
+          test "$(git -C "$REFLEKTOR_BOF_CORPUS_DIR" rev-parse HEAD)" = "$expected_corpus_ref"
+          test "$(git -C runtime rev-parse HEAD)" = "$expected_reflektor_ref"
+
+      - name: Set up pinned Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: 0.14.0
+
+      - name: Build and inspect target BOF corpus
+        working-directory: runtime/test/corpus/Situational-Awareness-BOFs
+        run: ./scripts/build-target.sh linux "$GOARCH"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+        with:
+          platforms: ${{ matrix.qemu_platform }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Execute complete target corpus under QEMU
+        env:
+          TARGET_PLATFORM: ${{ matrix.platform }}
+          TARGET_DOCKERFILE: ${{ matrix.dockerfile }}
+        run: |
+          set -euo pipefail
+          image="reflektor-bof-corpus-linux-${GOARCH}"
+          log="runtime/bof-corpus-linux-${GOARCH}.log"
+          docker build --platform "$TARGET_PLATFORM" \
+            -f "runtime/${TARGET_DOCKERFILE}" \
+            -t "$image" runtime
+          docker run --rm --platform "$TARGET_PLATFORM" \
+            --env CGO_ENABLED=0 \
+            --env REFLEKTOR_BOF_CORPUS_DIR=/workspace/test/corpus/Situational-Awareness-BOFs \
+            "$image" \
+            /bin/bash /workspace/testdata/corpus/run-bof-corpus.sh \
+              linux "$GOARCH" 45m "/tmp/bof-corpus-linux-${GOARCH}.log" 2>&1 | tee "$log"
+
+      - name: Upload emulated corpus evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bof-corpus-linux-${{ matrix.goarch }}
+          path: runtime/bof-corpus-linux-${{ matrix.goarch }}.log
+          if-no-files-found: warn
+          retention-days: 14
