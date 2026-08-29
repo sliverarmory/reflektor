@@ -3,6 +3,7 @@ package bofloader
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"runtime"
 	"strings"
 	"testing"
@@ -127,6 +128,97 @@ func TestBeaconPrintfFormatting(t *testing.T) {
 	}
 	if len(outputs) != 1 || string(outputs[0].Data) != "pid=42 hex=0x2a name=reflektor %" {
 		t.Fatalf("outputs = %#v", outputs)
+	}
+}
+
+func TestBeaconOutputAndPrintfPreserveRecordContract(t *testing.T) {
+	executionLock.Lock()
+	defer executionLock.Unlock()
+	context := newExecutionContext()
+	activeExecution.Store(context)
+	defer activeExecution.Store(nil)
+
+	defaultData := []byte("default")
+	errorFormat := append([]byte("error:%d"), 0)
+	oemData := []byte{0xff, 0xfe, 0x80}
+	utf8Format := append([]byte("%s"), 0)
+	utf8Data := append([]byte("snowman:\u2603"), 0)
+	emptyFormat := []byte{0}
+	zeroLengthData := []byte{0x7f}
+	unknownData := []byte("unknown")
+
+	beaconOutput(0x00, byteSliceAddress(defaultData), uintptr(len(defaultData)))
+	beaconPrintf(0x0d, byteSliceAddress(errorFormat), 7, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+	beaconOutput(0x1e, byteSliceAddress(oemData), uintptr(len(oemData)))
+	beaconPrintf(0x20, byteSliceAddress(utf8Format), byteSliceAddress(utf8Data), 0, 0, 0, 0, 0, 0, 0, 0, 0)
+	beaconOutput(0x1e, 0, 0)
+	beaconPrintf(0x20, byteSliceAddress(emptyFormat), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+	beaconOutput(0x00, byteSliceAddress(zeroLengthData), 0)
+	unknownType := int32(-7)
+	beaconOutput(uintptr(uint32(unknownType)), byteSliceAddress(unknownData), uintptr(len(unknownData)))
+	runtime.KeepAlive(defaultData)
+	runtime.KeepAlive(errorFormat)
+	runtime.KeepAlive(oemData)
+	runtime.KeepAlive(utf8Format)
+	runtime.KeepAlive(utf8Data)
+	runtime.KeepAlive(emptyFormat)
+	runtime.KeepAlive(zeroLengthData)
+	runtime.KeepAlive(unknownData)
+
+	defaultData[0] = 'X'
+	oemData[0] = 0
+	unknownData[0] = 'X'
+	terminalErr := errors.New("terminal execution error")
+	context.addError(terminalErr)
+
+	outputs, err := context.result()
+	if !errors.Is(err, terminalErr) {
+		t.Fatalf("result error = %v, want terminal execution error", err)
+	}
+	wantTypes := []int{0x00, 0x0d, 0x1e, 0x20, 0x1e, 0x20, 0x00, int(unknownType)}
+	wantData := [][]byte{
+		[]byte("default"),
+		[]byte("error:7"),
+		{0xff, 0xfe, 0x80},
+		[]byte("snowman:\u2603"),
+		nil,
+		nil,
+		nil,
+		[]byte("unknown"),
+	}
+	if len(outputs) != len(wantTypes) {
+		t.Fatalf("output count = %d, want %d: %#v", len(outputs), len(wantTypes), outputs)
+	}
+	for index := range outputs {
+		if outputs[index].Type != wantTypes[index] || !bytes.Equal(outputs[index].Data, wantData[index]) {
+			t.Fatalf("output %d = %#v, want type=%d data=%x", index, outputs[index], wantTypes[index], wantData[index])
+		}
+	}
+
+	outputs[0].Data[0] = 'Y'
+	again, againErr := context.result()
+	if !errors.Is(againErr, terminalErr) {
+		t.Fatalf("second result error = %v, want terminal execution error", againErr)
+	}
+	if got := string(again[0].Data); got != "default" {
+		t.Fatalf("second result data = %q, want owned snapshot %q", got, "default")
+	}
+}
+
+func TestBeaconOutputRejectsNilDataForNonEmptyRecord(t *testing.T) {
+	executionLock.Lock()
+	defer executionLock.Unlock()
+	context := newExecutionContext()
+	activeExecution.Store(context)
+	defer activeExecution.Store(nil)
+
+	beaconOutput(0, 0, 1)
+	outputs, err := context.result()
+	if len(outputs) != 0 {
+		t.Fatalf("output count = %d, want 0: %#v", len(outputs), outputs)
+	}
+	if err == nil || !strings.Contains(err.Error(), "BeaconOutput") {
+		t.Fatalf("result error = %v, want BeaconOutput callback error", err)
 	}
 }
 
