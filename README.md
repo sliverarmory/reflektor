@@ -184,9 +184,18 @@ UTF-16LE and whose maximum length is measured in bytes.
 
 The loader supplies the Beacon data, format, and output callbacks, preserves
 each output record's channel, uses page-level W^X protections, and serializes
-execution around the process-wide native callback bridge. A BOF is still
-arbitrary native code in the current process: malformed code can corrupt or
-terminate the host, so untrusted objects need a subprocess boundary.
+execution around the process-wide native callback bridge. Output records are
+returned one-for-one in callback-capture order across `BeaconOutput` and
+`BeaconPrintf`; unknown signed channel values are not rejected or remapped.
+`Data` is an owned, opaque byte snapshot: Reflektor does not transcode OEM or
+UTF-8 channels, and a zero-length callback remains an output record. A
+terminal execution error may accompany records captured during that
+execution, so RPC adapters must forward those records in order instead of
+dropping, grouping, or concatenating them before propagating the error.
+
+A BOF is still arbitrary native code in the current process: malformed code
+can corrupt or terminate the host, so untrusted objects need a subprocess
+boundary.
 Object images are capped at 64 MiB and packed argument buffers at 16 MiB.
 Callback capture is synchronous: a BOF that starts native worker threads must
 join them before its entry point returns.
