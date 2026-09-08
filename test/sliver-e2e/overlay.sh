@@ -18,8 +18,9 @@ usage: overlay.sh prepare <reflektor-root> <sliver-root>
        overlay.sh verify  <reflektor-root> <sliver-root>
 
 prepare injects the current Reflektor checkout through a temporary go.mod
-replace, runs Sliver's official `go generate ./implant`, removes the local
-replace, and verifies the resulting vendored source byte-for-byte.
+replace, runs Sliver's official `go generate ./implant`, preserves the
+resulting dependency graph while removing the local replace, and verifies the
+vendored source byte-for-byte.
 
 Set SLIVER_REF to the immutable 40-hex Sliver commit expected in the checkout.
 USAGE
@@ -115,10 +116,37 @@ verify_source_tree() {
 	echo "Verified $count byte-identical Reflektor source files under $subtree"
 }
 
+verify_vendor_metadata() {
+	local sliver_root="$1"
+	local implant_root="$sliver_root/implant"
+	local check_dir=""
+	local output=""
+
+	check_dir="$(mktemp -d)"
+	mkdir -p "$check_dir/vendor"
+	cp -- "$implant_root/go-mod" "$check_dir/go.mod"
+	cp -- "$implant_root/go-sum" "$check_dir/go.sum"
+	cp -- "$implant_root/vendor/modules.txt" "$check_dir/vendor/modules.txt"
+	printf '%s\n' 'package vendorcheck' > "$check_dir/vendorcheck.go"
+
+	if ! output="$(
+		cd -- "$check_dir"
+		GOWORK=off go list -mod=vendor . 2>&1
+	)"; then
+		rm -rf -- "$check_dir"
+		die "Sliver implant vendor metadata is inconsistent:
+$output"
+	fi
+
+	rm -rf -- "$check_dir"
+	echo "Verified Sliver implant vendor metadata"
+}
+
 verify_overlay() {
 	local reflektor_root="$1"
 	local sliver_root="$2"
 	local implant_mod="$sliver_root/implant/go-mod"
+	local implant_sum="$sliver_root/implant/go-sum"
 	local modules_file="$sliver_root/implant/vendor/modules.txt"
 	local vendor_root="$sliver_root/implant/vendor/$REFLEKTOR_MODULE"
 	local client_generate="$sliver_root/client/command/generate/generate.go"
@@ -129,6 +157,7 @@ verify_overlay() {
 	local header_count=""
 
 	[[ -f "$implant_mod" ]] || die "Sliver implant/go-mod is missing"
+	[[ -f "$implant_sum" ]] || die "Sliver implant/go-sum is missing"
 	[[ -f "$modules_file" ]] || die "Sliver implant/vendor/modules.txt is missing"
 	[[ -f "$sliver_root/implant/sliver/extension/extension_unix.go" ]] || die "Sliver Unix extension source is missing"
 	[[ -f "$sliver_root/implant/sliver/extension/extension_linux.go" ]] || die "Sliver Linux extension source is missing"
@@ -251,9 +280,13 @@ prepare_overlay() {
 		GOWORK=off go generate ./implant
 	)
 
-	cp -- "$original_mod" "$implant_mod"
-	cp -- "$original_sum" "$implant_sum"
-	restore_pending=0
+	# Sliver's vendor generator runs go mod tidy before go mod vendor. Keep that
+	# resolved graph so dependencies introduced or upgraded by the current
+	# Reflektor checkout match vendor/modules.txt. Remove only the temporary
+	# local replacement used to inject the current source.
+	cp -- "$implant_mod" "$edited_mod"
+	GOWORK=off go mod edit -modfile="$edited_mod" "-dropreplace=$REFLEKTOR_MODULE"
+	cp -- "$edited_mod" "$implant_mod"
 	[[ -f "$modules_file" ]] || die "Sliver vendor generation did not create implant/vendor/modules.txt"
 	awk -v module="$REFLEKTOR_MODULE" '
 		index($0, "# " module " => ") == 1 { next }
@@ -261,6 +294,10 @@ prepare_overlay() {
 		{ print }
 	' "$modules_file" > "$normalized_modules"
 	mv -- "$normalized_modules" "$modules_file"
+	# From this point onward the sanitized generated metadata and vendor tree are
+	# coherent. Do not restore the stale originals if a later verification fails.
+	restore_pending=0
+	verify_vendor_metadata "$sliver_root"
 
 	sliver_sha="$(normalize_sha "$SLIVER_REF")"
 	reflektor_sha="$(git -C "$reflektor_root" rev-parse HEAD)"
@@ -268,8 +305,6 @@ prepare_overlay() {
 	printf '%s\n' "$sliver_sha" > "$sliver_root/$SLIVER_REF_MARKER"
 	printf '%s\n' "$reflektor_sha" > "$sliver_root/$REFLEKTOR_REF_MARKER"
 
-	cmp -s -- "$original_mod" "$implant_mod" || die "implant/go-mod was not restored exactly after vendor generation"
-	cmp -s -- "$original_sum" "$implant_sum" || die "implant/go-sum was not restored exactly after vendor generation"
 	verify_overlay "$reflektor_root" "$sliver_root"
 	trap - EXIT
 	cleanup_overlay

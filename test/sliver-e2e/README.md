@@ -2,11 +2,12 @@
 
 This harness tests the current Reflektor checkout inside a real Sliver build.
 `overlay.sh prepare` temporarily replaces Reflektor in Sliver's embedded implant
-module, runs Sliver's official `go generate ./implant`, restores `implant/go-mod`
-without a local replacement, and verifies the vendored `native` and `memmod`
-source byte-for-byte. The generated Sliver server therefore embeds the current
-Reflektor source rather than the version previously committed to Sliver's
-vendor directory.
+module and runs Sliver's official `go generate ./implant`. It keeps the resolved
+module graph and checksums produced by Sliver's vendor generator, removes only
+the temporary local replacement, verifies the vendor metadata, and compares the
+vendored `native` and `memmod` source byte-for-byte. The generated Sliver server
+therefore embeds the current Reflektor source and its selected dependencies
+rather than the versions previously committed to Sliver's vendor directory.
 
 The GitHub workflow accepts only an immutable 40-hex Sliver commit. Automatic
 push and pull request runs use the signed merge commit for
