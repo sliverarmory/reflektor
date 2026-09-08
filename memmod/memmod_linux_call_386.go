@@ -22,7 +22,7 @@ var linux386CallABI0 uintptr
 //go:linkname runtimeCGOCall runtime.cgocall
 func runtimeCGOCall(fn uintptr, arg unsafe.Pointer) int32
 
-// Use a dedicated integer-only dispatcher on 386 because purego v0.10.1's
+// Use a dedicated integer-only dispatcher on 386 because purego's
 // generic syscall trampoline unconditionally pops x87 ST0 after every call,
 // including integer-returning functions that leave the x87 stack empty.
 //
