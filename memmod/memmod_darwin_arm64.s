@@ -13,8 +13,9 @@ TEXT ·cCall10(SB), NOSPLIT, $0-96
 	MOVD a6+56(FP), R6
 	MOVD a7+64(FP), R7
 	SUB $16, RSP
-	MOVD a8+72(FP), R10
-	MOVD a9+80(FP), R11
+	// These offsets include the 16 bytes just reserved for stack arguments.
+	MOVD 112(RSP), R10 // a8
+	MOVD 120(RSP), R11 // a9
 	MOVD R10, 0(RSP)
 	MOVD R11, 8(RSP)
 	BL (R16)

@@ -14,13 +14,15 @@ TEXT ·cCall10(SB), NOSPLIT, $0-96
 	// Keep SysV stack alignment before calling C++ dyld internals:
 	// reserve 32 bytes for stack args (a6-a9) plus 8 bytes padding.
 	SUBQ $40, SP
-	MOVQ a6+56(FP), R10
+	// These offsets include the 40 bytes just reserved. FP arguments are
+	// otherwise assembled relative to the current SP and would read a1-a4.
+	MOVQ 112(SP), R10 // a6
 	MOVQ R10, 0(SP)
-	MOVQ a7+64(FP), R10
+	MOVQ 120(SP), R10 // a7
 	MOVQ R10, 8(SP)
-	MOVQ a8+72(FP), R10
+	MOVQ 128(SP), R10 // a8
 	MOVQ R10, 16(SP)
-	MOVQ a9+80(FP), R10
+	MOVQ 136(SP), R10 // a9
 	MOVQ R10, 24(SP)
 
 	CALL AX
