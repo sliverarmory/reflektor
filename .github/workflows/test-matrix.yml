@@ -52,6 +52,20 @@ jobs:
       - name: Build Darwin BOF corpus target
         working-directory: test/corpus/Situational-Awareness-BOFs
         run: ./scripts/build-target.sh darwin "${GOARCH}"
+      - name: Run Darwin native BOF execution tests without cgo
+        run: |
+          set -euo pipefail
+          CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop)$' -count=1 -v | tee darwin-bof-nocgo-test.log
+          for test_name in TestLoadAndExecuteGeneratedBOF TestLoadAndExecuteLegacyDarwinELFBOF TestBOFLoadWithOptions TestConcurrentBOFStreaming TestSameImageBOFExecutionIsSerialized TestCooperativeBOFStop; do
+            if ! grep -Fq -- "--- PASS: ${test_name} " darwin-bof-nocgo-test.log; then
+              echo "Required CGO-free Darwin BOF execution test did not pass: ${test_name}"
+              exit 1
+            fi
+          done
+          if grep -Fq -- '--- SKIP:' darwin-bof-nocgo-test.log; then
+            echo "CGO-free Darwin BOF execution test was skipped; refusing to pass CI."
+            exit 1
+          fi
       - name: Run Darwin C, Go, and Rust fixture tests
         run: |
           set -euo pipefail
@@ -106,17 +120,6 @@ jobs:
           fi
           if grep -Fq -- '--- SKIP:' darwin-memmod-nocgo-test.log; then
             echo "CGO-free Darwin loader thread-affinity test was skipped; refusing to pass CI."
-            exit 1
-          fi
-          CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop)$' -count=1 -v | tee darwin-bof-nocgo-test.log
-          for test_name in TestLoadAndExecuteGeneratedBOF TestLoadAndExecuteLegacyDarwinELFBOF TestBOFLoadWithOptions TestConcurrentBOFStreaming TestSameImageBOFExecutionIsSerialized TestCooperativeBOFStop; do
-            if ! grep -Fq -- "--- PASS: ${test_name} " darwin-bof-nocgo-test.log; then
-              echo "Required CGO-free Darwin BOF execution test did not pass: ${test_name}"
-              exit 1
-            fi
-          done
-          if grep -Fq -- '--- SKIP:' darwin-bof-nocgo-test.log; then
-            echo "CGO-free Darwin BOF execution test was skipped; refusing to pass CI."
             exit 1
           fi
           CGO_ENABLED=0 go test ./integration -run '^TestSituationalAwarenessBOFCorpus$' -count=1 -v | tee darwin-bof-corpus-test.log
