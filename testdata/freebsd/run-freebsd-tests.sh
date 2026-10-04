@@ -93,13 +93,14 @@ assert_no_skips "${bof_unit_log}"
 
 bof_log="freebsd-bof-test.log"
 CGO_ENABLED=0 go test "${purego_gcflags[@]}" ./integration \
-	-run '^(TestPlatformSupportManifest|TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestCooperativeBOFStop|TestBOFPackageDependencyGraphIsIsolated)$' \
+	-run '^(TestPlatformSupportManifest|TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop|TestBOFPackageDependencyGraphIsIsolated)$' \
 	-count=1 -v | tee "${bof_log}"
 assert_required_tests "${bof_log}" \
 	TestPlatformSupportManifest \
 	TestLoadAndExecuteGeneratedBOF \
 	TestBOFLoadWithOptions \
 	TestConcurrentBOFStreaming \
+	TestSameImageBOFExecutionIsSerialized \
 	TestCooperativeBOFStop \
 	TestBOFPackageDependencyGraphIsIsolated
 assert_no_skips "${bof_log}"

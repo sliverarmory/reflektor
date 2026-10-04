@@ -99,25 +99,38 @@ func TestCooperativeBOFStop(t *testing.T) {
 
 	close(stop)
 	stopClosed = true
+	var finalOutput bof.Output
 	select {
-	case output := <-outputs:
-		if output.Type != bof.OutputDefault || !bytes.Equal(output.Data, []byte("stopped")) {
-			t.Fatalf("final output = %#v, want stopped", output)
-		}
-	case err := <-executionDone:
-		finished = true
-		t.Fatalf("BOF returned before final output was delivered: %v", err)
-	case <-time.After(asyncBOFWait):
-		t.Fatal("BOF did not emit its stopped output")
-	}
-	select {
+	case finalOutput = <-outputs:
 	case err := <-executionDone:
 		finished = true
 		if err != nil {
 			t.Fatalf("ExecuteWithOptions(): %v", err)
 		}
+		// Both channels may be ready when select runs. The output callback
+		// must have completed before ExecuteWithOptions can return, so the
+		// final record must already be buffered even if completion wins.
+		select {
+		case finalOutput = <-outputs:
+		default:
+			t.Fatal("BOF returned without delivering its final output")
+		}
 	case <-time.After(asyncBOFWait):
-		t.Fatal("BOF did not return after stop request")
+		t.Fatal("BOF did not emit its stopped output")
+	}
+	if finalOutput.Type != bof.OutputDefault || !bytes.Equal(finalOutput.Data, []byte("stopped")) {
+		t.Fatalf("final output = %#v, want stopped", finalOutput)
+	}
+	if !finished {
+		select {
+		case err := <-executionDone:
+			finished = true
+			if err != nil {
+				t.Fatalf("ExecuteWithOptions(): %v", err)
+			}
+		case <-time.After(asyncBOFWait):
+			t.Fatal("BOF did not return after stop request")
+		}
 	}
 	select {
 	case err := <-closeDone:

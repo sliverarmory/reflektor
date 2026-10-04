@@ -55,7 +55,7 @@ fi
 go test ./bof ./internal/bofloader -count=1
 
 go test ./integration \
-  -run '^(TestPlatformSupportManifest|TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestCooperativeBOFStop|TestBOFPackageDependencyGraphIsIsolated)$' \
+  -run '^(TestPlatformSupportManifest|TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop|TestBOFPackageDependencyGraphIsIsolated)$' \
   -count=1 -v | tee linux-ppc64le-bof-test.log
 
 for test_name in \
@@ -63,6 +63,7 @@ for test_name in \
   TestLoadAndExecuteGeneratedBOF \
   TestBOFLoadWithOptions \
   TestConcurrentBOFStreaming \
+  TestSameImageBOFExecutionIsSerialized \
   TestCooperativeBOFStop \
   TestBOFPackageDependencyGraphIsIsolated; do
   if ! grep -Fq -- "--- PASS: ${test_name} " linux-ppc64le-bof-test.log; then

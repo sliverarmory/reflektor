@@ -25,7 +25,7 @@ CGO_ENABLED=0 go test ./bof ./internal/bofloader -count=1
 # Run every platform-applicable shared-library and lightweight BOF test. The
 # cross-platform build matrices have their own CI job, while native BOF
 # execution and corpus coverage run in dedicated CGO-free passes below.
-intentional_skip_pattern='TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)|TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestCooperativeBOFStop|TestSituationalAwarenessBOFCorpus(Child)?'
+intentional_skip_pattern='TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)|TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop|TestSituationalAwarenessBOFCorpus(Child)?'
 go test ./... -skip "${intentional_skip_pattern}" -count=1 -v | tee linux-test.log
 
 for test_name in \
@@ -74,8 +74,8 @@ for test_name in \
   fi
 done
 
-CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestCooperativeBOFStop)$' -count=1 -v | tee linux-bof-nocgo-test.log
-for test_name in TestLoadAndExecuteGeneratedBOF TestBOFLoadWithOptions TestConcurrentBOFStreaming TestCooperativeBOFStop; do
+CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop)$' -count=1 -v | tee linux-bof-nocgo-test.log
+for test_name in TestLoadAndExecuteGeneratedBOF TestBOFLoadWithOptions TestConcurrentBOFStreaming TestSameImageBOFExecutionIsSerialized TestCooperativeBOFStop; do
   if ! grep -Fq -- "--- PASS: ${test_name} " linux-bof-nocgo-test.log; then
     echo "Required CGO-free linux/386 BOF execution test did not pass: ${test_name}" >&2
     exit 1
