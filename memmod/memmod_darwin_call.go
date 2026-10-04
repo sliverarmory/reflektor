@@ -4,16 +4,9 @@ package memmod
 
 import (
 	"errors"
-	_ "unsafe"
 
 	"github.com/ebitengine/purego"
 )
-
-//go:noescape
-func cCall10(fn, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9 uintptr) uintptr
-
-//go:linkname runtimeSystemstack runtime.systemstack
-func runtimeSystemstack(fn func())
 
 func call0(fn uintptr) uintptr {
 	return call10(fn, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
@@ -58,9 +51,7 @@ func call6(fn, a0, a1, a2, a3, a4, a5 uintptr) uintptr {
 }
 
 func call10(fn, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9 uintptr) uintptr {
-	var ret uintptr
-	runtimeSystemstack(func() {
-		ret = cCall10(fn, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9)
-	})
-	return ret
+	// SyscallN uses runtime.cgocall, which aligns the stack for the C ABI.
+	result, _, _ := purego.SyscallN(fn, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9)
+	return result
 }

@@ -29,6 +29,13 @@ uintptr_t reflektor_call10_probe(
             matched |= (uintptr_t)1 << i;
         }
     }
+#if defined(__x86_64__)
+    // A SysV callee enters with RSP % 16 == 8. Its frame pointer, saved by
+    // the prologue, must therefore be 16-byte aligned.
+    if ((((uintptr_t)__builtin_frame_address(0)) & 15) == 0) {
+        matched |= (uintptr_t)1 << 10;
+    }
+#endif
     return matched;
 }
 `
@@ -41,7 +48,7 @@ uintptr_t reflektor_call10_probe(
 	if arch == "amd64" {
 		arch = "x86_64"
 	}
-	if output, err := exec.Command("clang", "-arch", arch, "-dynamiclib", "-O2", "-o", library, path).CombinedOutput(); err != nil {
+	if output, err := exec.Command("clang", "-arch", arch, "-dynamiclib", "-O2", "-fno-omit-frame-pointer", "-o", library, path).CombinedOutput(); err != nil {
 		t.Fatalf("build call10 probe: %v\n%s", err, output)
 	}
 	handle, err := purego.Dlopen(library, purego.RTLD_NOW|purego.RTLD_LOCAL)
@@ -57,7 +64,10 @@ uintptr_t reflektor_call10_probe(
 	if err != nil {
 		t.Fatalf("dlsym call10 probe: %v", err)
 	}
-	const allArgumentsMatched = (1 << 10) - 1
+	allArgumentsMatched := uintptr((1 << 10) - 1)
+	if runtime.GOARCH == "amd64" {
+		allArgumentsMatched |= 1 << 10
+	}
 	got := call10(probe, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa)
 	if got != allArgumentsMatched {
 		t.Fatalf("call10 matched argument bitmap = %#x, want %#x", got, allArgumentsMatched)
