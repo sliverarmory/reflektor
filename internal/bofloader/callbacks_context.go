@@ -9,20 +9,60 @@ import (
 
 const maxFormatAllocation = 16 << 20
 
-var (
-	executionLock   sync.Mutex
-	activeExecution atomic.Pointer[executionContext]
-)
+var executionContexts sync.Map // map[uint64]*executionContext, keyed by native OS thread ID
+
+func registerExecutionContext(context *executionContext) (func(), error) {
+	threadID, err := currentExecutionThreadID()
+	if err != nil {
+		return nil, fmt.Errorf("identify BOF execution thread: %w", err)
+	}
+	if _, loaded := executionContexts.LoadOrStore(threadID, context); loaded {
+		return nil, fmt.Errorf("BOF execution context already active on thread %d", threadID)
+	}
+	return func() { executionContexts.Delete(threadID) }, nil
+}
+
+func activeExecutionContext() *executionContext {
+	threadID, err := currentExecutionThreadID()
+	if err != nil {
+		return nil
+	}
+	value, ok := executionContexts.Load(threadID)
+	if !ok {
+		return nil
+	}
+	return value.(*executionContext)
+}
 
 type executionContext struct {
 	mu          sync.Mutex
 	outputs     []Output
 	errors      []error
 	allocations map[uintptr][]byte
+	emit        func(Output)
+	capture     bool
+	stop        <-chan struct{}
+	stopSeen    atomic.Bool
 }
 
-func newExecutionContext() *executionContext {
-	return &executionContext{allocations: make(map[uintptr][]byte)}
+func newExecutionContext(emit func(Output), capture bool) *executionContext {
+	return &executionContext{allocations: make(map[uintptr][]byte), emit: emit, capture: capture}
+}
+
+func (context *executionContext) stopRequested() bool {
+	if context == nil {
+		return false
+	}
+	if context.stopSeen.Load() {
+		return true
+	}
+	select {
+	case <-context.stop:
+		context.stopSeen.Store(true)
+		return true
+	default:
+		return false
+	}
 }
 
 func (context *executionContext) appendOutput(outputType int, data []byte) {
@@ -30,9 +70,27 @@ func (context *executionContext) appendOutput(outputType int, data []byte) {
 		return
 	}
 	copyOfData := append([]byte(nil), data...)
+	output := Output{Type: outputType, Data: copyOfData}
 	context.mu.Lock()
-	context.outputs = append(context.outputs, Output{Type: outputType, Data: copyOfData})
+	if context.capture {
+		context.outputs = append(context.outputs, output)
+	}
+	emit := context.emit
 	context.mu.Unlock()
+	if emit != nil {
+		// A callback into Go must not panic across the native BOF stack.
+		func() {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					context.mu.Lock()
+					context.emit = nil
+					context.mu.Unlock()
+					context.addError(fmt.Errorf("BOF output callback panic: %v", recovered))
+				}
+			}()
+			emit(output)
+		}()
+	}
 }
 
 func (context *executionContext) addError(err error) {

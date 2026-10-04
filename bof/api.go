@@ -34,6 +34,23 @@ type Output struct {
 	Data []byte
 }
 
+// ExecuteOptions controls streaming output and cooperative stop requests.
+// Its zero value runs the BOF without retaining or delivering output.
+type ExecuteOptions struct {
+	// OnOutput receives each owned output record synchronously as it is
+	// produced. The callback should return promptly. It must not execute
+	// another BOF on the same thread or close the current object.
+	OnOutput func(Output)
+
+	// Stop is a cooperative request to end execution. After the channel is
+	// closed or sends a value, ReflektorShouldStop returns 1 for the rest of
+	// this invocation. A stop request does not interrupt native code or make
+	// ExecuteWithOptions return before the BOF entry point returns. A BOF that
+	// does not poll the callback keeps running. A nil channel never requests
+	// a stop.
+	Stop <-chan struct{}
+}
+
 // Import describes one external symbol referenced by a BOF image. Name is the
 // exact object-file symbol spelling. Builtin marks callbacks implemented by
 // Reflektor. RequiresHost marks Beacon APIs that Reflektor deliberately does
@@ -156,6 +173,7 @@ func (arguments *Arguments) append(value []byte) error {
 
 type objectLoader interface {
 	Execute([]byte) ([]bofloader.Output, error)
+	ExecuteWithOptions([]byte, func(bofloader.Output), <-chan struct{}) error
 	Close() error
 }
 
@@ -241,6 +259,46 @@ func (object *Object) Execute(args []byte) ([]Output, error) {
 		err = ErrClosed
 	}
 	return converted, err
+}
+
+// ExecuteWithOutput invokes the BOF and delivers each output record as it is
+// produced. It is equivalent to ExecuteWithOptions with OnOutput set to emit.
+func (object *Object) ExecuteWithOutput(args []byte, emit func(Output)) error {
+	return object.ExecuteWithOptions(args, ExecuteOptions{OnOutput: emit})
+}
+
+// ExecuteWithOptions invokes the object's go (or coffee) entry point. Each
+// valid BeaconOutput or BeaconPrintf record, including zero-length records,
+// is delivered in callback order to OnOutput. Data is an owned copy that the
+// callback may retain. A nil callback discards records. An execution error
+// may follow records already delivered.
+//
+// OnOutput runs synchronously during BOF execution and should return promptly.
+// It must not execute any BOF on the same thread or call Close on this object.
+// Beacon callbacks from native threads created by the BOF are unsupported.
+func (object *Object) ExecuteWithOptions(args []byte, options ExecuteOptions) error {
+	if object == nil {
+		return ErrClosed
+	}
+	object.mu.RLock()
+	defer object.mu.RUnlock()
+	if object.closed || object.loader == nil {
+		return ErrClosed
+	}
+	if len(args) > maxArgumentBufferSize {
+		return fmt.Errorf("reflektor: BOF argument buffer is %d bytes; maximum is %d", len(args), maxArgumentBufferSize)
+	}
+	var forward func(bofloader.Output)
+	if options.OnOutput != nil {
+		forward = func(output bofloader.Output) {
+			options.OnOutput(Output{Type: output.Type, Data: append([]byte(nil), output.Data...)})
+		}
+	}
+	err := object.loader.ExecuteWithOptions(args, forward, options.Stop)
+	if errors.Is(err, bofloader.ErrClosed) {
+		return ErrClosed
+	}
+	return err
 }
 
 // Close releases the object's mapped image. It is safe to call more than once.

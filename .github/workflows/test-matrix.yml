@@ -56,7 +56,7 @@ jobs:
         run: |
           set -euo pipefail
           CGO_ENABLED=0 go test ./bof ./internal/bofloader -count=1
-          intentional_skip_pattern='TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)|TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions|TestSituationalAwarenessBOFCorpus(Child)?'
+          intentional_skip_pattern='TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)|TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestCooperativeBOFStop|TestSituationalAwarenessBOFCorpus(Child)?'
           go test ./... -skip "${intentional_skip_pattern}" -count=1 -v | tee darwin-test.log
           memmod_test="TestLoadLibraryAndCallExport_DarwinArm64"
           if [[ "${GOARCH}" == "amd64" ]]; then
@@ -108,8 +108,8 @@ jobs:
             echo "CGO-free Darwin loader thread-affinity test was skipped; refusing to pass CI."
             exit 1
           fi
-          CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions)$' -count=1 -v | tee darwin-bof-nocgo-test.log
-          for test_name in TestLoadAndExecuteGeneratedBOF TestLoadAndExecuteLegacyDarwinELFBOF TestBOFLoadWithOptions; do
+          CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestCooperativeBOFStop)$' -count=1 -v | tee darwin-bof-nocgo-test.log
+          for test_name in TestLoadAndExecuteGeneratedBOF TestLoadAndExecuteLegacyDarwinELFBOF TestBOFLoadWithOptions TestConcurrentBOFStreaming TestCooperativeBOFStop; do
             if ! grep -Fq -- "--- PASS: ${test_name} " darwin-bof-nocgo-test.log; then
               echo "Required CGO-free Darwin BOF execution test did not pass: ${test_name}"
               exit 1
@@ -264,7 +264,7 @@ jobs:
         run: |
           set -euo pipefail
           CGO_ENABLED=0 go test ./bof ./internal/bofloader -count=1
-          intentional_skip_pattern='TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)|TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions|TestSituationalAwarenessBOFCorpus(Child)?'
+          intentional_skip_pattern='TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)|TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestCooperativeBOFStop|TestSituationalAwarenessBOFCorpus(Child)?'
           go test ./... -skip "${intentional_skip_pattern}" -count=1 -v | tee linux-test.log
           for test_name in \
             TestLoadGeneratedCLinuxSOAndCallStartW \
@@ -309,8 +309,8 @@ jobs:
               exit 1
             fi
           done
-          CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions)$' -count=1 -v | tee linux-bof-nocgo-test.log
-          for test_name in TestLoadAndExecuteGeneratedBOF TestBOFLoadWithOptions; do
+          CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestCooperativeBOFStop)$' -count=1 -v | tee linux-bof-nocgo-test.log
+          for test_name in TestLoadAndExecuteGeneratedBOF TestBOFLoadWithOptions TestConcurrentBOFStreaming TestCooperativeBOFStop; do
             if ! grep -Fq -- "--- PASS: ${test_name} " linux-bof-nocgo-test.log; then
               echo "Required CGO-free Linux BOF execution test did not pass: ${test_name}"
               exit 1
@@ -401,6 +401,8 @@ jobs:
           fi
           test -s test/bof-fixtures/fixture_linux_arm.o
           test -s test/bof-fixtures/options_fixture_linux_arm.o
+          test -s test/bof-fixtures/async_fixture_linux_arm.o
+          test -s test/bof-fixtures/stop_fixture_linux_arm.o
       - name: Prepare pinned linux/arm BOF corpus
         working-directory: test/corpus/Situational-Awareness-BOFs
         run: |
@@ -465,6 +467,8 @@ jobs:
           fi
           test -s test/bof-fixtures/fixture_linux_riscv64.o
           test -s test/bof-fixtures/options_fixture_linux_riscv64.o
+          test -s test/bof-fixtures/async_fixture_linux_riscv64.o
+          test -s test/bof-fixtures/stop_fixture_linux_riscv64.o
       - name: Prepare pinned linux/riscv64 BOF corpus
         working-directory: test/corpus/Situational-Awareness-BOFs
         run: |
@@ -529,6 +533,8 @@ jobs:
           fi
           test -s test/bof-fixtures/fixture_linux_ppc64le.o
           test -s test/bof-fixtures/options_fixture_linux_ppc64le.o
+          test -s test/bof-fixtures/async_fixture_linux_ppc64le.o
+          test -s test/bof-fixtures/stop_fixture_linux_ppc64le.o
       - name: Prepare pinned linux/ppc64le BOF corpus
         working-directory: test/corpus/Situational-Awareness-BOFs
         run: |
@@ -604,7 +610,7 @@ jobs:
         run: |
           set -euo pipefail
           CGO_ENABLED=0 go test ./bof ./internal/bofloader -count=1
-          intentional_skip_pattern='TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)|TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions|TestSituationalAwarenessBOFCorpus(Child)?'
+          intentional_skip_pattern='TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)|TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestCooperativeBOFStop|TestSituationalAwarenessBOFCorpus(Child)?'
           go test ./... -skip "${intentional_skip_pattern}" -count=1 -v | tee windows-test.log
           for test_name in \
             TestLoadGeneratedCWindowsDLLAndCallStartW \
@@ -630,8 +636,8 @@ jobs:
             echo "${unexpected_skips}"
             exit 1
           fi
-          CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions)$' -count=1 -v | tee windows-bof-nocgo-test.log
-          for test_name in TestLoadAndExecuteGeneratedBOF TestBOFLoadWithOptions; do
+          CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestCooperativeBOFStop)$' -count=1 -v | tee windows-bof-nocgo-test.log
+          for test_name in TestLoadAndExecuteGeneratedBOF TestBOFLoadWithOptions TestConcurrentBOFStreaming TestCooperativeBOFStop; do
             if ! grep -Fq -- "--- PASS: ${test_name} " windows-bof-nocgo-test.log; then
               echo "Required CGO-free Windows BOF execution test did not pass: ${test_name}"
               exit 1

@@ -55,8 +55,8 @@ jobs:
           corpus_seed_count="$(find "${REFLEKTOR_BOF_CORPUS_DIR}/dist" -type f \( -name '*.o' -o -name '*.obj' \) | wc -l | tr -d '[:space:]')"
           fixture_seed_count="$(find "${REFLEKTOR_BOF_FIXTURE_DIR}" -type f \( -name '*.o' -o -name '*.obj' \) | wc -l | tr -d '[:space:]')"
           test "${corpus_seed_count}" -eq 367
-          test "${fixture_seed_count}" -eq 18
-          test "$(wc -l < bof-fuzz-seeds.txt | tr -d '[:space:]')" -eq 385
+          test "${fixture_seed_count}" -eq 44
+          test "$(wc -l < bof-fuzz-seeds.txt | tr -d '[:space:]')" -eq 411
       - name: Run parser and callback seed corpus
         run: |
           set -euo pipefail

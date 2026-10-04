@@ -10,12 +10,24 @@ import (
 	"unsafe"
 )
 
+func registerTestExecutionContext(t *testing.T) (*executionContext, func()) {
+	t.Helper()
+	runtime.LockOSThread()
+	context := newExecutionContext(nil, true)
+	unregister, err := registerExecutionContext(context)
+	if err != nil {
+		runtime.UnlockOSThread()
+		t.Fatalf("register BOF execution context: %v", err)
+	}
+	return context, func() {
+		unregister()
+		runtime.UnlockOSThread()
+	}
+}
+
 func TestBeaconDataCallbacks(t *testing.T) {
-	executionLock.Lock()
-	defer executionLock.Unlock()
-	context := newExecutionContext()
-	activeExecution.Store(context)
-	defer activeExecution.Store(nil)
+	context, cleanup := registerTestExecutionContext(t)
+	defer cleanup()
 
 	argument := make([]byte, 4+4+2+4+5)
 	binary.LittleEndian.PutUint32(argument[0:4], uint32(len(argument)-4))
@@ -45,11 +57,8 @@ func TestBeaconDataCallbacks(t *testing.T) {
 }
 
 func TestBeaconDataExtractOrNull(t *testing.T) {
-	executionLock.Lock()
-	defer executionLock.Unlock()
-	context := newExecutionContext()
-	activeExecution.Store(context)
-	defer activeExecution.Store(nil)
+	context, cleanup := registerTestExecutionContext(t)
+	defer cleanup()
 
 	argument := make([]byte, 4+4+1+4+4)
 	binary.LittleEndian.PutUint32(argument[0:4], uint32(len(argument)-4))
@@ -74,11 +83,8 @@ func TestBeaconDataExtractOrNull(t *testing.T) {
 }
 
 func TestBeaconFormatAndOutputCallbacks(t *testing.T) {
-	executionLock.Lock()
-	defer executionLock.Unlock()
-	context := newExecutionContext()
-	activeExecution.Store(context)
-	defer activeExecution.Store(nil)
+	context, cleanup := registerTestExecutionContext(t)
+	defer cleanup()
 
 	var format beaconFormat
 	beaconFormatAlloc(uintptr(unsafe.Pointer(&format)), 128)
@@ -113,11 +119,8 @@ func TestBeaconFormatAndOutputCallbacks(t *testing.T) {
 }
 
 func TestBeaconPrintfFormatting(t *testing.T) {
-	executionLock.Lock()
-	defer executionLock.Unlock()
-	context := newExecutionContext()
-	activeExecution.Store(context)
-	defer activeExecution.Store(nil)
+	context, cleanup := registerTestExecutionContext(t)
+	defer cleanup()
 
 	format := append([]byte("pid=%d hex=%#x name=%s %%"), 0)
 	name := append([]byte("reflektor"), 0)
@@ -132,11 +135,8 @@ func TestBeaconPrintfFormatting(t *testing.T) {
 }
 
 func TestBeaconOutputAndPrintfPreserveRecordContract(t *testing.T) {
-	executionLock.Lock()
-	defer executionLock.Unlock()
-	context := newExecutionContext()
-	activeExecution.Store(context)
-	defer activeExecution.Store(nil)
+	context, cleanup := registerTestExecutionContext(t)
+	defer cleanup()
 
 	defaultData := []byte("default")
 	errorFormat := append([]byte("error:%d"), 0)
@@ -206,11 +206,8 @@ func TestBeaconOutputAndPrintfPreserveRecordContract(t *testing.T) {
 }
 
 func TestBeaconOutputRejectsNilDataForNonEmptyRecord(t *testing.T) {
-	executionLock.Lock()
-	defer executionLock.Unlock()
-	context := newExecutionContext()
-	activeExecution.Store(context)
-	defer activeExecution.Store(nil)
+	context, cleanup := registerTestExecutionContext(t)
+	defer cleanup()
 
 	beaconOutput(0, 0, 1)
 	outputs, err := context.result()
@@ -266,6 +263,7 @@ func TestBeaconCallbackResolution(t *testing.T) {
 	for _, name := range []string{
 		"BeaconOutput", "_BeaconOutput", "__imp_BeaconOutput", "__imp__BeaconOutput@12",
 		"BeaconDataExtractOrNull", "_BeaconDataExtractOrNull", "toWideChar", "_toWideChar", "_toWideChar@12", "__imp_toWideChar", "__imp__toWideChar@12",
+		"ReflektorShouldStop", "_ReflektorShouldStop", "__imp_ReflektorShouldStop", "__imp__ReflektorShouldStop@0",
 	} {
 		address, ok, err := resolveBeaconCallback(name)
 		if err != nil {
@@ -281,11 +279,8 @@ func TestBeaconCallbackResolution(t *testing.T) {
 }
 
 func TestMalformedCallbackIsReported(t *testing.T) {
-	executionLock.Lock()
-	defer executionLock.Unlock()
-	context := newExecutionContext()
-	activeExecution.Store(context)
-	defer activeExecution.Store(nil)
+	context, cleanup := registerTestExecutionContext(t)
+	defer cleanup()
 
 	var parser beaconDataParser
 	invalid := []byte{1, 2}

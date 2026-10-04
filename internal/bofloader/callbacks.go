@@ -58,6 +58,7 @@ var builtinBeaconCallbackNames = map[string]struct{}{
 	"BeaconFormatInt":         {},
 	"BeaconPrintf":            {},
 	"BeaconOutput":            {},
+	"ReflektorShouldStop":     {},
 	"toWideChar":              {},
 }
 
@@ -88,7 +89,7 @@ func normalizeImportedSymbol(symbol string) string {
 		name = strings.TrimPrefix(name, "_")
 	}
 	name = trimStdcallSuffix(name)
-	if strings.HasPrefix(name, "_") && (strings.HasPrefix(name[1:], "Beacon") || name[1:] == "toWideChar") {
+	if strings.HasPrefix(name, "_") && (strings.HasPrefix(name[1:], "Beacon") || name[1:] == "toWideChar" || name[1:] == "ReflektorShouldStop") {
 		name = name[1:]
 	}
 	return name
@@ -114,11 +115,21 @@ func callbackPanic(name string) {
 }
 
 func callbackError(name, format string, arguments ...any) {
-	context := activeExecution.Load()
+	context := activeExecutionContext()
 	if context == nil {
 		return
 	}
 	context.addError(fmt.Errorf("%s: %s", name, fmt.Sprintf(format, arguments...)))
+}
+
+// ReflektorShouldStop is a portable, cooperative poll for BOFs that opt in.
+// A request cannot interrupt native code or release its mapped image early.
+func reflektorShouldStop() (result uintptr) {
+	defer callbackPanic("ReflektorShouldStop")
+	if activeExecutionContext().stopRequested() {
+		return 1
+	}
+	return 0
 }
 
 //go:nocheckptr
@@ -256,7 +267,7 @@ func beaconFormatAlloc(formatAddress, sizeValue uintptr) (result uintptr) {
 	format := (*beaconFormat)(unsafe.Pointer(formatAddress))
 	*format = beaconFormat{}
 	size := int64(int32(sizeValue))
-	context := activeExecution.Load()
+	context := activeExecutionContext()
 	if size <= 0 || size > maxFormatAllocation || context == nil {
 		callbackError("BeaconFormatAlloc", "invalid size %d or no active execution", size)
 		return 0
@@ -291,7 +302,7 @@ func beaconFormatFree(formatAddress uintptr) (result uintptr) {
 		return 0
 	}
 	format := (*beaconFormat)(unsafe.Pointer(formatAddress))
-	if context := activeExecution.Load(); context != nil {
+	if context := activeExecutionContext(); context != nil {
 		context.release(format.original)
 	}
 	*format = beaconFormat{}
@@ -377,7 +388,10 @@ func checkedFormat(name string, formatAddress uintptr) (*beaconFormat, []byte, b
 		return nil, nil, false
 	}
 	format := (*beaconFormat)(unsafe.Pointer(formatAddress))
-	context := activeExecution.Load()
+	context := activeExecutionContext()
+	if context == nil {
+		return nil, nil, false
+	}
 	data, ok := context.allocation(format.original)
 	if !ok || format.size != int32(len(data)) || format.length < 0 || int(format.length) > len(data) || format.buffer != format.original+uintptr(format.length) {
 		callbackError(name, "invalid or foreign format buffer")
@@ -393,7 +407,7 @@ func beaconOutput(typeValue, dataAddress, lengthValue uintptr) (result uintptr) 
 		callbackError("BeaconOutput", "invalid data %#x or length %d", dataAddress, length)
 		return 0
 	}
-	if context := activeExecution.Load(); context != nil {
+	if context := activeExecutionContext(); context != nil {
 		var data []byte
 		if length > 0 {
 			data = pointerBytes(dataAddress, int(length))
@@ -409,7 +423,7 @@ func beaconPrintf(typeValue, formatAddress, a0, a1, a2, a3, a4, a5, a6, a7, a8, 
 	if err != nil {
 		callbackError("BeaconPrintf", "%v", err)
 	}
-	if context := activeExecution.Load(); context != nil {
+	if context := activeExecutionContext(); context != nil {
 		context.appendOutput(int(int32(typeValue)), []byte(formatted))
 	}
 	return 0

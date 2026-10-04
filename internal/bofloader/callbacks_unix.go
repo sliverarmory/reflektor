@@ -21,6 +21,7 @@ func platformCallbacks() map[string]uintptr {
 		"BeaconFormatInt":         purego.NewCallback(beaconFormatInt),
 		"BeaconPrintf":            purego.NewCallback(beaconPrintf),
 		"BeaconOutput":            purego.NewCallback(beaconOutput),
+		"ReflektorShouldStop":     purego.NewCallback(reflektorShouldStop),
 		"toWideChar":              purego.NewCallback(toWideChar),
 	}
 }

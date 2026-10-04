@@ -18,6 +18,10 @@ func (*retryCloseLoader) Execute([]byte) ([]bofloader.Output, error) {
 	return nil, nil
 }
 
+func (*retryCloseLoader) ExecuteWithOptions([]byte, func(bofloader.Output), <-chan struct{}) error {
+	return nil
+}
+
 func (loader *retryCloseLoader) Close() error {
 	loader.closeCalls++
 	if loader.closeCalls == 1 {
@@ -37,6 +41,12 @@ func TestObjectCloseIsIdempotent(t *testing.T) {
 	if _, err := object.Execute(nil); !errors.Is(err, ErrClosed) {
 		t.Fatalf("Execute() error = %v, want ErrClosed", err)
 	}
+	if err := object.ExecuteWithOutput(nil, nil); !errors.Is(err, ErrClosed) {
+		t.Fatalf("ExecuteWithOutput() error = %v, want ErrClosed", err)
+	}
+	if err := object.ExecuteWithOptions(nil, ExecuteOptions{}); !errors.Is(err, ErrClosed) {
+		t.Fatalf("ExecuteWithOptions() error = %v, want ErrClosed", err)
+	}
 }
 
 func TestObjectCloseRetriesCleanupWithoutReenablingExecution(t *testing.T) {
@@ -47,6 +57,12 @@ func TestObjectCloseRetriesCleanupWithoutReenablingExecution(t *testing.T) {
 	}
 	if _, err := object.Execute(nil); !errors.Is(err, ErrClosed) {
 		t.Fatalf("Execute() after failed Close error = %v, want ErrClosed", err)
+	}
+	if err := object.ExecuteWithOutput(nil, nil); !errors.Is(err, ErrClosed) {
+		t.Fatalf("ExecuteWithOutput() after failed Close error = %v, want ErrClosed", err)
+	}
+	if err := object.ExecuteWithOptions(nil, ExecuteOptions{}); !errors.Is(err, ErrClosed) {
+		t.Fatalf("ExecuteWithOptions() after failed Close error = %v, want ErrClosed", err)
 	}
 	if err := object.Close(); err != nil {
 		t.Fatalf("second Close() error = %v", err)
@@ -63,6 +79,12 @@ func TestObjectTranslatesLoaderClosedError(t *testing.T) {
 	object := &Object{loader: &bofloader.Loader{}}
 	if _, err := object.Execute(nil); !errors.Is(err, ErrClosed) {
 		t.Fatalf("Execute() error = %v, want ErrClosed", err)
+	}
+	if err := object.ExecuteWithOutput(nil, nil); !errors.Is(err, ErrClosed) {
+		t.Fatalf("ExecuteWithOutput() error = %v, want ErrClosed", err)
+	}
+	if err := object.ExecuteWithOptions(nil, ExecuteOptions{}); !errors.Is(err, ErrClosed) {
+		t.Fatalf("ExecuteWithOptions() error = %v, want ErrClosed", err)
 	}
 }
 

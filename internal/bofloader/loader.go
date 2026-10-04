@@ -37,12 +37,13 @@ type Output struct {
 }
 
 type Loader struct {
-	mu      sync.RWMutex
-	region  *memoryRegion
-	unwind  *unwindRegistration
-	entry   uintptr
-	closing bool
-	closed  bool
+	mu          sync.RWMutex
+	executionMu sync.Mutex // one invocation at a time for this mutable image
+	region      *memoryRegion
+	unwind      *unwindRegistration
+	entry       uintptr
+	closing     bool
+	closed      bool
 }
 
 type protection uint8
@@ -479,6 +480,24 @@ func mappedSectionAlignment(section objectSection, pageSize uint64) (uint64, err
 }
 
 func (loader *Loader) Execute(args []byte) ([]Output, error) {
+	return loader.execute(args, nil, true, nil)
+}
+
+// ExecuteWithOutput sends each owned output record to emit before the native
+// entry point returns. It does not retain the records in the execution context.
+func (loader *Loader) ExecuteWithOutput(args []byte, emit func(Output)) error {
+	_, err := loader.execute(args, emit, false, nil)
+	return err
+}
+
+// ExecuteWithOptions streams records and makes a stop request visible to BOFs
+// that import ReflektorShouldStop. It waits for the native entry to return.
+func (loader *Loader) ExecuteWithOptions(args []byte, emit func(Output), stop <-chan struct{}) error {
+	_, err := loader.execute(args, emit, false, stop)
+	return err
+}
+
+func (loader *Loader) execute(args []byte, emit func(Output), capture bool, stop <-chan struct{}) ([]Output, error) {
 	loader.mu.RLock()
 	defer loader.mu.RUnlock()
 	if loader.closing || loader.closed || loader.region == nil || loader.entry == 0 {
@@ -488,14 +507,20 @@ func (loader *Loader) Execute(args []byte) ([]Output, error) {
 		return nil, fmt.Errorf("bofloader: argument buffer is %d bytes; maximum is %d", len(args), maxCallbackData)
 	}
 
-	executionLock.Lock()
-	defer executionLock.Unlock()
+	// The BOF's mapped data and BSS belong to this loader. Other loaded BOFs
+	// can run concurrently, but two calls into this image must be serialized.
+	loader.executionMu.Lock()
+	defer loader.executionMu.Unlock()
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
-	context := newExecutionContext()
-	activeExecution.Store(context)
-	defer activeExecution.Store(nil)
+	context := newExecutionContext(emit, capture)
+	context.stop = stop
+	unregister, err := registerExecutionContext(context)
+	if err != nil {
+		return nil, err
+	}
+	defer unregister()
 
 	var address uintptr
 	if len(args) != 0 {

@@ -9,12 +9,23 @@ import (
 )
 
 type scriptedOutputLoader struct {
-	outputs []bofloader.Output
-	err     error
+	outputs      []bofloader.Output
+	err          error
+	receivedStop <-chan struct{}
 }
 
 func (loader *scriptedOutputLoader) Execute([]byte) ([]bofloader.Output, error) {
 	return loader.outputs, loader.err
+}
+
+func (loader *scriptedOutputLoader) ExecuteWithOptions(_ []byte, emit func(bofloader.Output), stop <-chan struct{}) error {
+	loader.receivedStop = stop
+	if emit != nil {
+		for _, output := range loader.outputs {
+			emit(output)
+		}
+	}
+	return loader.err
 }
 
 func (*scriptedOutputLoader) Close() error {
@@ -55,6 +66,59 @@ func TestObjectExecutePreservesTypedOutputWithError(t *testing.T) {
 		if outputs[index].Type != want[index].Type || !bytes.Equal(outputs[index].Data, want[index].Data) {
 			t.Fatalf("output %d = %#v, want %#v", index, outputs[index], want[index])
 		}
+	}
+}
+
+func TestObjectExecuteWithOutputDeliversOwnedRecordsBeforeError(t *testing.T) {
+	terminalErr := errors.New("terminal execution error")
+	loader := &scriptedOutputLoader{
+		outputs: []bofloader.Output{
+			{Type: OutputOEM, Data: []byte{0xff, 0xfe, 0x80}},
+			{Type: -7, Data: nil},
+		},
+		err: terminalErr,
+	}
+	object := &Object{loader: loader}
+	var delivered []Output
+	err := object.ExecuteWithOutput(nil, func(output Output) {
+		delivered = append(delivered, output)
+	})
+	if !errors.Is(err, terminalErr) {
+		t.Fatalf("ExecuteWithOutput() error = %v, want terminal execution error", err)
+	}
+	if len(delivered) != 2 || delivered[0].Type != OutputOEM || !bytes.Equal(delivered[0].Data, []byte{0xff, 0xfe, 0x80}) || delivered[1].Type != -7 || len(delivered[1].Data) != 0 {
+		t.Fatalf("delivered records = %#v", delivered)
+	}
+	loader.outputs[0].Data[0] = 0
+	if delivered[0].Data[0] != 0xff {
+		t.Fatal("delivered record aliases loader data")
+	}
+	if err := object.ExecuteWithOutput(nil, nil); !errors.Is(err, terminalErr) {
+		t.Fatalf("ExecuteWithOutput(nil emit) error = %v, want terminal execution error", err)
+	}
+	if loader.receivedStop != nil {
+		t.Fatal("ExecuteWithOutput supplied an unexpected stop channel")
+	}
+}
+
+func TestObjectExecuteWithOptionsForwardsStopRequest(t *testing.T) {
+	stop := make(chan struct{})
+	close(stop)
+	loader := &scriptedOutputLoader{outputs: []bofloader.Output{{Type: OutputDefault, Data: []byte("started")}}}
+	object := &Object{loader: loader}
+	var delivered []Output
+	err := object.ExecuteWithOptions(nil, ExecuteOptions{
+		OnOutput: func(output Output) { delivered = append(delivered, output) },
+		Stop:     stop,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteWithOptions() error = %v", err)
+	}
+	if loader.receivedStop != stop {
+		t.Fatal("ExecuteWithOptions did not forward the stop channel")
+	}
+	if len(delivered) != 1 || delivered[0].Type != OutputDefault || string(delivered[0].Data) != "started" {
+		t.Fatalf("delivered records = %#v", delivered)
 	}
 }
 

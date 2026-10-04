@@ -162,6 +162,38 @@ defer loaded.Close()
 records, err := loaded.Execute(arguments.Bytes())
 ```
 
+For a long-running BOF, `ExecuteWithOutput` delivers each owned, typed record
+as the BOF emits it, without retaining the records until execution ends:
+
+```go
+err = loaded.ExecuteWithOutput(arguments.Bytes(), func(record bof.Output) {
+    // Queue or process record.Type and record.Data.
+})
+```
+
+The output callback runs synchronously during BOF execution and should return
+promptly. It must not execute any BOF on the same thread or call `Close` on the
+current object. A nil callback discards output. Records already delivered
+remain valid if execution later returns an error.
+
+For cooperative stop, pass a channel through `bof.ExecuteOptions`:
+
+```go
+stop := make(chan struct{})
+// Close stop from another goroutine when a stop is requested.
+err = loaded.ExecuteWithOptions(arguments.Bytes(), bof.ExecuteOptions{
+    OnOutput: func(record bof.Output) { /* handle the record */ },
+    Stop: stop,
+})
+```
+
+A BOF can import Reflektor's `int ReflektorShouldStop(void)` callback and poll
+it during a long-running loop. It returns 1 after `Stop` closes or sends a
+value, and 0 otherwise. A received stop request stays set for that invocation.
+Existing BOFs that do not poll it keep running. Stop is a request only:
+`ExecuteWithOptions` and `Close` still wait for the native entry point to
+return, and Reflektor does not forcefully interrupt or unmap a running BOF.
+
 Use `bof.LoadWithOptions` (or `bof.LoadFileWithOptions`) when the host needs an
 exact entry symbol or an import boundary. `ValidateImports` receives a sorted,
 owned snapshot before image allocation, callback registration, or dynamic
@@ -183,8 +215,9 @@ symbol lookups. The built-in compatibility set also includes the bounded
 UTF-16LE and whose maximum length is measured in bytes.
 
 The loader supplies the Beacon data, format, and output callbacks, preserves
-each output record's channel, uses page-level W^X protections, and serializes
-execution around the process-wide native callback bridge. Output records are
+each output record's channel, and uses page-level W^X protections. Separately
+loaded BOF images may execute concurrently; calls on one loaded image are
+serialized because its data sections are mutable. Output records are
 returned one-for-one in callback-capture order across `BeaconOutput` and
 `BeaconPrintf`; unknown signed channel values are not rejected or remapped.
 `Data` is an owned, opaque byte snapshot: Reflektor does not transcode OEM or
@@ -198,7 +231,9 @@ can corrupt or terminate the host, so untrusted objects need a subprocess
 boundary.
 Object images are capped at 64 MiB and packed argument buffers at 16 MiB.
 Callback capture is synchronous: a BOF that starts native worker threads must
-join them before its entry point returns.
+join them before its entry point returns. Beacon callbacks made from those
+native-created threads are unsupported; callbacks are routed only for the
+thread executing the BOF entry point.
 
 `BeaconPrintf` and `BeaconFormatPrintf` accept at most ten machine-word
 arguments and implement bounded string, character, integer, and pointer

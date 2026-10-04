@@ -14,7 +14,9 @@ fi
 
 for fixture in \
   "${REFLEKTOR_BOF_FIXTURE_DIR}/fixture_linux_arm.o" \
-  "${REFLEKTOR_BOF_FIXTURE_DIR}/options_fixture_linux_arm.o"; do
+  "${REFLEKTOR_BOF_FIXTURE_DIR}/options_fixture_linux_arm.o" \
+  "${REFLEKTOR_BOF_FIXTURE_DIR}/async_fixture_linux_arm.o" \
+  "${REFLEKTOR_BOF_FIXTURE_DIR}/stop_fixture_linux_arm.o"; do
   if [[ ! -s "${fixture}" ]]; then
     echo "required prebuilt BOF fixture is absent or empty: ${fixture}" >&2
     exit 1
@@ -39,7 +41,7 @@ fi
 go test ./bof ./internal/bofloader -count=1
 
 go test ./integration \
-  -run '^(TestPlatformSupportManifest|TestLinuxARMRuntimeVariant|TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestBOFPackageDependencyGraphIsIsolated)$' \
+  -run '^(TestPlatformSupportManifest|TestLinuxARMRuntimeVariant|TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestCooperativeBOFStop|TestBOFPackageDependencyGraphIsIsolated)$' \
   -count=1 -v | tee linux-arm-bof-test.log
 
 for test_name in \
@@ -47,6 +49,8 @@ for test_name in \
   TestLinuxARMRuntimeVariant \
   TestLoadAndExecuteGeneratedBOF \
   TestBOFLoadWithOptions \
+  TestConcurrentBOFStreaming \
+  TestCooperativeBOFStop \
   TestBOFPackageDependencyGraphIsIsolated; do
   if ! grep -Fq -- "--- PASS: ${test_name} " linux-arm-bof-test.log; then
     echo "Required CGO-free linux/arm BOF test did not pass: ${test_name}" >&2

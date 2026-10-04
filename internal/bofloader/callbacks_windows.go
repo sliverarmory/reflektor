@@ -51,6 +51,9 @@ func platformCallbacks() map[string]uintptr {
 		"BeaconOutput": purego.NewCallback(func(_ purego.CDecl, a0, a1, a2 uintptr) uintptr {
 			return beaconOutput(a0, a1, a2)
 		}),
+		"ReflektorShouldStop": purego.NewCallback(func(_ purego.CDecl) uintptr {
+			return reflektorShouldStop()
+		}),
 		"toWideChar": purego.NewCallback(func(_ purego.CDecl, a0, a1, a2 uintptr) uintptr {
 			return toWideChar(a0, a1, a2)
 		}),
