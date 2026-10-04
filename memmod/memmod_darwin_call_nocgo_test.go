@@ -41,7 +41,7 @@ uintptr_t reflektor_call10_probe(
 	if arch == "amd64" {
 		arch = "x86_64"
 	}
-	if output, err := exec.Command("clang", "-arch", arch, "-dynamiclib", "-nostdlib", "-O2", "-o", library, path).CombinedOutput(); err != nil {
+	if output, err := exec.Command("clang", "-arch", arch, "-dynamiclib", "-O2", "-o", library, path).CombinedOutput(); err != nil {
 		t.Fatalf("build call10 probe: %v\n%s", err, output)
 	}
 	handle, err := purego.Dlopen(library, purego.RTLD_NOW|purego.RTLD_LOCAL)
