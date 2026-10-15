@@ -41,7 +41,7 @@ fi
 go test ./bof ./internal/bofloader -count=1
 
 go test ./integration \
-  -run '^(TestPlatformSupportManifest|TestLinuxARMRuntimeVariant|TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop|TestBOFPackageDependencyGraphIsIsolated)$' \
+  -run '^(TestPlatformSupportManifest|TestLinuxARMRuntimeVariant|TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop|TestBOFPackageDependencyGraphIsIsolated|TestCLIBOFExecution)$' \
   -count=1 -v | tee linux-arm-bof-test.log
 
 for test_name in \
@@ -52,7 +52,8 @@ for test_name in \
   TestConcurrentBOFStreaming \
   TestSameImageBOFExecutionIsSerialized \
   TestCooperativeBOFStop \
-  TestBOFPackageDependencyGraphIsIsolated; do
+  TestBOFPackageDependencyGraphIsIsolated \
+  TestCLIBOFExecution; do
   if ! grep -Fq -- "--- PASS: ${test_name} " linux-arm-bof-test.log; then
     echo "Required CGO-free linux/arm BOF test did not pass: ${test_name}" >&2
     exit 1
