@@ -52,6 +52,8 @@ Linux `loong64` extends the existing Linux family to a new instruction set. The 
 
 FreeBSD `386` can reuse ELF/x86 object handling, but it is not a build-tag-only port. PureGo v0.11.0's 386 foreign-call and callback assembly is Linux-only, and its FreeBSD CGO-free startup covers `amd64` and `arm64`. Reflektor's 386 call bridges are also Linux-only. Go `c-shared` is `n-a` here.
 
+Feasibility check on the pinned Go 1.26.6 toolchain: a minimal `freebsd/386`, `CGO_ENABLED=0` PureGo `SyscallN`/`NewCallback` program fails to build because `threadentry`, `x_cgo_init`, and `_cgo_sys_thread_start` are undefined (even with PureGo's `fakecgo=-std` flag). [FreeBSD lists i386 as Tier 2 for 14.x and unsupported for 15.x](https://www.freebsd.org/platforms/), so any port would need an explicit 14.x maintenance and CI commitment.
+
 - [ ] Prove a FreeBSD 32-bit foreign call, Go callback, thread startup, and CGO-free invocation in a small guest fixture. Resolve the PureGo dependency gap upstream or with a maintained local bridge.
 - [ ] If the bridge passes, port BOF memory, thread, symbol, and invocation paths and the FreeBSD ELF root, `native`, and recursive loaders.
 - [ ] Apply the full support gate in a FreeBSD `386` runner before recording C/Rust library and BOF support.
