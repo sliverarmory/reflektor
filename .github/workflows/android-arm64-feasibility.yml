@@ -1,0 +1,29 @@
+name: Android arm64 feasibility
+
+on:
+  push:
+    paths:
+      - .github/workflows/android-arm64-feasibility.yml
+      - testdata/android/**
+  pull_request:
+    paths:
+      - .github/workflows/android-arm64-feasibility.yml
+      - testdata/android/**
+
+permissions:
+  contents: read
+
+jobs:
+  android-arm64-feasibility:
+    name: android-arm64-feasibility
+    runs-on: macos-15-arm64
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Probe Android arm64 Bionic, executable memory, and PureGo
+        shell: bash
+        run: bash testdata/android/run-feasibility.sh
