@@ -600,14 +600,6 @@ func decodeMachORelocations(data []byte, object *objectFile, preflight *machoPre
 				relocation.addend = addend
 			}
 		}
-		if object.arch == "arm64" && external {
-			if symbol, ok := object.symbols[symbolIndex]; ok && symbol.section == sectionUndefined {
-				callbackName := normalizeImportedSymbol(symbol.name)
-				if callbackName == "BeaconPrintf" || callbackName == "BeaconFormatPrintf" {
-					return nil, fmt.Errorf("bofloader: Mach-O arm64 BOFs cannot import variadic callback %q because Apple's arm64 variadic ABI is unsupported; use BeaconOutput", symbol.name)
-				}
-			}
-		}
 		result = append(result, relocation)
 	}
 	if pendingAddend != nil {

@@ -431,9 +431,18 @@ func beaconPrintf(typeValue, formatAddress, a0, a1, a2, a3, a4, a5, a6, a7, a8, 
 
 type printfArguments struct {
 	values          [maxPrintfArgument]uintptr
+	stackAddress    uintptr
 	index           int
 	wordSize        int
 	alignDoubleWord bool
+}
+
+//go:nocheckptr
+func (arguments *printfArguments) word(index int) uintptr {
+	if arguments.stackAddress != 0 {
+		return *(*uintptr)(unsafe.Pointer(arguments.stackAddress + uintptr(index)*8))
+	}
+	return arguments.values[index]
 }
 
 func (arguments *printfArguments) next(bits int) (uint64, error) {
@@ -447,13 +456,13 @@ func (arguments *printfArguments) next(bits int) (uint64, error) {
 	if arguments.index >= len(arguments.values) {
 		return 0, errors.New("format string requires more than 10 machine-word arguments")
 	}
-	low := uint64(arguments.values[arguments.index])
+	low := uint64(arguments.word(arguments.index))
 	arguments.index++
 	if arguments.wordSize == 4 && bits == 64 {
 		if arguments.index >= len(arguments.values) {
 			return 0, errors.New("64-bit format argument is missing its high word")
 		}
-		high := uint64(arguments.values[arguments.index])
+		high := uint64(arguments.word(arguments.index))
 		arguments.index++
 		return low | high<<32, nil
 	}
@@ -461,17 +470,20 @@ func (arguments *printfArguments) next(bits int) (uint64, error) {
 }
 
 func formatPrintf(address uintptr, values [maxPrintfArgument]uintptr) (string, error) {
+	return formatPrintfArguments(address, printfArguments{
+		values:          values,
+		wordSize:        pointerSize(),
+		alignDoubleWord: runtime.GOARCH == "arm",
+	})
+}
+
+func formatPrintfArguments(address uintptr, arguments printfArguments) (string, error) {
 	if address == 0 {
 		return "", errors.New("nil format string")
 	}
 	format, err := readCString(address, maxFormatString)
 	if err != nil {
 		return "", err
-	}
-	arguments := printfArguments{
-		values:          values,
-		wordSize:        pointerSize(),
-		alignDoubleWord: runtime.GOARCH == "arm",
 	}
 	var output strings.Builder
 	var formatErrors []error
@@ -643,7 +655,7 @@ func formatConversion(conversion byte, length, flags string, width, precision in
 		if err != nil {
 			return "", err
 		}
-		if pointerSize() != 4 && runtime.GOOS != "windows" {
+		if pointerSize() != 4 && runtime.GOOS != "windows" && arguments.stackAddress == 0 {
 			return "<unsupported-float>", fmt.Errorf("%%%c is unsupported by the fixed uintptr callback on %s/%s", conversion, runtime.GOOS, runtime.GOARCH)
 		}
 		return fmt.Sprintf(buildGoFormat(flags, width, precision, conversion), math.Float64frombits(bits)), nil

@@ -154,7 +154,7 @@ func LoadWithOptions(data []byte, options LoadOptions) (*Loader, error) {
 		}
 	}
 	pageSize := uint64(systemPageSize())
-	thunkStride := importThunkStride(object.arch)
+	thunkStride := objectThunkStride(object)
 	gotStride := uint64(pointerSize())
 	thunkSize := alignUp(uint64(len(referenced))*thunkStride, pageSize)
 	gotSize := alignUp(uint64(len(referenced))*gotStride, pageSize)
@@ -348,6 +348,15 @@ func importThunkStride(arch string) uint64 {
 	return 16
 }
 
+func objectThunkStride(object *objectFile) uint64 {
+	if object.format == "macho" && object.arch == "arm64" {
+		// Apple's variadic ABI needs a bridge that passes the caller's stack
+		// argument address to the bounded Beacon formatter.
+		return 32
+	}
+	return importThunkStride(object.arch)
+}
+
 func resolveExternalSymbols(object *objectFile, referenced []uint32, region *memoryRegion, thunkSize, gotSize uint64, imports []Import, options LoadOptions) (map[uint32]externalSymbol, error) {
 	resolved := make(map[uint32]externalSymbol, len(referenced))
 	importsByName := make(map[string]Import, len(imports))
@@ -373,7 +382,11 @@ func resolveExternalSymbols(object *objectFile, referenced []uint32, region *mem
 				if imported, ok := importsByName[symbol.name]; ok {
 					symbol.weak = imported.Weak
 				}
-				target, err = resolveImportedSymbol(symbol, options)
+				if isMachOARM64VariadicCallback(object, symbol.name) {
+					target, err = resolveMachOARM64VariadicCallback(symbol.name)
+				} else {
+					target, err = resolveImportedSymbol(symbol, options)
+				}
 				if err != nil {
 					return nil, fmt.Errorf("bofloader: resolve external symbol %q: %w", symbol.name, err)
 				}
@@ -389,7 +402,7 @@ func resolveExternalSymbols(object *objectFile, referenced []uint32, region *mem
 				return nil, fmt.Errorf("bofloader: defined GOT symbol %q address %#x exceeds pointer size", symbol.name, linked.address)
 			}
 		}
-		thunkStride := importThunkStride(object.arch)
+		thunkStride := objectThunkStride(object)
 		thunkOffset := uint64(position) * thunkStride
 		gotOffset := thunkSize + uint64(position)*uint64(pointerSize())
 		if thunkOffset+thunkStride > thunkSize || gotOffset+uint64(pointerSize()) > thunkSize+gotSize {
@@ -403,8 +416,17 @@ func resolveExternalSymbols(object *objectFile, referenced []uint32, region *mem
 			gotOffset: gotOffset,
 			thunkOff:  thunkOffset,
 		}
-		writePointer(region.data[gotOffset:gotOffset+uint64(pointerSize())], target)
-		if err := writeThunk(region.data[thunkOffset:thunkOffset+thunkStride], target, ext.thunk, ext.got, object.ppc64TOC); err != nil {
+		if symbol.section == sectionUndefined && isMachOARM64VariadicCallback(object, symbol.name) {
+			// Every Mach-O relocation form, including direct pointers and GOT
+			// loads, must reach the bridge rather than the plain callback.
+			ext.target = ext.thunk
+			writePointer(region.data[gotOffset:gotOffset+uint64(pointerSize())], ext.thunk)
+			err = writeMachOARM64VariadicThunk(region.data[thunkOffset:thunkOffset+thunkStride], target)
+		} else {
+			writePointer(region.data[gotOffset:gotOffset+uint64(pointerSize())], target)
+			err = writeThunk(region.data[thunkOffset:thunkOffset+thunkStride], target, ext.thunk, ext.got, object.ppc64TOC)
+		}
+		if err != nil {
 			return nil, fmt.Errorf("bofloader: create thunk for %q: %w", symbol.name, err)
 		}
 		resolved[index] = ext

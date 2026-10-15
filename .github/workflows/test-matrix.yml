@@ -66,6 +66,19 @@ jobs:
             echo "CGO-free Darwin BOF execution test was skipped; refusing to pass CI."
             exit 1
           fi
+      - name: Run Apple arm64 variadic BOF ABI test without cgo
+        if: matrix.goarch == 'arm64'
+        run: |
+          set -euo pipefail
+          CGO_ENABLED=0 go test ./integration -run '^TestDarwinARM64NativeVariadicBOF$' -count=1 -v | tee darwin-arm64-variadic-nocgo-test.log
+          if ! grep -Fq -- '--- PASS: TestDarwinARM64NativeVariadicBOF ' darwin-arm64-variadic-nocgo-test.log; then
+            echo "Required CGO-free Apple arm64 variadic BOF ABI test did not pass."
+            exit 1
+          fi
+          if grep -Fq -- '--- SKIP:' darwin-arm64-variadic-nocgo-test.log; then
+            echo "Apple arm64 variadic BOF ABI test was skipped; refusing to pass CI."
+            exit 1
+          fi
       - name: Run Darwin no-cgo call bridge ABI test
         run: |
           set -euo pipefail
@@ -108,6 +121,10 @@ jobs:
               exit 1
             fi
           done
+          if [[ "${GOARCH}" == "arm64" ]] && ! grep -Fq -- '--- PASS: TestDarwinARM64NativeVariadicBOF ' darwin-test.log; then
+            echo "Required Apple arm64 variadic BOF ABI test did not pass with cgo."
+            exit 1
+          fi
           unexpected_skips="$(grep -E '^--- SKIP:' darwin-test.log | grep -Ev "${intentional_skip_pattern}" || true)"
           if [[ -n "${unexpected_skips}" ]]; then
             echo "Darwin tests were skipped; refusing to pass CI."

@@ -237,12 +237,11 @@ thread executing the BOF entry point.
 
 `BeaconPrintf` and `BeaconFormatPrintf` accept at most ten machine-word
 arguments and implement bounded string, character, integer, and pointer
-conversions. Floating-point conversions are rejected on 64-bit Unix because
-its variadic ABI does not expose those values to the fixed callback bridge.
-Native Mach-O Darwin/arm64 objects must use `BeaconOutput` instead: imports of
-`BeaconPrintf` and `BeaconFormatPrintf` are rejected because Apple's variadic
-ABI is incompatible with the fixed callback bridge. Legacy Darwin ELF objects
-retain the existing callback behavior.
+conversions. Native Mach-O Darwin/arm64 objects use a dedicated bridge for
+Apple's 8-byte variadic stack slots, including supported `double` conversions.
+Other 64-bit Unix objects reject floating-point conversions because their
+variadic values are unavailable to the fixed callback bridge. Legacy Darwin
+ELF objects retain the existing callback behavior and float restriction.
 
 ## Native-only Package
 

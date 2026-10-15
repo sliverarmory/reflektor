@@ -183,14 +183,7 @@ func nativeBOFTarget() (bofTarget, bool) {
 }
 
 func buildBOFFixture(t *testing.T, outputDirectory string, target bofTarget) string {
-	extraArguments := []string(nil)
-	if target.format == "macho" && target.goarch == "arm64" {
-		// Native Darwin/arm64 uses Apple's distinct variadic ABI. The Mach-O
-		// fixture covers the same output bytes through BeaconOutput while the
-		// separate legacy ELF fixture retains BeaconPrintf coverage.
-		extraArguments = append(extraArguments, "-DBOF_DARWIN_ARM64_MACHO")
-	}
-	return buildBOFSource(t, outputDirectory, target, "fixture", "fixture.c", extraArguments...)
+	return buildBOFSource(t, outputDirectory, target, "fixture", "fixture.c")
 }
 
 func buildBOFSource(t *testing.T, outputDirectory string, target bofTarget, name, source string, extraArguments ...string) string {
