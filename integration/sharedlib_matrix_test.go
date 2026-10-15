@@ -27,6 +27,7 @@ var sharedLibTargets = []sharedLibTarget{
 	{goos: "linux", goarch: "arm64", ext: "so", fileProbe: "ARM aarch64"},
 	{goos: "linux", goarch: "ppc64le", ext: "so", fileProbe: "64-bit PowerPC"},
 	{goos: "linux", goarch: "riscv64", ext: "so", fileProbe: "UCB RISC-V"},
+	{goos: "netbsd", goarch: "amd64", ext: "so", fileProbe: "x86-64"},
 	{goos: "windows", goarch: "386", ext: "dll", fileProbe: "Intel 80386"},
 	{goos: "windows", goarch: "amd64", ext: "dll", fileProbe: "x86-64"},
 	{goos: "windows", goarch: "arm64", ext: "dll", fileProbe: "Aarch64"},

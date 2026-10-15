@@ -15,13 +15,6 @@ import (
 	"github.com/sliverarmory/reflektor/native"
 )
 
-func TestNetBSDGeneratedBOF(t *testing.T) {
-	requireCommand(t, "zig")
-	testLoadAndExecuteGeneratedBOF(t, bofTarget{
-		goos: "netbsd", goarch: "amd64", zigTarget: "x86_64-netbsd-none", format: "elf",
-	})
-}
-
 func TestNetBSDSharedLoadersRejectMalformedAndWrongArchitecture(t *testing.T) {
 	path := buildOneSharedLib(t, t.TempDir(), "netbsd", "amd64")
 	image, err := os.ReadFile(path)

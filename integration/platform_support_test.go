@@ -74,7 +74,7 @@ func TestPlatformSupportManifest(t *testing.T) {
 	if !slices.Equal(manifest.BOFFormatValues, []string{"elf", "macho", "coff", "xcoff", "undefined"}) {
 		t.Fatalf("bof_format_values = %v, want the declared native object formats", manifest.BOFFormatValues)
 	}
-	if !slices.Equal(manifest.RunnerValues, []string{"github-native", "github-container", "github-qemu-freebsd-amd64", "github-qemu-freebsd-arm64", "github-qemu-arm-v7", "github-qemu-ppc64le", "github-qemu-riscv64", "none"}) {
+	if !slices.Equal(manifest.RunnerValues, []string{"github-native", "github-container", "github-qemu-freebsd-amd64", "github-qemu-freebsd-arm64", "github-qemu-arm-v7", "github-qemu-ppc64le", "github-qemu-riscv64", "github-qemu-netbsd-amd64", "none"}) {
 		t.Fatalf("runner_values = %v, want the checked-in CI proof types", manifest.RunnerValues)
 	}
 
@@ -190,6 +190,7 @@ func TestPlatformSupportManifest(t *testing.T) {
 	sawLinuxRISCV64 := false
 	sawFreeBSDAMD64 := false
 	sawFreeBSDARM64 := false
+	sawNetBSDAMD64 := false
 	for _, target := range manifest.Targets {
 		if target.GOOS == "freebsd" && target.GOARCH == "amd64" {
 			if target.BOF != "runtime-emulated" || !target.BOFCGOFree ||
@@ -208,6 +209,15 @@ func TestPlatformSupportManifest(t *testing.T) {
 				t.Fatalf("freebsd/arm64 capabilities = %#v, want full QEMU runtime support with CGO-free C/Rust loading and Go c-shared n-a", target)
 			}
 			sawFreeBSDARM64 = true
+		}
+		if target.GOOS == "netbsd" && target.GOARCH == "amd64" {
+			if target.BOF != "runtime-emulated" || !target.BOFCGOFree ||
+				target.RootShared != "runtime-emulated" || target.NativeShared != "runtime-emulated" ||
+				target.RecursiveShared != "runtime-emulated" || target.GoCShared != "n-a" ||
+				!target.SharedCGOFree || target.Runner != "github-qemu-netbsd-amd64" {
+				t.Fatalf("netbsd/amd64 capabilities = %#v, want full QEMU runtime support with CGO-free C/Rust loading and Go c-shared n-a", target)
+			}
+			sawNetBSDAMD64 = true
 		}
 		if target.GOOS == "linux" && target.GOARCH == "arm" {
 			if target.GOARM != "7,hardfloat" || target.BOF != "runtime-emulated" || !target.BOFCGOFree ||
@@ -239,6 +249,9 @@ func TestPlatformSupportManifest(t *testing.T) {
 	}
 	if !sawFreeBSDAMD64 || !sawFreeBSDARM64 {
 		t.Fatalf("platform support manifest emulated FreeBSD targets: amd64=%v arm64=%v, want both", sawFreeBSDAMD64, sawFreeBSDARM64)
+	}
+	if !sawNetBSDAMD64 {
+		t.Fatal("platform support manifest must include netbsd/amd64 QEMU runtime support")
 	}
 	if !sawLinuxARM || !sawLinuxPPC64LE || !sawLinuxRISCV64 {
 		t.Fatalf("platform support manifest emulated Linux targets: arm=%v ppc64le=%v riscv64=%v, want all three", sawLinuxARM, sawLinuxPPC64LE, sawLinuxRISCV64)

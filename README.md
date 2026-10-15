@@ -22,6 +22,7 @@ separately because it can cover a host without implying shared-library parity.
 | Darwin | `amd64`, `arm64` | Mach-O (`.dylib`, bundle) | Supported | Dyld4 root-image loader with system dependencies registered through public dyld; supports no-cgo builds and avoids temp-file legacy NS APIs. |
 | FreeBSD | `amd64`, `arm64` | ELF (`.so`) | Supported | Pure Go in-memory ELF loader with FreeBSD rtld symbol resolution and real FreeBSD 15.1 QEMU runtime proof. C and Rust loading support both CGO modes; Go `c-shared` is supported on `amd64` and unavailable in the pinned Go toolchain on `arm64`. |
 | Linux | `386`, `amd64`, `arm64`, `ppc64le`, `riscv64`; ARMv7 hard-float (`GOARM=7`) | ELF (`.so`) | Supported | Pure Go in-memory ELF loader (maps PT_LOAD segments, applies relocations, resolves externals from runtime modules/`dlsym`); no `memfd`, no `/dev/shm`, no temp-file disk writes. ARMv7, ppc64le, and riscv64 receive QEMU runtime proof. |
+| NetBSD | `amd64` | ELF (`.so`) | Supported | In-memory ELF loader with NetBSD rtld symbol resolution and NetBSD 10.1 QEMU runtime proof. C and Rust loading support both CGO modes; Go `c-shared` is unavailable in Go 1.26.6. Externally linked CGO executables require the per-binary PaX MPROTECT opt-out described below. |
 | Other | - | - | Unsupported | Returns an explicit unsupported-platform error. |
 
 The machine-readable [platform capability manifest](platform-support.json)
@@ -126,6 +127,7 @@ big-endian, NOTOC/P9NOTOC calls, and external tail branches are rejected.
 | --- | --- | --- |
 | Windows `386`, `amd64`, `arm64` | COFF (`.o`) | `go(char *, int32)` using the Windows ABI |
 | FreeBSD `amd64`, `arm64` | ELF `ET_REL` (`.o`) | `go(char *, int32)` using the host ABI |
+| NetBSD `amd64` | ELF `ET_REL` (`.o`) | `go(char *, int32)` using the host ABI |
 | Linux `386`, `amd64`, `arm64`, `ppc64le`, `riscv64`; ARMv7 hard-float (`GOARM=7`, ARM-state objects) | ELF `ET_REL` (`.o`) | `go(char *, int32)` using the host ABI |
 | Darwin `amd64`, `arm64` | Mach-O `MH_OBJECT` (`.o`); legacy ELF `ET_REL` accepted for compatibility | `go(char *, int32)` using the host ABI |
 
@@ -140,6 +142,8 @@ The FreeBSD `amd64` and `arm64` rows run in FreeBSD 15.1 full-system QEMU
 guests. Each executes generated BOFs, load options, repeated and concurrent
 calls, close behavior, and all 25 objects from the pinned external BOF corpus
 without CGO.
+The NetBSD `amd64` row runs the same BOF lifecycles and all 25 pinned corpus
+objects in a NetBSD 10.1 QEMU guest without CGO.
 The ARMv7 hard-float, ppc64le, and riscv64 rows run BOFs without CGO under QEMU,
 including generated fixtures, load options, repeated and concurrent execution,
 close behavior, and the portable external BOF corpus. The same target images
@@ -299,17 +303,22 @@ Usage:
 - CGO-free FreeBSD builds import PureGo's pinned fake-CGO bridge and require
   `-gcflags=github.com/ebitengine/purego/internal/fakecgo=-std`. Native
   CGO-enabled FreeBSD builds do not require that flag.
+- CGO-free NetBSD builds use the same PureGo fake-CGO flag. On NetBSD systems
+  with PaX MPROTECT enabled, an externally linked CGO executable that loads
+  in-memory libraries must be marked with `paxctl +m /path/to/executable`
+  before launch. The NetBSD test harness marks only its CGO test and CLI
+  executables; it does not change system-wide PaX settings.
 - Reflektor normalizes common symbol naming differences where possible (for example underscore-prefixed forms).
 - The root `reflektor.Library` API remains intentionally small:
   `CallExport()`, `CallExportWithArgs()`, and `Close()`.
 - Recursive mode maps file-backed application dependencies from their bytes and
   resolves imports within the in-memory graph. Platform runtime libraries remain
   delegated to the native loader: Darwin shared-cache libraries, Windows
-  System32/API-set libraries, and FreeBSD/Linux libraries in trusted system roots. Those
+  System32/API-set libraries, and FreeBSD/NetBSD/Linux libraries in trusted system roots. Those
   libraries require OS-managed TLS, symbol versioning, loader registration, and
   other facilities that cannot be reproduced by simply reading a file—and some
   Darwin shared-cache images do not exist as standalone readable files.
-- FreeBSD and Linux custom images reject general ELF TLS, IFUNC/IRELATIVE, and RELR with
+- FreeBSD, NetBSD, and Linux custom images reject general ELF TLS, IFUNC/IRELATIVE, and RELR with
   explicit errors; those features remain available through the system-library
   carveout. Windows custom dependency cycles and delay-load import tables are
   also rejected explicitly. Darwin, FreeBSD, and Linux graph cycles are deduplicated.
@@ -390,6 +399,11 @@ recursive, and CLI lifecycles in both CGO modes. It additionally validates Go
 `c-shared` on `amd64`; Go 1.26.6 reports that build mode as unavailable on
 FreeBSD/arm64, which the capability manifest records as `n-a`. The guests use
 checksum-pinned Go 1.26.6 and Zig 0.16.0 archives.
+
+NetBSD `amd64` uses `testdata/netbsd/run-netbsd-tests.sh` inside a NetBSD 10.1
+QEMU guest. The harness validates the 25-object BOF corpus and C/Rust root,
+`native`, recursive, and CLI lifecycles in both CGO modes. It pins Go 1.26.6
+and Zig 0.16.0 by checksum and verifies Go `c-shared` is unavailable.
 
 The emulated runners reject every unexpected Go test skip and require named
 passes for the C, Rust, Go `c-shared`, legacy byte, file, recursive dependency,

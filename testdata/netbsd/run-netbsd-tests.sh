@@ -61,7 +61,6 @@ assert_passes() {
 CGO_ENABLED=0 go test "${purego_gcflags[@]}" ./bof ./internal/bofloader -count=1
 
 bof_tests=(
-	TestNetBSDGeneratedBOF
 	TestLoadAndExecuteGeneratedBOF
 	TestBOFLoadWithOptions
 	TestConcurrentBOFStreaming

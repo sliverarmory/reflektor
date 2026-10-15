@@ -37,6 +37,7 @@ var bofTargets = []bofTarget{
 	{goos: "linux", goarch: "arm64", zigTarget: "aarch64-linux-none", format: "elf"},
 	{goos: "linux", goarch: "ppc64le", zigTarget: "powerpc64le-linux-none", format: "elf"},
 	{goos: "linux", goarch: "riscv64", zigTarget: "riscv64-linux-none", format: "elf"},
+	{goos: "netbsd", goarch: "amd64", zigTarget: "x86_64-netbsd-none", format: "elf"},
 	{goos: "windows", goarch: "386", zigTarget: "x86-windows-gnu", format: "coff"},
 	{goos: "windows", goarch: "amd64", zigTarget: "x86_64-windows-gnu", format: "coff"},
 	{goos: "windows", goarch: "arm64", zigTarget: "aarch64-windows-gnu", format: "coff"},
@@ -178,11 +179,6 @@ func nativeBOFTarget() (bofTarget, bool) {
 		if target.goos == runtime.GOOS && target.goarch == runtime.GOARCH {
 			return target, true
 		}
-	}
-	if runtime.GOOS == "netbsd" && runtime.GOARCH == "amd64" {
-		// Exercise every native BOF lifecycle before claiming runtime support
-		// in the fixture matrix and capability manifest.
-		return bofTarget{goos: "netbsd", goarch: "amd64", zigTarget: "x86_64-netbsd-none", format: "elf"}, true
 	}
 	return bofTarget{}, false
 }
