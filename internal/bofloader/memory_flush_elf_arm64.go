@@ -1,4 +1,4 @@
-//go:build (freebsd || (linux && !android)) && arm64
+//go:build arm64 && (freebsd || (linux && !android && !cgo))
 
 package bofloader
 

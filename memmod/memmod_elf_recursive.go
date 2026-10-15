@@ -88,6 +88,7 @@ type linuxRecursiveFiniInfo struct {
 
 type linuxRecursiveGroup struct {
 	api       *linuxDynAPI
+	apiErr    error
 	nodes     []*linuxRecursiveNode
 	initOrder []*linuxRecursiveNode
 	systems   []*linuxRecursiveSystem
@@ -127,13 +128,13 @@ func LoadLibraryRecursive(data []byte, origin string, reader DependencyReader) (
 		return nil, fmt.Errorf("resolve recursive root origin: %w", err)
 	}
 	api, err := getLinuxDynAPI()
-	if err != nil {
+	if err != nil && !errors.Is(err, errStaticELFHost) {
 		return nil, fmt.Errorf("initialize ELF dynamic API for recursive load: %w", err)
 	}
 
 	loader := &linuxRecursiveLoader{
 		reader:       reader,
-		group:        &linuxRecursiveGroup{api: api},
+		group:        &linuxRecursiveGroup{api: api, apiErr: err},
 		byPath:       make(map[string]*linuxRecursiveNode),
 		bySONAME:     make(map[string]*linuxRecursiveNode),
 		systemByPath: make(map[string]*linuxRecursiveSystem),
@@ -349,6 +350,9 @@ func (loader *linuxRecursiveLoader) openSystem(name string, path string) (*linux
 		existing.addAlias(name)
 		return existing, nil
 	}
+	if loader.group.api == nil && loader.group.apiErr != nil {
+		return nil, loader.group.apiErr
+	}
 	handle, err := openWithDlopen(loader.group.api, path)
 	if err != nil {
 		return nil, err
@@ -495,8 +499,13 @@ func (loader *linuxRecursiveLoader) resolveExternal(requester *linuxRecursiveNod
 		}
 	}
 
-	if address, err := resolveWithLinuxHandle(loader.group.api, loader.group.api.defaultHandle, symbol.Name, symbol.Version); err == nil && address != 0 {
-		return address, nil
+	if loader.group.api != nil {
+		if address, err := resolveWithLinuxHandle(loader.group.api, loader.group.api.defaultHandle, symbol.Name, symbol.Version); err == nil && address != 0 {
+			return address, nil
+		}
+	}
+	if loader.group.apiErr != nil {
+		return 0, fmt.Errorf("resolve recursive external symbol %q: %w", symbol.Name, loader.group.apiErr)
 	}
 	return 0, fmt.Errorf("unresolved recursive external symbol %q (version=%q library=%q) for %q", symbol.Name, symbol.Version, symbol.Library, requester.path)
 }

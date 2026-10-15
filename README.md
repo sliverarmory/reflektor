@@ -300,8 +300,13 @@ Usage:
   verifies BOF execution, musl-built C and Rust images through root and
   `native`, C-to-Go callbacks, recursive C dependencies, and CLI loading on
   Linux `amd64` and `arm64` in both CGO modes. Go `c-shared` loading is covered
-  separately with `CGO_ENABLED=1`. This is Alpine/musl runtime support, not a
-  static-linking guarantee or a claim for every musl distribution.
+  separately with `CGO_ENABLED=1`. A separate statically linked,
+  `CGO_ENABLED=1` Alpine host test verifies BOFs using built-in callbacks,
+  dependency-free C images through root, `native`, and recursive loading,
+  callbacks, and the CLI on
+  `amd64` and `arm64`. Static hosts reject images requiring system-library
+  delegation with an explicit error. `CGO_ENABLED=0` hosts still link
+  dynamically to musl; this coverage does not claim every musl distribution.
 - CGO-free FreeBSD builds import PureGo's pinned fake-CGO bridge and require
   `-gcflags=github.com/ebitengine/purego/internal/fakecgo=-std`. Native
   CGO-enabled FreeBSD builds do not require that flag.

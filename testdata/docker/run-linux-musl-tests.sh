@@ -53,4 +53,33 @@ output="$(REFLEKTOR_MARKER=/tmp/reflektor-musl-marker \
 test "${output}" = ok
 test "$(cat /tmp/reflektor-musl-marker)" = ok
 
-echo "Alpine musl BOF, C/Rust library, recursive, callback, and CLI probes passed"
+# A static host has no ELF interpreter. It can execute BOFs and custom images
+# without system dependencies; images needing dlopen must fail explicitly.
+CGO_ENABLED=1 go test -c -tags musltest -ldflags '-linkmode external -extldflags -static' \
+  -o /tmp/reflektor-musl-static.test ./integration
+if readelf -l /tmp/reflektor-musl-static.test | grep -Fq INTERP; then
+  echo "static musl test host unexpectedly has an ELF interpreter" >&2
+  exit 1
+fi
+static_log=/tmp/reflektor-musl-static.log
+if ! (cd integration && /tmp/reflektor-musl-static.test -test.run '^TestAlpineStaticHost$' -test.v) \
+  >"${static_log}" 2>&1; then
+  cat "${static_log}"
+  exit 1
+fi
+cat "${static_log}"
+grep -Fq -- '--- PASS: TestAlpineStaticHost ' "${static_log}"
+if grep -Fq -- '--- SKIP:' "${static_log}"; then
+  echo "static musl runtime probe skipped a required test" >&2
+  exit 1
+fi
+
+CGO_ENABLED=1 go build -buildvcs=false -ldflags '-linkmode external -extldflags -static' \
+  -o /tmp/reflektor-musl-static-cli ./cli
+gcc -nostdlib -nodefaultlibs -shared -fPIC -O2 -Wl,-z,now \
+  -o /tmp/reflektor-musl-static-args.so testdata/c/args.c
+static_cli_output="$(/tmp/reflektor-musl-static-cli /tmp/reflektor-musl-static-args.so \
+  --call-export ReflektorArgsInit)"
+test "${static_cli_output}" = ok
+
+echo "Alpine musl dynamic and static-host BOF, library, callback, and CLI probes passed"

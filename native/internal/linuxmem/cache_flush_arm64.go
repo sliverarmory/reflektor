@@ -1,4 +1,4 @@
-//go:build arm64 && ((linux && !android) || freebsd)
+//go:build arm64 && (freebsd || (linux && !android && !cgo))
 
 package linuxmem
 
