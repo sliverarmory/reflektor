@@ -311,12 +311,12 @@ Usage:
   Darwin shared-cache images do not exist as standalone readable files.
 - FreeBSD and Linux custom images reject general ELF TLS, IFUNC/IRELATIVE, and RELR with
   explicit errors; those features remain available through the system-library
-  carveout. Windows delay-load import tables are rejected explicitly. Custom
-  dependency cycles are deduplicated on Windows, Darwin, FreeBSD, and Linux.
-  Windows recursive loads bind the whole PE graph before initialization.
+  carveout. Custom dependency cycles are deduplicated on Windows, Darwin,
+  FreeBSD, and Linux. Recursive Windows loads bind the whole PE graph,
+  including RVA-based delay imports, before TLS callbacks and `DllMain`.
   Acyclic dependencies initialize before importers; members of a cycle follow
   deterministic depth-first postorder. Unload detaches every DLL before
-  unmapping any member of a cycle.
+  unmapping any member of a cycle. Older VA-based delay descriptors are rejected.
 - After the first export call, Darwin recursive mappings remain process-resident
   because dyld retains their loader records. Reusing a Darwin install-name in a
   later load follows dyld's first-loaded identity semantics. Calls made through
@@ -338,6 +338,7 @@ C test shared libraries are generated from:
 - `reflektor/testdata/c/recursive_middle.c`
 - `reflektor/testdata/c/recursive_root.c`
 - `reflektor/testdata/c/windows_recursive_graph.c`
+- `reflektor/testdata/c/windows_delay_cycle.c`
 
 The recursive C fixture is a transitive root -> middle -> leaf graph. Its test
 checks that the graph is absent from FreeBSD `procstat -v` mappings,
@@ -348,6 +349,10 @@ checks prove the custom dependencies came from bytes captured by Reflektor.
 The Windows graph fixture additionally tests cyclic imports, an export
 forwarder back into the cycle, and a shared-leaf diamond. It checks initializer
 order, repeated calls after source files are hidden, and reverse detach order.
+The Windows delay-cycle fixture links a normal import, an RVA-based delay
+import, and an export forwarder back to the root DLL. It checks graph binding
+before initialization, calls after the source directory is hidden, and detach
+while all three images remain mapped.
 
 The Rust fixtures are built from `reflektor/testdata/rust` and
 `reflektor/testdata/rust/native_args.rs`. The HTTPS fixture exports `StartW`,

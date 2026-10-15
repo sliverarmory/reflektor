@@ -3,6 +3,7 @@
 package memmod
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -212,58 +213,163 @@ func (session *recursiveLoadSession) free() {
 }
 
 func (module *Module) buildImportTableRecursive() error {
-	if delay := module.headerDirectory(IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT); delay.Size != 0 {
-		return errors.New("recursive loading does not support delay-load imports")
-	}
 	directory := module.headerDirectory(IMAGE_DIRECTORY_ENTRY_IMPORT)
-	if directory.Size == 0 {
+	if directory.Size != 0 {
+		importDesc := (*IMAGE_IMPORT_DESCRIPTOR)(a2p(module.codeBase + uintptr(directory.VirtualAddress)))
+		for importDesc.Name != 0 {
+			name := windows.BytePtrToString((*byte)(a2p(module.codeBase + uintptr(importDesc.Name))))
+			dependency, err := module.recursive.resolveImport(module, name)
+			if err != nil {
+				return fmt.Errorf("resolve dependency %q for %q: %w", name, module.recursivePath, err)
+			}
+
+			var thunkRef, funcRef *uintptr
+			if importDesc.OriginalFirstThunk() != 0 {
+				thunkRef = (*uintptr)(a2p(module.codeBase + uintptr(importDesc.OriginalFirstThunk())))
+				funcRef = (*uintptr)(a2p(module.codeBase + uintptr(importDesc.FirstThunk)))
+			} else {
+				thunkRef = (*uintptr)(a2p(module.codeBase + uintptr(importDesc.FirstThunk)))
+				funcRef = (*uintptr)(a2p(module.codeBase + uintptr(importDesc.FirstThunk)))
+			}
+
+			for *thunkRef != 0 {
+				var resolved resolvedWindowsExport
+				if IMAGE_SNAP_BY_ORDINAL(*thunkRef) {
+					ordinal := uint16(IMAGE_ORDINAL(*thunkRef))
+					resolved, err = dependency.procAddressByOrdinal(ordinal, make(map[string]struct{}))
+				} else {
+					thunkData := (*IMAGE_IMPORT_BY_NAME)(a2p(module.codeBase + *thunkRef))
+					functionName := windows.BytePtrToString(&thunkData.Name[0])
+					resolved, err = dependency.procAddressByName(functionName, make(map[string]struct{}))
+				}
+				if err != nil {
+					if dependency.handle != 0 {
+						_ = windows.FreeLibrary(dependency.handle)
+					}
+					return fmt.Errorf("resolve import from %q: %w", name, err)
+				}
+				*funcRef = resolved.address
+				thunkRef = (*uintptr)(a2p(uintptr(unsafe.Pointer(thunkRef)) + unsafe.Sizeof(*thunkRef)))
+				funcRef = (*uintptr)(a2p(uintptr(unsafe.Pointer(funcRef)) + unsafe.Sizeof(*funcRef)))
+			}
+
+			if dependency.handle != 0 {
+				module.modules = append(module.modules, dependency.handle)
+			}
+			importDesc = (*IMAGE_IMPORT_DESCRIPTOR)(a2p(uintptr(unsafe.Pointer(importDesc)) + unsafe.Sizeof(*importDesc)))
+		}
+	}
+	return module.buildDelayImportTableRecursive()
+}
+
+// Delay imports are bound before TLS and DllMain, just like regular imports.
+// The delay helper is never entered, so dependencies loaded from bytes stay in
+// the recursive graph and are released in the graph's normal reverse order.
+func (module *Module) buildDelayImportTableRecursive() error {
+	directory := module.headerDirectory(IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT)
+	if directory.VirtualAddress == 0 && directory.Size == 0 {
 		return nil
 	}
+	const descriptorSize = uint32(unsafe.Sizeof(IMAGE_DELAYLOAD_DESCRIPTOR{}))
+	if directory.Size < descriptorSize || directory.Size%descriptorSize != 0 ||
+		!module.imageRVAValid(directory.VirtualAddress, directory.Size) {
+		return errors.New("malformed delay-load directory")
+	}
 
-	importDesc := (*IMAGE_IMPORT_DESCRIPTOR)(a2p(module.codeBase + uintptr(directory.VirtualAddress)))
-	for importDesc.Name != 0 {
-		name := windows.BytePtrToString((*byte)(a2p(module.codeBase + uintptr(importDesc.Name))))
+	terminated := false
+	for offset := uint32(0); offset < directory.Size; offset += descriptorSize {
+		descriptor := (*IMAGE_DELAYLOAD_DESCRIPTOR)(a2p(module.codeBase + uintptr(directory.VirtualAddress+offset)))
+		if *descriptor == (IMAGE_DELAYLOAD_DESCRIPTOR{}) {
+			terminated = true
+			break
+		}
+		if descriptor.Attributes != 1 {
+			return fmt.Errorf("unsupported delay-load descriptor attributes %#x", descriptor.Attributes)
+		}
+		if descriptor.DllNameRVA == 0 || descriptor.ImportAddressTableRVA == 0 || descriptor.ImportNameTableRVA == 0 {
+			return errors.New("delay-load descriptor is missing a required RVA")
+		}
+		name, err := module.imageCString(descriptor.DllNameRVA)
+		if err != nil {
+			return fmt.Errorf("read delay-load dependency name: %w", err)
+		}
 		dependency, err := module.recursive.resolveImport(module, name)
 		if err != nil {
-			return fmt.Errorf("resolve dependency %q for %q: %w", name, module.recursivePath, err)
+			return fmt.Errorf("resolve delay-load dependency %q for %q: %w", name, module.recursivePath, err)
 		}
-
-		var thunkRef, funcRef *uintptr
-		if importDesc.OriginalFirstThunk() != 0 {
-			thunkRef = (*uintptr)(a2p(module.codeBase + uintptr(importDesc.OriginalFirstThunk())))
-			funcRef = (*uintptr)(a2p(module.codeBase + uintptr(importDesc.FirstThunk)))
-		} else {
-			thunkRef = (*uintptr)(a2p(module.codeBase + uintptr(importDesc.FirstThunk)))
-			funcRef = (*uintptr)(a2p(module.codeBase + uintptr(importDesc.FirstThunk)))
-		}
-
-		for *thunkRef != 0 {
-			var resolved resolvedWindowsExport
-			if IMAGE_SNAP_BY_ORDINAL(*thunkRef) {
-				ordinal := uint16(IMAGE_ORDINAL(*thunkRef))
-				resolved, err = dependency.procAddressByOrdinal(ordinal, make(map[string]struct{}))
-			} else {
-				thunkData := (*IMAGE_IMPORT_BY_NAME)(a2p(module.codeBase + *thunkRef))
-				functionName := windows.BytePtrToString(&thunkData.Name[0])
-				resolved, err = dependency.procAddressByName(functionName, make(map[string]struct{}))
+		if err := module.bindDelayImports(descriptor, dependency); err != nil {
+			if dependency.handle != 0 {
+				_ = windows.FreeLibrary(dependency.handle)
 			}
-			if err != nil {
-				if dependency.handle != 0 {
-					_ = windows.FreeLibrary(dependency.handle)
-				}
-				return fmt.Errorf("resolve import from %q: %w", name, err)
-			}
-			*funcRef = resolved.address
-			thunkRef = (*uintptr)(a2p(uintptr(unsafe.Pointer(thunkRef)) + unsafe.Sizeof(*thunkRef)))
-			funcRef = (*uintptr)(a2p(uintptr(unsafe.Pointer(funcRef)) + unsafe.Sizeof(*funcRef)))
+			return fmt.Errorf("bind delay-load dependency %q: %w", name, err)
 		}
-
 		if dependency.handle != 0 {
 			module.modules = append(module.modules, dependency.handle)
 		}
-		importDesc = (*IMAGE_IMPORT_DESCRIPTOR)(a2p(uintptr(unsafe.Pointer(importDesc)) + unsafe.Sizeof(*importDesc)))
+	}
+	if !terminated {
+		return errors.New("unterminated delay-load directory")
 	}
 	return nil
+}
+
+func (module *Module) bindDelayImports(descriptor *IMAGE_DELAYLOAD_DESCRIPTOR, dependency recursiveImport) error {
+	wordSize := uint32(unsafe.Sizeof(uintptr(0)))
+	for index := uint32(0); ; index++ {
+		entryOffset := uint64(index) * uint64(wordSize)
+		nameRVA := uint64(descriptor.ImportNameTableRVA) + entryOffset
+		addressRVA := uint64(descriptor.ImportAddressTableRVA) + entryOffset
+		if nameRVA > uint64(^uint32(0)) || addressRVA > uint64(^uint32(0)) ||
+			!module.imageRVAValid(uint32(nameRVA), wordSize) || !module.imageRVAValid(uint32(addressRVA), wordSize) {
+			return errors.New("unterminated or out-of-range delay-load thunk table")
+		}
+		nameThunk := *(*uintptr)(a2p(module.codeBase + uintptr(nameRVA)))
+		if nameThunk == 0 {
+			return nil
+		}
+		var (
+			resolved resolvedWindowsExport
+			err      error
+		)
+		if IMAGE_SNAP_BY_ORDINAL(nameThunk) {
+			resolved, err = dependency.procAddressByOrdinal(uint16(IMAGE_ORDINAL(nameThunk)), make(map[string]struct{}))
+		} else {
+			if nameThunk > uintptr(^uint32(0)) || !module.imageRVAValid(uint32(nameThunk), 3) {
+				return fmt.Errorf("out-of-range delay-load import name RVA %#x", nameThunk)
+			}
+			functionName, nameErr := module.imageCString(uint32(nameThunk) + 2) // skip the 16-bit hint
+			if nameErr != nil {
+				return nameErr
+			}
+			resolved, err = dependency.procAddressByName(functionName, make(map[string]struct{}))
+		}
+		if err != nil {
+			return err
+		}
+		*(*uintptr)(a2p(module.codeBase + uintptr(addressRVA))) = resolved.address
+	}
+}
+
+func (module *Module) imageRVAValid(rva uint32, size uint32) bool {
+	imageSize := uint64(module.headers.OptionalHeader.SizeOfImage)
+	return rva != 0 && uint64(rva)+uint64(size) <= imageSize
+}
+
+func (module *Module) imageCString(rva uint32) (string, error) {
+	if !module.imageRVAValid(rva, 1) {
+		return "", fmt.Errorf("out-of-range image string RVA %#x", rva)
+	}
+	remaining := uint64(module.headers.OptionalHeader.SizeOfImage) - uint64(rva)
+	const maxPEImportName = 1 << 15
+	if remaining > maxPEImportName {
+		remaining = maxPEImportName
+	}
+	data := unsafe.Slice((*byte)(a2p(module.codeBase+uintptr(rva))), int(remaining))
+	end := bytes.IndexByte(data, 0)
+	if end < 0 {
+		return "", fmt.Errorf("unterminated image string at RVA %#x", rva)
+	}
+	return string(data[:end]), nil
 }
 
 func (session *recursiveLoadSession) resolveImport(importer *Module, name string) (recursiveImport, error) {
