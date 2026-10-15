@@ -58,6 +58,7 @@ func newRootCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&recursive, "recursive", false, "Load non-system dependencies from bytes before calling the export")
 	cmd.Flags().StringArrayVar(&rawArgs, "arg", nil, "Machine-word integer argument (repeat up to three times; decimal or 0x hex)")
 	cmd.Flags().BoolVar(&printResult, "print-result", false, "Call a native export and print its machine-word result, including with zero arguments")
+	cmd.AddCommand(newBOFCommand())
 	return cmd
 }
 

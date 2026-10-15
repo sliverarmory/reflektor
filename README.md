@@ -281,6 +281,7 @@ Usage:
 ```bash
 ./reflektor <shared-library-path> [--call-export StartW] [--recursive]
 ./reflektor <shared-library-path> --call-export MyFunction --arg 0x10 --arg 25 --print-result
+./reflektor bof <object-file-path> --bof-arg int32:42 --bof-arg string:hello
 ```
 
 `--call-export` defaults to `StartW`. `--recursive` loads non-system
@@ -290,6 +291,11 @@ export. Arguments automatically print the machine-word return value;
 `--print-result` also prints it for a zero-argument native export. Without
 these options, the CLI retains its original zero-argument call behavior,
 including Go c-shared exports. The CLI does not encode strings or pointers.
+The `bof` subcommand runs a native BOF and prints each output record as
+`type=<channel> data=<quoted bytes>`. Repeat `--bof-arg` in the BOF's expected
+argument order; supported prefixes are `int32:`, `int16:`, `string:`, `utf16:`,
+and `hex:` for raw bytes. Integers accept decimal or `0x` hexadecimal. Use
+`--entry` for a non-default BOF entry symbol.
 
 ## Behavior Notes
 
