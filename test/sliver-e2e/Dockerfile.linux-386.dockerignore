@@ -6,6 +6,9 @@
 !cli/**
 !memmod/
 !memmod/**
+!internal/
+!internal/elfrelr/
+!internal/elfrelr/**
 !sliver-e2e-checkout/
 !sliver-e2e-checkout/**
 .git
