@@ -17,6 +17,11 @@ import (
 
 var ErrLibraryClosed = errors.New("reflektor: library is closed")
 
+// ErrDependencyNotFound signals that a recursive dependency resolver could not
+// supply an application library. The platform loader may then try a native
+// system-library fallback for that import.
+var ErrDependencyNotFound = memmod.ErrDependencyNotFound
+
 // ErrGoExportArgumentsUnsupported reports that CallExportWithArgs was used on
 // a Go c-shared image. Use CallExport for its zero-argument exports instead.
 var ErrGoExportArgumentsUnsupported = memmod.ErrGoExportArgumentsUnsupported
@@ -28,6 +33,29 @@ const MaxExportArguments = memmod.MaxExportArguments
 var memoryOriginSequence atomic.Uint64
 
 const maxRecursiveDependencyFileSize = int64(512 << 20)
+
+// DependencyRequest describes an import encountered during a recursive load.
+// ImporterPath is the root origin or the Path returned for its parent image.
+// SearchPaths contain the importer's loader search paths, including unexpanded
+// origin tokens such as $ORIGIN and @loader_path where applicable.
+type DependencyRequest struct {
+	Name         string
+	ImporterPath string
+	SearchPaths  []string
+}
+
+// Dependency supplies an application library's bytes and stable absolute path.
+// Path identifies the image within a recursive graph and supplies the origin
+// directory for its own imports. No file is read at Path.
+type Dependency struct {
+	Data []byte
+	Path string
+}
+
+// DependencyResolver returns bytes for an imported application library. It may
+// return an error wrapping ErrDependencyNotFound to allow the platform loader
+// to try its native system-library fallback. Other errors stop the load.
+type DependencyResolver func(DependencyRequest) (Dependency, error)
 
 type Library struct {
 	mu     sync.RWMutex
@@ -72,6 +100,53 @@ func LoadLibraryRecursive(data []byte) (*Library, error) {
 		return nil, fmt.Errorf("reflektor: recursively load library: %w", err)
 	}
 	return &Library{module: module}, nil
+}
+
+// LoadLibraryRecursiveWithResolver loads a root image and resolves its
+// non-system dependencies from caller-supplied bytes. origin must be an
+// absolute, stable path identifying the root, but the file need not exist.
+// The resolver must return a stable absolute Path for each dependency; this
+// path likewise need not exist. Each returned image is limited to 512 MiB,
+// and the platform loader also limits the complete graph to 1 GiB. Reflektor
+// copies returned bytes before handing them to the loader. Known runtime
+// libraries remain delegated to the OS loader.
+func LoadLibraryRecursiveWithResolver(data []byte, origin string, resolver DependencyResolver) (*Library, error) {
+	if len(data) == 0 {
+		return nil, errors.New("reflektor: empty library image")
+	}
+	if !filepath.IsAbs(origin) {
+		return nil, fmt.Errorf("reflektor: recursive root origin must be an absolute path: %q", origin)
+	}
+	if resolver == nil {
+		return nil, errors.New("reflektor: recursive dependency resolver is nil")
+	}
+
+	reader := func(request memmod.DependencyRequest) (memmod.Dependency, error) {
+		dependency, err := resolver(DependencyRequest{
+			Name:         request.Name,
+			ImporterPath: request.ImporterPath,
+			SearchPaths:  append([]string(nil), request.SearchPaths...),
+		})
+		if err != nil {
+			return memmod.Dependency{}, err
+		}
+		return checkedResolvedDependency(dependency, request, maxRecursiveDependencyFileSize)
+	}
+	module, err := memmod.LoadLibraryRecursive(data, origin, reader)
+	if err != nil {
+		return nil, fmt.Errorf("reflektor: recursively load library with resolver: %w", err)
+	}
+	return &Library{module: module}, nil
+}
+
+func checkedResolvedDependency(dependency Dependency, request memmod.DependencyRequest, maxSize int64) (memmod.Dependency, error) {
+	if !filepath.IsAbs(dependency.Path) {
+		return memmod.Dependency{}, fmt.Errorf("dependency %q imported by %q has a non-absolute path %q", request.Name, request.ImporterPath, dependency.Path)
+	}
+	if int64(len(dependency.Data)) > maxSize {
+		return memmod.Dependency{}, fmt.Errorf("dependency %q imported by %q exceeds %d bytes", request.Name, request.ImporterPath, maxSize)
+	}
+	return memmod.Dependency{Data: append([]byte(nil), dependency.Data...), Path: filepath.Clean(dependency.Path)}, nil
 }
 
 // LoadLibraryFile loads a shared library image from disk into memory.

@@ -8,8 +8,8 @@ import (
 )
 
 type closeTestModule struct {
-	call func()
-	free func()
+	call  func()
+	free  func()
 	frees atomic.Int32
 }
 

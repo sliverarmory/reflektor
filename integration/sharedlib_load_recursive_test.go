@@ -5,10 +5,13 @@ package reflektor_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,7 +27,7 @@ const (
 func TestLoadLibraryRecursiveDependencies(t *testing.T) {
 	requireCommand(t, "zig")
 
-	for _, mode := range []string{"file", "bytes"} {
+	for _, mode := range []string{"file", "bytes", "resolver"} {
 		mode := mode
 		t.Run(mode, func(t *testing.T) {
 			stateDir := t.TempDir()
@@ -77,8 +80,9 @@ func TestRecursiveFixtureSubprocess(t *testing.T) {
 	}
 
 	var (
-		library *reflektor.Library
-		err     error
+		library          *reflektor.Library
+		err              error
+		hiddenBeforeLoad bool
 	)
 	switch mode {
 	case "file":
@@ -92,6 +96,64 @@ func TestRecursiveFixtureSubprocess(t *testing.T) {
 			t.Fatalf("change to recursive fixture directory: %v", err)
 		}
 		library, err = reflektor.LoadLibraryRecursive(rootData)
+	case "resolver":
+		rootData, readErr := os.ReadFile(rootPath)
+		if readErr != nil {
+			t.Fatalf("read resolver root bytes: %v", readErr)
+		}
+		images := make(map[string][]byte)
+		for _, name := range []string{"middle", "leaf"} {
+			dependencyPath := filepath.Join(filepath.Dir(rootPath), "libreflektor_"+name+filepath.Ext(rootPath))
+			image, readErr := os.ReadFile(dependencyPath)
+			if readErr != nil {
+				t.Fatalf("read resolver %s bytes: %v", name, readErr)
+			}
+			images[strings.ToLower(filepath.Base(dependencyPath))] = image
+		}
+		if err := os.Rename(filepath.Dir(rootPath), hiddenDir); err != nil {
+			t.Fatalf("hide recursive dependency files before load: %v", err)
+		}
+		hiddenBeforeLoad = true
+		if _, missingErr := reflektor.LoadLibraryRecursiveWithResolver(rootData, rootPath, func(reflektor.DependencyRequest) (reflektor.Dependency, error) {
+			return reflektor.Dependency{}, reflektor.ErrDependencyNotFound
+		}); missingErr == nil {
+			t.Fatal("recursive resolver accepted a missing dependency")
+		}
+		terminalErr := errors.New("resolver storage failed")
+		if _, resolveErr := reflektor.LoadLibraryRecursiveWithResolver(rootData, rootPath, func(reflektor.DependencyRequest) (reflektor.Dependency, error) {
+			return reflektor.Dependency{}, terminalErr
+		}); !errors.Is(resolveErr, terminalErr) {
+			t.Fatalf("resolver terminal error = %v, want storage failure", resolveErr)
+		}
+		requests := make(map[string]int)
+		var ordered []string
+		middle := "libreflektor_middle" + filepath.Ext(rootPath)
+		leaf := "libreflektor_leaf" + filepath.Ext(rootPath)
+		library, err = reflektor.LoadLibraryRecursiveWithResolver(rootData, rootPath, func(request reflektor.DependencyRequest) (reflektor.Dependency, error) {
+			name := strings.ToLower(filepath.Base(request.Name))
+			image, ok := images[name]
+			if !ok {
+				return reflektor.Dependency{}, reflektor.ErrDependencyNotFound
+			}
+			requests[name]++
+			ordered = append(ordered, name)
+			wantImporter := rootPath
+			if name == leaf {
+				wantImporter = filepath.Join(filepath.Dir(rootPath), middle)
+			}
+			if request.ImporterPath != wantImporter {
+				t.Errorf("importer for %q = %q, want %q", request.Name, request.ImporterPath, wantImporter)
+			}
+			return reflektor.Dependency{Data: image, Path: filepath.Join(filepath.Dir(rootPath), name)}, nil
+		})
+		for name := range images {
+			if requests[name] != 1 {
+				t.Errorf("resolver requests for %q = %d, want 1", name, requests[name])
+			}
+		}
+		if want := []string{middle, leaf}; !reflect.DeepEqual(ordered, want) {
+			t.Errorf("resolver order = %#v, want %#v", ordered, want)
+		}
 	default:
 		t.Fatalf("unknown recursive helper mode %q", mode)
 	}
@@ -110,8 +172,10 @@ func TestRecursiveFixtureSubprocess(t *testing.T) {
 	}
 
 	assertRecursiveDependenciesNotNativeLoaded(t, filepath.Dir(rootPath))
-	if err := os.Rename(filepath.Dir(rootPath), hiddenDir); err != nil {
-		t.Fatalf("hide recursive dependency files after load: %v", err)
+	if !hiddenBeforeLoad {
+		if err := os.Rename(filepath.Dir(rootPath), hiddenDir); err != nil {
+			t.Fatalf("hide recursive dependency files after load: %v", err)
+		}
 	}
 	if err := library.CallExport("StartW"); err != nil {
 		t.Fatalf("call recursive StartW after hiding dependencies: %v", err)
