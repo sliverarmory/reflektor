@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -16,24 +17,24 @@ import (
 type recursiveLoadState uint8
 
 const (
-	recursiveLoadLoading recursiveLoadState = iota
+	recursiveLoadMapped recursiveLoadState = iota
 	recursiveLoadReady
 	windowsMaxRecursiveModules = 512
 	windowsMaxRecursiveBytes   = uint64(1 << 30)
 )
 
 type recursiveModuleRecord struct {
-	key    string
-	path   string
-	state  recursiveLoadState
-	module *Module
+	key          string
+	path         string
+	state        recursiveLoadState
+	module       *Module
+	dependencies []*Module
 }
 
 type recursiveLoadSession struct {
 	rootPath   string
 	reader     DependencyReader
 	records    map[string]*recursiveModuleRecord
-	stack      []*recursiveModuleRecord
 	loaded     []*Module
 	pinned     bool
 	freed      bool
@@ -81,15 +82,20 @@ func LoadLibraryRecursive(data []byte, origin string, reader DependencyReader) (
 		session.free()
 		return nil, err
 	}
+	if err := session.bindModules(); err != nil {
+		session.free()
+		return nil, err
+	}
+	if err := session.initializeModules(module); err != nil {
+		session.free()
+		return nil, err
+	}
 	module.recursiveOwner = true
 	return module, nil
 }
 
 func (session *recursiveLoadSession) loadModule(data []byte, path string, key string) (*Module, error) {
 	if record, ok := session.records[key]; ok {
-		if record.state == recursiveLoadLoading {
-			return nil, session.cycleError(record)
-		}
 		return record.module, nil
 	}
 	if len(session.records) >= windowsMaxRecursiveModules {
@@ -98,52 +104,76 @@ func (session *recursiveLoadSession) loadModule(data []byte, path string, key st
 	if uint64(len(data)) > windowsMaxRecursiveBytes-session.totalBytes {
 		return nil, fmt.Errorf("recursive PE graph exceeds %d bytes", windowsMaxRecursiveBytes)
 	}
-	session.totalBytes += uint64(len(data))
-
-	record := &recursiveModuleRecord{key: key, path: path, state: recursiveLoadLoading}
-	session.records[key] = record
-	session.stack = append(session.stack, record)
-	defer func() {
-		session.stack = session.stack[:len(session.stack)-1]
-	}()
-
-	var candidate *Module
-	module, err := loadLibrary(data, func(module *Module) error {
-		candidate = module
-		module.recursive = session
-		module.recursivePath = path
-		return module.buildImportTableRecursive()
-	})
+	module, err := loadLibrary(data, nil)
 	if err != nil {
-		if candidate != nil && candidate.goRuntime && candidate.runtimeStarted {
-			session.pinned = true
-		}
-		return nil, fmt.Errorf("load recursive module %q: %w", path, err)
+		return nil, fmt.Errorf("map recursive module %q: %w", path, err)
 	}
-
-	record.state = recursiveLoadReady
-	record.module = module
+	module.recursive = session
+	module.recursivePath = path
+	// A back edge can resolve exports from a mapped image before its imports
+	// have been bound or any initializer has executed.
+	_ = module.buildNameExports()
+	session.records[key] = &recursiveModuleRecord{key: key, path: path, state: recursiveLoadMapped, module: module}
 	session.loaded = append(session.loaded, module)
-	if module.goRuntime && module.runtimeStarted {
-		session.pinned = true
-	}
+	session.totalBytes += uint64(len(data))
 	return module, nil
 }
 
-func (session *recursiveLoadSession) cycleError(record *recursiveModuleRecord) error {
-	start := 0
-	for i := range session.stack {
-		if session.stack[i].key == record.key {
-			start = i
-			break
+func (session *recursiveLoadSession) bindModules() error {
+	// Resolving imports and export forwarders can discover more modules. Keep
+	// mapping and binding until the graph is closed, before calling any code.
+	for i := 0; i < len(session.loaded); i++ {
+		module := session.loaded[i]
+		if err := module.buildImportTableRecursive(); err != nil {
+			return fmt.Errorf("bind recursive module %q: %w", module.recursivePath, err)
+		}
+		if err := module.resolveRecursiveForwarders(); err != nil {
+			return fmt.Errorf("resolve forwarded exports in %q: %w", module.recursivePath, err)
 		}
 	}
-	cycle := make([]string, 0, len(session.stack)-start+1)
-	for _, entry := range session.stack[start:] {
-		cycle = append(cycle, entry.path)
+	return nil
+}
+
+func (session *recursiveLoadSession) initializationOrder(root *Module) []*Module {
+	order := make([]*Module, 0, len(session.loaded))
+	seen := make(map[*Module]bool, len(session.loaded))
+	var visit func(*Module)
+	visit = func(module *Module) {
+		if seen[module] {
+			return
+		}
+		seen[module] = true
+		if record := session.records[strings.ToLower(module.recursivePath)]; record != nil {
+			for _, dependency := range record.dependencies {
+				visit(dependency)
+			}
+		}
+		order = append(order, module)
 	}
-	cycle = append(cycle, record.path)
-	return fmt.Errorf("recursive dependency cycle: %s", strings.Join(cycle, " -> "))
+	visit(root)
+	for _, module := range session.loaded {
+		visit(module)
+	}
+	return order
+}
+
+func (session *recursiveLoadSession) initializeModules(root *Module) error {
+	for _, module := range session.loaded {
+		if err := module.prepareMappedLibrary(); err != nil {
+			return fmt.Errorf("prepare recursive module %q: %w", module.recursivePath, err)
+		}
+	}
+	session.loaded = session.initializationOrder(root)
+	for _, module := range session.loaded {
+		if module.goRuntime {
+			session.pinned = true
+		}
+		if err := module.initializeMappedLibrary(); err != nil {
+			return fmt.Errorf("initialize recursive module %q: %w", module.recursivePath, err)
+		}
+		session.records[strings.ToLower(module.recursivePath)].state = recursiveLoadReady
+	}
+	return nil
 }
 
 func (session *recursiveLoadSession) free() {
@@ -161,6 +191,15 @@ func (session *recursiveLoadSession) free() {
 			}
 		}
 		return
+	}
+	// Detach every image before unmapping any image. A DLL in a cycle may call
+	// another member from DllMain(DLL_PROCESS_DETACH).
+	for i := len(session.loaded) - 1; i >= 0; i-- {
+		module := session.loaded[i]
+		if module.initialized {
+			_, _, _ = syscall.Syscall(module.entry, 3, module.codeBase, uintptr(DLL_PROCESS_DETACH), 0)
+			module.initialized = false
+		}
 	}
 	for i := len(session.loaded) - 1; i >= 0; i-- {
 		module := session.loaded[i]
@@ -259,6 +298,18 @@ func (session *recursiveLoadSession) resolveImport(importer *Module, name string
 	module, err := session.loadModule(dependency.Data, path, key)
 	if err != nil {
 		return recursiveImport{}, err
+	}
+	if importerRecord := session.records[strings.ToLower(importer.recursivePath)]; importerRecord != nil {
+		found := false
+		for _, existing := range importerRecord.dependencies {
+			if existing == module {
+				found = true
+				break
+			}
+		}
+		if !found {
+			importerRecord.dependencies = append(importerRecord.dependencies, module)
+		}
 	}
 	return recursiveImport{module: module}, nil
 }
