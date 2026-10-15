@@ -1,4 +1,4 @@
-//go:build (linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)) || (freebsd && (amd64 || arm64))
+//go:build (linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)) || (freebsd && (amd64 || arm64)) || (netbsd && amd64)
 
 package memmod
 
@@ -176,6 +176,9 @@ func LoadLibrary(data []byte) (*Module, error) {
 func prepareLinuxGoRuntimeTLS(f *elf.File) (bool, uintptr, int64, error) {
 	if f == nil || f.Section(".go.buildinfo") == nil {
 		return false, 0, 0, nil
+	}
+	if runtime.GOOS == "netbsd" {
+		return false, 0, 0, errors.New("Go c-shared images are unsupported on netbsd/amd64")
 	}
 
 	var tls *elf.Prog
@@ -1143,6 +1146,9 @@ func commonLinuxDependencies() []string {
 			"libthr.so.3",
 		}
 	}
+	if runtime.GOOS == "netbsd" {
+		return []string{"libc.so.12", "libpthread.so.1"}
+	}
 
 	deps := []string{
 		"libc.so.6",
@@ -1174,7 +1180,7 @@ func (resolver *symbolResolver) ensureLibraryLoaded(name string) error {
 	if resolver.hasModule(name) {
 		return nil
 	}
-	if runtime.GOOS == "freebsd" {
+	if runtime.GOOS == "freebsd" || runtime.GOOS == "netbsd" {
 		if handle, opened := resolver.opened[name]; opened && handle != 0 {
 			return nil
 		}
@@ -1192,7 +1198,7 @@ func (resolver *symbolResolver) ensureLibraryLoaded(name string) error {
 			return nil
 		}
 		if handle, opened := resolver.opened[candidate]; opened {
-			if runtime.GOOS == "freebsd" && handle != 0 {
+			if (runtime.GOOS == "freebsd" || runtime.GOOS == "netbsd") && handle != 0 {
 				return nil
 			}
 			continue
@@ -1208,8 +1214,8 @@ func (resolver *symbolResolver) ensureLibraryLoaded(name string) error {
 		}
 		resolver.opened[candidate] = handle
 		resolver.opened[name] = handle
-		if runtime.GOOS == "freebsd" {
-			// FreeBSD does not mount procfs by default, so a successful dlopen
+		if runtime.GOOS == "freebsd" || runtime.GOOS == "netbsd" {
+			// BSD hosts do not mount procfs by default, so a successful dlopen
 			// cannot be confirmed by refreshing /proc/self/maps. The nonzero
 			// handle is the authoritative success result.
 			return nil
@@ -1283,6 +1289,15 @@ func dlopenCandidates(name string) []string {
 		case "libpthread.so", "libthr.so":
 			add("libthr.so.3")
 		}
+	} else if runtime.GOOS == "netbsd" {
+		switch base {
+		case "libc.so":
+			add("libc.so.12")
+		case "libm.so":
+			add("libm.so.0")
+		case "libpthread.so":
+			add("libpthread.so.1")
+		}
 	} else {
 		switch base {
 		case "libc.so":
@@ -1313,6 +1328,9 @@ func linuxLibrarySearchDirs() []string {
 			"/libexec",
 			"/usr/libexec",
 		}
+	}
+	if runtime.GOOS == "netbsd" {
+		return []string{"/lib", "/usr/lib", "/usr/pkg/lib", "/usr/X11R7/lib"}
 	}
 
 	dirs := []string{"/lib", "/lib64", "/usr/lib", "/usr/lib64"}

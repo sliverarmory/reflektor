@@ -95,6 +95,8 @@ func zigTargetFor(goos string, goarch string) (string, bool) {
 		return "x86_64-freebsd", true
 	case goos == "freebsd" && goarch == "arm64":
 		return "aarch64-freebsd", true
+	case goos == "netbsd" && goarch == "amd64":
+		return "x86_64-netbsd", true
 	case goos == "linux" && goarch == "386":
 		return "x86-linux-gnu", true
 	case goos == "linux" && goarch == "amd64":
@@ -122,7 +124,7 @@ func sharedLibExt(goos string) (string, error) {
 	switch goos {
 	case "darwin":
 		return "dylib", nil
-	case "freebsd", "linux":
+	case "freebsd", "netbsd", "linux":
 		return "so", nil
 	case "windows":
 		return "dll", nil

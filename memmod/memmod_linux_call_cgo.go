@@ -1,4 +1,4 @@
-//go:build cgo && ((linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)) || (freebsd && (amd64 || arm64)))
+//go:build cgo && ((linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)) || (freebsd && (amd64 || arm64)) || (netbsd && amd64))
 
 package memmod
 
@@ -7,6 +7,9 @@ package memmod
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(__NetBSD__)
+#include <lwp.h>
+#endif
 
 typedef uintptr_t (*reflektor_fn0)(void);
 typedef uintptr_t (*reflektor_fn1)(uintptr_t);
@@ -79,6 +82,10 @@ static uintptr_t reflektor_thread_pointer(void) {
 	// __builtin_thread_pointer on ppc64le, so read the fixed ABI register.
 	register uintptr_t thread_pointer __asm__("r13");
 	return thread_pointer;
+#elif defined(__NetBSD__) && defined(__x86_64__)
+	// NetBSD exposes the thread pointer through its LWP API;
+	// its GCC 10 toolchain does not provide __builtin_thread_pointer.
+	return (uintptr_t)_lwp_getprivate();
 #else
 	return (uintptr_t)__builtin_thread_pointer();
 #endif

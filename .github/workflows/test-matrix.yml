@@ -144,6 +144,73 @@ jobs:
             exit 1
           fi
 
+  netbsd-amd64:
+    name: netbsd-amd64-qemu
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out Situational Awareness BOF corpus
+        uses: actions/checkout@v4
+        with:
+          repository: sliverarmory/Situational-Awareness-BOFs
+          ref: 693174ff525595c5ec61b08fdccb5f057ad52c94
+          path: test/corpus/Situational-Awareness-BOFs
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Prepare and build NetBSD BOF corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash testdata/corpus/prepare-situational-awareness-netbsd.sh "${REFLEKTOR_BOF_CORPUS_DIR}"
+          "${REFLEKTOR_BOF_CORPUS_DIR}/scripts/build-target.sh" netbsd amd64
+      - name: Start NetBSD 10.1 amd64 VM
+        uses: cross-platform-actions/action@5ea7e8e4677bd726033a10b094ba1c5762b15dee # v1.3.0
+        with:
+          operating_system: netbsd
+          architecture: x86-64
+          version: "10.1"
+          shell: sh
+          memory: 6G
+          cpu_count: 4
+          environment_variables: REFLEKTOR_BOF_CORPUS_DIR
+      - name: Install pinned NetBSD toolchains
+        shell: cpa.sh {0} --sync-files runner-to-vm
+        run: |
+          set -eu
+          export PATH="/usr/pkg/bin:/usr/pkg/sbin:/usr/bin:/bin:/sbin"
+          printf '%s\n' 'https://cdn.NetBSD.org/pub/pkgsrc/packages/NetBSD/x86_64/10.1/All' | sudo tee /usr/pkg/etc/pkgin/repositories.conf >/dev/null
+          sudo pkgin -y update
+          sudo pkgin -y install bash binutils curl file git jq mozilla-rootcerts-openssl pkgconf rust
+          export CURL_CA_BUNDLE=/etc/openssl/certs/ca-certificates.crt
+          test -s "${CURL_CA_BUNDLE}"
+          go_archive="/tmp/go1.26.6.netbsd-amd64.tar.gz"
+          curl -fL -o "${go_archive}" "https://go.dev/dl/go1.26.6.netbsd-amd64.tar.gz"
+          test "$(sha256 -q "${go_archive}")" = "f37d9e86d24d04a83ef241d8467cae2d14e134e1c51c954b3ec860517135a5a2"
+          sudo mkdir -p /usr/local
+          sudo rm -rf /usr/local/go
+          sudo tar -C /usr/local -xzf "${go_archive}"
+          zig_archive="/tmp/zig-x86_64-netbsd-0.16.0.tar.xz"
+          curl -fL -o "${zig_archive}" "https://ziglang.org/download/0.16.0/zig-x86_64-netbsd-0.16.0.tar.xz"
+          test "$(sha256 -q "${zig_archive}")" = "e235ca96f63034a009aca831c69394a1c14498a8e06ff5f358fc3fb4bed73dfb"
+          sudo rm -rf /usr/local/zig
+          sudo mkdir -p /usr/local/zig
+          sudo tar -C /usr/local/zig --strip-components=1 -xJf "${zig_archive}"
+          /usr/local/go/bin/go version
+          /usr/local/zig/zig version
+          /usr/pkg/bin/rustc --version
+          /usr/pkg/bin/cargo --version
+          uname -a
+      - name: Execute NetBSD BOF and shared-library E2E
+        shell: cpa.sh {0} --sync-files runner-to-vm
+        run: |
+          set -eu
+          export PATH="/usr/local/go/bin:/usr/local/zig:/usr/pkg/bin:/usr/pkg/sbin:/usr/bin:/bin:/sbin"
+          bash testdata/netbsd/run-netbsd-tests.sh
+
   freebsd:
     name: freebsd-${{ matrix.goarch }}-qemu
     runs-on: ubuntu-24.04
