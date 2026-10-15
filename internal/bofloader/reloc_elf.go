@@ -60,6 +60,18 @@ func elfRelocationWidth(arch string, typeID uint32) (int, bool, error) {
 			// padding and instruction sequence remain valid as emitted.
 			return 0, true, nil
 		}
+	case "loong64":
+		switch elf.R_LARCH(typeID) {
+		case elf.R_LARCH_64, elf.R_LARCH_64_PCREL, elf.R_LARCH_CALL36:
+			return 8, false, nil
+		case elf.R_LARCH_32, elf.R_LARCH_32_PCREL,
+			elf.R_LARCH_PCALA_HI20, elf.R_LARCH_PCALA_LO12,
+			elf.R_LARCH_GOT_PC_HI20, elf.R_LARCH_GOT_PC_LO12,
+			elf.R_LARCH_B26:
+			return 4, false, nil
+		case elf.R_LARCH_RELAX, elf.R_LARCH_ALIGN:
+			return 0, true, nil
+		}
 	case "ppc64le":
 		switch elf.R_PPC64(typeID) {
 		case elf.R_PPC64_ADDR64:
@@ -96,6 +108,9 @@ func elfRelocationNeedsGOT(arch string, typeID uint32) bool {
 		}
 	case "riscv64":
 		return elf.R_RISCV(typeID) == elf.R_RISCV_GOT_HI20
+	case "loong64":
+		return elf.R_LARCH(typeID) == elf.R_LARCH_GOT_PC_HI20 ||
+			elf.R_LARCH(typeID) == elf.R_LARCH_GOT_PC_LO12
 	case "ppc64le":
 		return false
 	}
@@ -114,6 +129,8 @@ func applyELFRelocation(object *objectFile, relocation objectRelocation, locatio
 		return applyELFARM64Relocation(relocation, location, place, linked)
 	case "riscv64":
 		return applyELFRISCV64Relocation(object, relocation, location, place, linked, externals)
+	case "loong64":
+		return applyELFLoong64Relocation(relocation, location, place, linked)
 	case "ppc64le":
 		return applyELFPPC64LERelocation(object, relocation, location, place, linked)
 	default:

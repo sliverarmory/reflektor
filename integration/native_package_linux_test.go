@@ -1,4 +1,4 @@
-//go:build linux && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)
+//go:build linux && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64 || loong64)
 
 package reflektor_test
 
@@ -122,7 +122,7 @@ func assertNativeLinuxBridgeFiles(t *testing.T, cgoEnabled string, modulePath st
 		if slices.Contains(linuxBackend.GoFiles, "call_386.go") || slices.Contains(linuxBackend.GoFiles, "call_64.go") {
 			t.Fatalf("linux/arm selected another architecture's dispatcher: %v", linuxBackend.GoFiles)
 		}
-	case "amd64", "arm64", "riscv64":
+	case "amd64", "arm64", "riscv64", "loong64":
 		if !slices.Contains(linuxBackend.GoFiles, "call_64.go") {
 			t.Fatalf("linux/%s GoFiles = %v, want purego call_64.go", runtime.GOARCH, linuxBackend.GoFiles)
 		}
@@ -133,6 +133,7 @@ func assertNativeLinuxBridgeFiles(t *testing.T, cgoEnabled string, modulePath st
 			"amd64":   "cache_flush_x86.go",
 			"arm64":   "cache_flush_arm64.go",
 			"riscv64": "cache_flush_riscv64.go",
+			"loong64": "cache_flush_loong64.go",
 		}[runtime.GOARCH]
 		if !slices.Contains(linuxBackend.GoFiles, wantCacheFile) {
 			t.Fatalf("linux/%s GoFiles = %v, want %s", runtime.GOARCH, linuxBackend.GoFiles, wantCacheFile)

@@ -1,4 +1,4 @@
-//go:build !cgo && ((linux && !android && ((arm && arm.7) || amd64 || arm64 || ppc64le || riscv64)) || (freebsd && (amd64 || arm64)) || (netbsd && (amd64 || arm64)))
+//go:build !cgo && ((linux && !android && ((arm && arm.7) || amd64 || arm64 || ppc64le || riscv64 || loong64)) || (freebsd && (amd64 || arm64)) || (netbsd && (amd64 || arm64)))
 
 package memmod
 
