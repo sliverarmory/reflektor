@@ -1,6 +1,8 @@
 package reflektor_test
 
 import (
+	"bytes"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -37,6 +39,7 @@ func buildWindowsCycleGraph(t *testing.T, outDir string, goarch string) windowsR
 		"-shared", "-DREFLEKTOR_CYCLE_B",
 		"-Wl,--out-implib," + bImport, "-o", b, source, forwarder, aImport,
 	})
+	normalizeWindowsCycleForwarderFixture(t, b)
 	buildRecursiveFixture(t, common, []string{
 		"-shared", "-DREFLEKTOR_CYCLE_A",
 		"-Wl,--out-implib," + aImport, "-o", a, source, bImport,
@@ -47,6 +50,28 @@ func buildWindowsCycleGraph(t *testing.T, outDir string, goarch string) windowsR
 			a: {filepath.Base(b)},
 			b: {filepath.Base(a)},
 		},
+	}
+}
+
+// The Windows/386 Actions linker decorates the module portion of a .def
+// forwarder with a leading underscore. Preserve the intended PE forwarder
+// name in the fixture; the recursive loader resolves module names literally.
+func normalizeWindowsCycleForwarderFixture(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical := []byte("reflektor_cycle_a.CycleAValue\x00")
+	decorated := []byte("_reflektor_cycle_a.CycleAValue\x00")
+	if bytes.Contains(data, decorated) {
+		replacement := append(append([]byte{}, canonical...), 0)
+		data = bytes.Replace(data, decorated, replacement, 1)
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatalf("normalize x86 PE cycle forwarder: %v", err)
+		}
+	} else if !bytes.Contains(data, canonical) {
+		t.Fatal("cycle B DLL lacks forwarder back into cycle A")
 	}
 }
 
