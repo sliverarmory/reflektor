@@ -117,6 +117,9 @@ func LoadLibrary(data []byte) (*Module, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := rejectGeneralELFTLS(f, goRuntime); err != nil {
+		return nil, err
+	}
 	tlsSlotReserved := goRuntime
 	defer func() {
 		if tlsSlotReserved {
@@ -220,6 +223,29 @@ func prepareLinuxGoRuntimeTLS(f *elf.File) (bool, uintptr, int64, error) {
 	}
 	linuxGoTLSSlots.used[slot] = true
 	return true, slot, offset, nil
+}
+
+func rejectGeneralELFTLS(f *elf.File, goRuntime bool) error {
+	if goRuntime {
+		return nil
+	}
+	for _, program := range f.Progs {
+		if program.Type == elf.PT_TLS && (program.Memsz != 0 || program.Filesz != 0) {
+			return fmt.Errorf("general PT_TLS requires thread-local storage registration (filesz=%#x memsz=%#x)", program.Filesz, program.Memsz)
+		}
+	}
+	for _, readSymbols := range []func() ([]elf.Symbol, error){f.DynamicSymbols, f.Symbols} {
+		symbols, err := readSymbols()
+		if err != nil {
+			continue
+		}
+		for _, symbol := range symbols {
+			if elf.ST_TYPE(symbol.Info) == elf.STT_TLS {
+				return fmt.Errorf("TLS symbol %q requires thread-local storage registration", symbol.Name)
+			}
+		}
+	}
+	return nil
 }
 
 func releaseLinuxGoTLSSlot(slot uintptr) {

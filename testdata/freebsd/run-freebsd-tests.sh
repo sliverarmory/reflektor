@@ -112,6 +112,7 @@ assert_required_tests "${corpus_log}" TestSituationalAwarenessBOFCorpus
 assert_no_skips "${corpus_log}"
 
 common_shared_tests=(
+	TestELFGeneralTLSRequiresRegistration
 	TestLoadGeneratedCFreeBSDSOAndCallStartW
 	TestLoadGeneratedRustHTTPSharedLibrary
 	TestLoadGeneratedCSharedLibraryRecursiveMode
