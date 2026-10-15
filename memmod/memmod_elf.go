@@ -1180,7 +1180,7 @@ func (resolver *symbolResolver) ensureLibraryLoaded(name string) error {
 	if resolver.hasModule(name) {
 		return nil
 	}
-	if runtime.GOOS == "freebsd" {
+	if runtime.GOOS == "freebsd" || runtime.GOOS == "netbsd" {
 		if handle, opened := resolver.opened[name]; opened && handle != 0 {
 			return nil
 		}
@@ -1198,7 +1198,7 @@ func (resolver *symbolResolver) ensureLibraryLoaded(name string) error {
 			return nil
 		}
 		if handle, opened := resolver.opened[candidate]; opened {
-			if runtime.GOOS == "freebsd" && handle != 0 {
+			if (runtime.GOOS == "freebsd" || runtime.GOOS == "netbsd") && handle != 0 {
 				return nil
 			}
 			continue
@@ -1214,8 +1214,8 @@ func (resolver *symbolResolver) ensureLibraryLoaded(name string) error {
 		}
 		resolver.opened[candidate] = handle
 		resolver.opened[name] = handle
-		if runtime.GOOS == "freebsd" {
-			// FreeBSD does not mount procfs by default, so a successful dlopen
+		if runtime.GOOS == "freebsd" || runtime.GOOS == "netbsd" {
+			// BSD hosts do not mount procfs by default, so a successful dlopen
 			// cannot be confirmed by refreshing /proc/self/maps. The nonzero
 			// handle is the authoritative success result.
 			return nil
