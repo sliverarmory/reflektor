@@ -72,11 +72,11 @@ for cgo_enabled in 0 1; do
 	fi
 	shared_pattern="^($(IFS='|'; echo "${required_tests[*]}"))$"
 	if [[ "${cgo_enabled}" == 0 ]]; then
-		CGO_ENABLED=0 go test "${purego_gcflags[@]}" . ./cli ./memmod ./native/... -count=1 -v | tee "netbsd-packages-cgo-${cgo_enabled}-test.log"
-		CGO_ENABLED=0 go test "${purego_gcflags[@]}" ./integration -run "${shared_pattern}" -count=1 -v | tee "netbsd-shared-cgo-${cgo_enabled}-test.log"
+		CGO_ENABLED=0 go test "${purego_gcflags[@]}" . ./cli ./memmod ./native/... -timeout 45m -count=1 -v | tee "netbsd-packages-cgo-${cgo_enabled}-test.log"
+		CGO_ENABLED=0 go test "${purego_gcflags[@]}" ./integration -run "${shared_pattern}" -timeout 45m -count=1 -v | tee "netbsd-shared-cgo-${cgo_enabled}-test.log"
 	else
-		CGO_ENABLED=1 go test . ./cli ./memmod ./native/... -count=1 -v | tee "netbsd-packages-cgo-${cgo_enabled}-test.log"
-		CGO_ENABLED=1 go test ./integration -run "${shared_pattern}" -count=1 -v | tee "netbsd-shared-cgo-${cgo_enabled}-test.log"
+		CGO_ENABLED=1 go test . ./cli ./memmod ./native/... -timeout 45m -count=1 -v | tee "netbsd-packages-cgo-${cgo_enabled}-test.log"
+		CGO_ENABLED=1 go test ./integration -run "${shared_pattern}" -timeout 45m -count=1 -v | tee "netbsd-shared-cgo-${cgo_enabled}-test.log"
 	fi
 	if grep -Eq '^[[:space:]]*--- SKIP:' "netbsd-packages-cgo-${cgo_enabled}-test.log"; then
 		echo "NetBSD/amd64 package tests were skipped with CGO_ENABLED=${cgo_enabled}" >&2

@@ -164,6 +164,7 @@ jobs:
         run: |
           set -eu
           export PATH="/usr/pkg/bin:/usr/pkg/sbin:/usr/bin:/bin:/sbin"
+          printf '%s\n' 'https://cdn.NetBSD.org/pub/pkgsrc/packages/NetBSD/x86_64/10.1/All' | sudo tee /usr/pkg/etc/pkgin/repositories.conf >/dev/null
           sudo pkgin -y update
           sudo pkgin -y install bash binutils curl file git jq libcurl pkgconf rust
           go_archive="/tmp/go1.26.6.netbsd-amd64.tar.gz"
