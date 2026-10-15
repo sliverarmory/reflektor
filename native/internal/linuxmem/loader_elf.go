@@ -35,9 +35,10 @@ type linuxDynAPI struct {
 }
 
 var (
-	linuxAPIOnce sync.Once
-	linuxAPI     linuxDynAPI
-	linuxAPIErr  error
+	linuxAPIOnce     sync.Once
+	linuxAPI         linuxDynAPI
+	linuxAPIErr      error
+	errStaticELFHost = errors.New("dynamic library loading is unavailable in a statically linked Linux host")
 )
 
 const (
@@ -110,6 +111,7 @@ type runtimeELFModule struct {
 
 type symbolResolver struct {
 	api           *linuxDynAPI
+	apiErr        error
 	modules       []runtimeELFModule
 	resolved      map[string]uintptr
 	misses        map[string]error
@@ -1060,6 +1062,8 @@ func newSymbolResolver() *symbolResolver {
 	}
 	if api, err := getLinuxDynAPI(); err == nil {
 		resolver.api = api
+	} else {
+		resolver.apiErr = err
 	}
 	return resolver
 }
@@ -1157,6 +1161,9 @@ func (resolver *symbolResolver) ensureLibraryLoaded(name string, requireOwnedRef
 		return nil
 	}
 	if resolver.api == nil || resolver.api.dlopen == 0 || resolver.api.dlclose == 0 {
+		if resolver.apiErr != nil {
+			return fmt.Errorf("dlopen/dlclose is unavailable: %w", resolver.apiErr)
+		}
 		return errors.New("dlopen/dlclose is unavailable")
 	}
 	if resolver.openLibrary == nil || resolver.closeLibrary == nil {
@@ -1399,6 +1406,9 @@ func (resolver *symbolResolver) Resolve(name string) (uintptr, error) {
 	}
 
 	err := fmt.Errorf("unresolved external symbol %q", name)
+	if resolver.apiErr != nil {
+		err = fmt.Errorf("%w: %v", err, resolver.apiErr)
+	}
 	resolver.misses[name] = err
 	return 0, err
 }

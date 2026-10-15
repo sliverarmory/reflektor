@@ -2,9 +2,15 @@
 
 package linuxmem
 
-import "fmt"
+import (
+	"debug/elf"
+	"fmt"
+)
 
 func initLinuxDynAPI() error {
+	if err := requireDynamicELFHost(); err != nil {
+		return err
+	}
 	modules, err := runtimeModules()
 	if err != nil {
 		return err
@@ -37,4 +43,18 @@ func initLinuxDynAPI() error {
 		defaultHandle: 0,
 	}
 	return nil
+}
+
+func requireDynamicELFHost() error {
+	host, err := elf.Open("/proc/self/exe")
+	if err != nil {
+		return fmt.Errorf("inspect Linux host executable: %w", err)
+	}
+	defer host.Close()
+	for _, program := range host.Progs {
+		if program.Type == elf.PT_INTERP {
+			return nil
+		}
+	}
+	return errStaticELFHost
 }

@@ -293,9 +293,20 @@ Usage:
   return `ErrGoExportArgumentsUnsupported`; their zero-argument exports remain
   available through `CallExport`.
 - On Linux, the runtime-aware foreign-call bridges keep C-to-Go callbacks safe.
-  Consequently, `CGO_ENABLED=0` hosts importing either Reflektor package are
-  dynamically linked against the platform's glibc loader; this is not a fully
-  static or musl-portable build mode.
+  `CGO_ENABLED=0` hosts importing either Reflektor package still have dynamic
+  libc dependencies from the pinned PureGo bridge; they are not static binaries.
+  Alpine 3.24's musl loader resolves the bridge's glibc-style library names
+  without glibc files. The [Alpine runtime harness](testdata/docker/run-linux-musl-tests.sh)
+  verifies BOF execution, musl-built C and Rust images through root and
+  `native`, C-to-Go callbacks, recursive C dependencies, and CLI loading on
+  Linux `amd64` and `arm64` in both CGO modes. Go `c-shared` loading is covered
+  separately with `CGO_ENABLED=1`. A separate statically linked,
+  `CGO_ENABLED=1` Alpine host test verifies BOFs using built-in callbacks,
+  dependency-free C images through root, `native`, and recursive loading,
+  callbacks, and the CLI on
+  `amd64` and `arm64`. Static hosts reject images requiring system-library
+  delegation with an explicit error. `CGO_ENABLED=0` hosts still link
+  dynamically to musl; this coverage does not claim every musl distribution.
 - CGO-free FreeBSD builds import PureGo's pinned fake-CGO bridge and require
   `-gcflags=github.com/ebitengine/purego/internal/fakecgo=-std`. Native
   CGO-enabled FreeBSD builds do not require that flag.
