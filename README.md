@@ -33,6 +33,8 @@ the surface, `runtime-emulated` means CI executes it through emulation,
 `unsupported` means Reflektor has not implemented that surface, and `n-a`
 means the pinned Go toolchain does not provide the applicable build mode.
 
+The [roadmap](ROADMAP.md) tracks proposed platform and feature milestones.
+
 ## Public API
 
 Import path:
