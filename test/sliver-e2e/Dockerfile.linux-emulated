@@ -97,6 +97,7 @@ WORKDIR /reflektor
 COPY go.mod go.sum reflektor.go ./
 COPY cli ./cli
 COPY memmod ./memmod
+COPY internal/elfrelr ./internal/elfrelr
 
 RUN set -eux; \
 	mkdir -p /out; \

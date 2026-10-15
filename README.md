@@ -319,10 +319,13 @@ Usage:
   Initial-exec TLS, TLSDESC, external TLS symbols, other ELF targets, and
   `CGO_ENABLED=0` still receive explicit errors before mapping. Go c-shared
   images continue to use their separate runtime TLS reservation.
-- Recursive custom images also reject IFUNC/IRELATIVE and RELR with explicit
-  errors; these features remain available through the system-library carveout.
-  Windows custom dependency cycles and delay-load import tables are also
-  rejected explicitly. Darwin, FreeBSD, and Linux graph cycles are deduplicated.
+- FreeBSD `amd64`/`arm64` and Linux `386`/`amd64`/`arm64` custom images support
+  ELF packed RELR relocations. Other ELF targets reject packed RELR explicitly.
+- Recursive custom images reject IFUNC/IRELATIVE explicitly. Initial-exec TLS,
+  TLSDESC, and external TLS symbols also remain unsupported. System-library
+  imports may use those features through the native loader. Windows custom
+  dependency cycles and delay-load import tables are rejected explicitly.
+  Darwin, FreeBSD, and Linux graph cycles are deduplicated.
 - After the first export call, Darwin recursive mappings remain process-resident
   because dyld retains their loader records. Reusing a Darwin install-name in a
   later load follows dyld's first-loaded identity semantics. Calls made through

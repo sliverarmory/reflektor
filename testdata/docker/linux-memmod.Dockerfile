@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	xz-utils \
 	file \
 	binutils \
+	lld \
 	libcurl4-openssl-dev \
 	bash \
 	&& rm -rf /var/lib/apt/lists/*

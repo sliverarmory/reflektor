@@ -45,6 +45,7 @@ for test_name in \
   TestNativePackageRustCallExportWithArgsLinux \
   TestNativePackageELFLifecycleLinux \
   TestNativePackageCSharedConsumerLinux \
+  TestPackedRELRSharedLibraries \
   TestLoadLibraryAndCallExport_Linux; do
   if ! grep -Fq -- "--- PASS: ${test_name} " linux-test.log; then
     echo "Required linux/386 test did not pass: ${test_name}" >&2
@@ -59,7 +60,7 @@ if [[ -n "${unexpected_skips}" ]]; then
   exit 1
 fi
 
-CGO_ENABLED=0 go test ./integration -run '^(TestCallExportWith(Args|PuregoCallback)|TestNativePackage(CallExport|CallExportWithArgsLinux|RustCallExportWithArgsLinux|ELFLifecycleLinux|LinuxDependencyGraphIsIsolated))$' -count=1 -v | tee linux-nocgo-test.log
+CGO_ENABLED=0 go test ./integration -run '^(TestCallExportWith(Args|PuregoCallback)|TestNativePackage(CallExport|CallExportWithArgsLinux|RustCallExportWithArgsLinux|ELFLifecycleLinux|LinuxDependencyGraphIsIsolated)|TestPackedRELRSharedLibraries)$' -count=1 -v | tee linux-nocgo-test.log
 for test_name in \
   TestCallExportWithArgs \
   TestCallExportWithPuregoCallback \
@@ -73,6 +74,10 @@ for test_name in \
     exit 1
   fi
 done
+if ! grep -Fq -- '--- PASS: TestPackedRELRSharedLibraries ' linux-nocgo-test.log; then
+  echo 'Required CGO-free Linux packed RELR test did not pass' >&2
+  exit 1
+fi
 
 CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop)$' -count=1 -v | tee linux-bof-nocgo-test.log
 for test_name in TestLoadAndExecuteGeneratedBOF TestBOFLoadWithOptions TestConcurrentBOFStreaming TestSameImageBOFExecutionIsSerialized TestCooperativeBOFStop; do
