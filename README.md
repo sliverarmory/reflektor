@@ -194,6 +194,38 @@ Existing BOFs that do not poll it keep running. Stop is a request only:
 `ExecuteWithOptions` and `Close` still wait for the native entry point to
 return, and Reflektor does not forcefully interrupt or unmap a running BOF.
 
+For a hard deadline or crash boundary, build the optional one-shot worker for
+the same OS and architecture as the host:
+
+```sh
+go build -o reflektor-bof-worker ./cmd/reflektor-bof-worker
+```
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+records, err := bof.ExecuteIsolated(ctx, "./reflektor-bof-worker", objectBytes,
+    arguments.Bytes(), bof.LoadOptions{})
+// Forward records in order even when err reports a deadline or worker crash.
+```
+
+Each call starts and reaps a fresh worker. A cancelled context kills native
+code that does not cooperate; a crash returns `*bof.WorkerExitError` with exit
+status and bounded stderr. Records already emitted remain typed, ordered, and
+owned. A call retains at most 64 MiB of output, with a 16 MiB per-record limit.
+Use a trusted worker built from the same Reflektor version; the protocol is
+private and versioned. The worker receives the image and argument bytes and
+has the caller's normal OS permissions. Process isolation does not restrict
+its filesystem, network, or child-process access.
+
+Only `LoadOptions.EntryPoint` crosses the process boundary. Passing
+`ValidateImports` or `ResolveSymbol` returns
+`bof.ErrWorkerCallbacksUnsupported`: their closures and native pointers are
+valid only in the parent process. Privileged Beacon imports still fail unless
+a worker-local host service is implemented in a future protocol. Keep using
+the in-process API when a BOF requires host callbacks. BOFs that create native
+threads remain subject to the entry-thread callback routing contract below.
+
 Use `bof.LoadWithOptions` (or `bof.LoadFileWithOptions`) when the host needs an
 exact entry symbol or an import boundary. `ValidateImports` receives a sorted,
 owned snapshot before image allocation, callback registration, or dynamic
