@@ -311,8 +311,11 @@ Usage:
   Darwin shared-cache images do not exist as standalone readable files.
 - FreeBSD and Linux custom images reject general ELF TLS, IFUNC/IRELATIVE, and RELR with
   explicit errors; those features remain available through the system-library
-  carveout. Windows custom dependency cycles and delay-load import tables are
-  also rejected explicitly. Darwin, FreeBSD, and Linux graph cycles are deduplicated.
+  carveout. Windows custom dependency cycles are rejected explicitly. Recursive
+  Windows loads bind RVA-based PE delay imports before TLS and `DllMain`, using
+  the same dependency reader and reverse-order unload as ordinary imports.
+  Older VA-based delay descriptors are rejected. Darwin, FreeBSD, and Linux
+  graph cycles are deduplicated.
 - After the first export call, Darwin recursive mappings remain process-resident
   because dyld retains their loader records. Reusing a Darwin install-name in a
   later load follows dyld's first-loaded identity semantics. Calls made through
