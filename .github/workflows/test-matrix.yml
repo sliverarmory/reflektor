@@ -635,6 +635,7 @@ jobs:
             TestLoadGeneratedGoSharedLibraryRecursiveMode \
             TestLoadGeneratedRustSharedLibraryRecursiveMode \
             TestLoadLibraryRecursiveDependencies \
+            TestWindowsRecursiveCyclesAndDiamonds \
             TestCallExportWithArgs \
             TestBOFPackageDependencyGraphIsIsolated \
             TestNativePackageCallExport \

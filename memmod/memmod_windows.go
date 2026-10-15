@@ -601,27 +601,37 @@ func loadLibrary(data []byte, buildImports func(*Module) error) (module *Module,
 		module.isRelocated = true
 	}
 
-	// Load required dlls and adjust function table of imports.
-	err = buildImports(module)
-	if err != nil {
-		err = fmt.Errorf("Error building import table: %w", err)
-		return
+	// Recursive loads stop after mapping. Their imports may refer back to this
+	// image, so the complete graph must be mapped before any image is bound.
+	if buildImports != nil {
+		err = module.completeLoad(buildImports)
+	}
+	return
+}
+
+func (module *Module) completeLoad(buildImports func(*Module) error) error {
+	if err := buildImports(module); err != nil {
+		return fmt.Errorf("Error building import table: %w", err)
+	}
+	if err := module.prepareMappedLibrary(); err != nil {
+		return err
+	}
+	if err := module.initializeMappedLibrary(); err != nil {
+		return err
+	}
+	module.buildNameExports()
+	return nil
+}
+
+func (module *Module) prepareMappedLibrary() error {
+	if err := module.finalizeSections(); err != nil {
+		return fmt.Errorf("Error finalizing sections: %w", err)
+	}
+	if err := module.registerExceptionHandlers(); err != nil {
+		return err
 	}
 
-	// Mark memory pages depending on section headers and release sections that are marked as "discardable".
-	err = module.finalizeSections()
-	if err != nil {
-		err = fmt.Errorf("Error finalizing sections: %w", err)
-		return
-	}
-
-	// Register exception tables, if they exist.
-	err = module.registerExceptionHandlers()
-	if err != nil {
-		return
-	}
-
-	// Register function PCs.
+	alignedImageSize := alignUp(uintptr(module.headers.OptionalHeader.SizeOfImage), uintptr(module.headers.OptionalHeader.SectionAlignment))
 	loadedAddressRangesMu.Lock()
 	loadedAddressRanges = append(loadedAddressRanges, addressRange{module.codeBase, module.codeBase + alignedImageSize})
 	loadedAddressRangesMu.Unlock()
@@ -631,50 +641,29 @@ func loadLibrary(data []byte, buildImports func(*Module) error) (module *Module,
 	haveHookedRtlPcToFileHeader.Do(func() {
 		hookRtlPcToFileHeaderResult = hookRtlPcToFileHeader()
 	})
-	err = hookRtlPcToFileHeaderResult
-	if err != nil {
-		return
-	}
-	if module.recursive != nil {
-		// Recursive import resolution must understand PE forwarded exports before
-		// any initializer can call through them. Legacy loads retain their original
-		// export-table timing below.
-		_ = module.buildNameExports()
-		err = module.resolveRecursiveForwarders()
-		if err != nil {
-			err = fmt.Errorf("Error resolving forwarded exports: %w", err)
-			return
-		}
-	}
+	return hookRtlPcToFileHeaderResult
+}
 
-	// TLS callbacks are executed BEFORE the main loading.
+func (module *Module) initializeMappedLibrary() error {
+	// TLS callbacks run before DllMain, after every image's imports are bound.
 	if module.goRuntime {
-		// Go DLL initialization starts process-lifetime runtime state. From this
-		// point onward, an error or Close must leave the image and its imports
-		// pinned rather than detach and unmap live runtime-managed threads.
+		// A started Go runtime can retain threads in the mapped image. Recursive
+		// loads pin the entire graph from this point, including on init failure.
 		module.runtimeStarted = true
 	}
 	module.executeTLS()
 
-	// Get entry point of loaded module.
 	if module.headers.OptionalHeader.AddressOfEntryPoint != 0 {
 		module.entry = module.codeBase + uintptr(module.headers.OptionalHeader.AddressOfEntryPoint)
 		if module.isDLL {
-			// Notify library about attaching to process.
 			r0, _, _ := syscall.Syscall(module.entry, 3, module.codeBase, uintptr(DLL_PROCESS_ATTACH), 0)
-			successful := r0 != 0
-			if !successful {
-				err = windows.ERROR_DLL_INIT_FAILED
-				return
+			if r0 == 0 {
+				return windows.ERROR_DLL_INIT_FAILED
 			}
 			module.initialized = true
 		}
 	}
-
-	if module.recursive == nil {
-		module.buildNameExports()
-	}
-	return
+	return nil
 }
 
 // Free releases module resources. Started Go runtime images remain pinned.
