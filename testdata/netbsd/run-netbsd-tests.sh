@@ -106,7 +106,7 @@ for cgo_enabled in 0 1; do
 		shared_test_binary="${shared_test_dir}/integration.test"
 		CGO_ENABLED=1 go test -c -o "${shared_test_binary}" ./integration
 		/usr/sbin/paxctl +m "${shared_test_binary}"
-		"${shared_test_binary}" -test.run "${shared_pattern}" -test.timeout 45m -test.count 1 -test.v | tee "netbsd-shared-cgo-${cgo_enabled}-test.log"
+		(cd integration && "${shared_test_binary}" -test.run "${shared_pattern}" -test.timeout 45m -test.count 1 -test.v) | tee "netbsd-shared-cgo-${cgo_enabled}-test.log"
 		rm -rf "${shared_test_dir}"
 	fi
 	if grep -Eq '^[[:space:]]*--- SKIP:' "netbsd-packages-cgo-${cgo_enabled}-test.log"; then
