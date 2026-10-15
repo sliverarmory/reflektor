@@ -32,6 +32,9 @@ each target. `runtime` means CI executes
 the surface, `runtime-emulated` means CI executes it through emulation,
 `unsupported` means Reflektor has not implemented that surface, and `n-a`
 means the pinned Go toolchain does not provide the applicable build mode.
+OpenBSD `amd64` has a [guest-tested feasibility gate](testdata/openbsd/README.md)
+for executable memory and the pinned foreign-call dependency. Its BOF and
+shared-library surfaces remain unsupported in the manifest.
 
 ## Public API
 
