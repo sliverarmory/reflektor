@@ -636,6 +636,8 @@ jobs:
             TestLoadGeneratedRustSharedLibraryRecursiveMode \
             TestLoadLibraryRecursiveDependencies \
             TestWindowsRecursiveCyclesAndDiamonds \
+            TestWindowsRecursiveDelayImports \
+            TestWindowsRecursiveDelayImportRejectsLegacyDescriptor \
             TestCallExportWithArgs \
             TestBOFPackageDependencyGraphIsIsolated \
             TestNativePackageCallExport \
