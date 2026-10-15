@@ -1,10 +1,11 @@
-//go:build (freebsd || (linux && !android)) && arm64
+//go:build (freebsd || netbsd || (linux && !android)) && arm64
 
 package bofloader
 
 import (
 	"errors"
 	"fmt"
+	"runtime"
 	"sync"
 
 	"github.com/ebitengine/purego"
@@ -26,7 +27,11 @@ func (region *memoryRegion) flushInstructionCache(offset, length int) error {
 		if elfCacheFlushErr == nil && elfCacheFlushAddr != 0 {
 			return
 		}
-		for _, library := range []string{"libgcc_s.so.1", "libc.so.7"} {
+		libcName := "libc.so.7"
+		if runtime.GOOS == "netbsd" {
+			libcName = "libc.so.12"
+		}
+		for _, library := range []string{"libgcc_s.so.1", libcName} {
 			elfCacheFlushHandle, elfCacheFlushErr = purego.Dlopen(library, purego.RTLD_NOW|purego.RTLD_LOCAL)
 			if elfCacheFlushErr != nil {
 				continue

@@ -1,4 +1,4 @@
-//go:build (linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)) || (freebsd && (amd64 || arm64)) || (netbsd && amd64)
+//go:build (linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)) || (freebsd && (amd64 || arm64)) || (netbsd && (amd64 || arm64))
 
 package memmod
 
@@ -178,7 +178,7 @@ func prepareLinuxGoRuntimeTLS(f *elf.File) (bool, uintptr, int64, error) {
 		return false, 0, 0, nil
 	}
 	if runtime.GOOS == "netbsd" {
-		return false, 0, 0, errors.New("Go c-shared images are unsupported on netbsd/amd64")
+		return false, 0, 0, fmt.Errorf("Go c-shared images are unsupported on netbsd/%s", runtime.GOARCH)
 	}
 
 	var tls *elf.Prog

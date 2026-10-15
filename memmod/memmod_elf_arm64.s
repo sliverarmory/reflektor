@@ -1,4 +1,4 @@
-//go:build !cgo && arm64 && ((linux && !android) || freebsd)
+//go:build !cgo && arm64 && ((linux && !android) || freebsd || netbsd)
 
 #include "textflag.h"
 

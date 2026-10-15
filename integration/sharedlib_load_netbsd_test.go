@@ -1,4 +1,4 @@
-//go:build netbsd && amd64
+//go:build netbsd && (amd64 || arm64)
 
 package reflektor_test
 
@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/sliverarmory/reflektor"
@@ -16,13 +17,17 @@ import (
 )
 
 func TestNetBSDSharedLoadersRejectMalformedAndWrongArchitecture(t *testing.T) {
-	path := buildOneSharedLib(t, t.TempDir(), "netbsd", "amd64")
+	path := buildOneSharedLib(t, t.TempDir(), "netbsd", runtime.GOARCH)
 	image, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	wrongMachine := bytes.Clone(image)
-	binary.LittleEndian.PutUint16(wrongMachine[18:20], uint16(elf.EM_AARCH64))
+	wrongArchitecture := elf.EM_X86_64
+	if runtime.GOARCH == "amd64" {
+		wrongArchitecture = elf.EM_AARCH64
+	}
+	binary.LittleEndian.PutUint16(wrongMachine[18:20], uint16(wrongArchitecture))
 
 	for _, input := range []struct {
 		name string
@@ -56,7 +61,7 @@ func TestNetBSDSharedLoadersRejectMalformedAndWrongArchitecture(t *testing.T) {
 
 func TestLoadGeneratedCNetBSDSOAndCallStartW(t *testing.T) {
 	requireCommand(t, "zig")
-	path := buildOneSharedLib(t, t.TempDir(), "netbsd", "amd64")
+	path := buildOneSharedLib(t, t.TempDir(), "netbsd", runtime.GOARCH)
 	marker := filepath.Join(t.TempDir(), "c-marker")
 	t.Setenv("REFLEKTOR_MARKER", marker)
 
@@ -79,7 +84,7 @@ func TestLoadGeneratedCNetBSDSOAndCallStartW(t *testing.T) {
 }
 
 func TestLoadGeneratedRustNetBSDSharedLibrary(t *testing.T) {
-	path := buildOneRustSharedLib(t, newRustBuildDir(t), "netbsd", "amd64")
+	path := buildOneRustSharedLib(t, newRustBuildDir(t), "netbsd", runtime.GOARCH)
 	marker := filepath.Join(t.TempDir(), "rust-marker")
 	t.Setenv("REFLEKTOR_MARKER", marker)
 
@@ -97,7 +102,7 @@ func TestLoadGeneratedRustNetBSDSharedLibrary(t *testing.T) {
 }
 
 func TestNativeNetBSDCImageAndClose(t *testing.T) {
-	path := buildOneSharedLib(t, t.TempDir(), "netbsd", "amd64")
+	path := buildOneSharedLib(t, t.TempDir(), "netbsd", runtime.GOARCH)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -112,7 +117,7 @@ func TestNativeNetBSDCImageAndClose(t *testing.T) {
 }
 
 func TestNativeNetBSDRustImageAndClose(t *testing.T) {
-	path := buildOneRustSharedLib(t, newRustBuildDir(t), "netbsd", "amd64")
+	path := buildOneRustSharedLib(t, newRustBuildDir(t), "netbsd", runtime.GOARCH)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

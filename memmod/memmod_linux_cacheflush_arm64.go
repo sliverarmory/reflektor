@@ -1,4 +1,4 @@
-//go:build arm64 && ((linux && !android) || freebsd)
+//go:build arm64 && ((linux && !android) || freebsd || netbsd)
 
 package memmod
 
@@ -27,8 +27,12 @@ func flushLinuxInstructionCache(start, end uintptr) error {
 		if linuxARM64CacheFlushErr == nil && linuxARM64CacheFlushAddr != 0 {
 			return
 		}
-		if runtime.GOOS == "freebsd" {
-			for _, library := range []string{"libgcc_s.so.1", "libc.so.7"} {
+		if runtime.GOOS == "freebsd" || runtime.GOOS == "netbsd" {
+			libcName := "libc.so.7"
+			if runtime.GOOS == "netbsd" {
+				libcName = "libc.so.12"
+			}
+			for _, library := range []string{"libgcc_s.so.1", libcName} {
 				linuxARM64CacheFlushHandle, linuxARM64CacheFlushErr = purego.Dlopen(library, purego.RTLD_NOW|purego.RTLD_LOCAL)
 				if linuxARM64CacheFlushErr != nil {
 					continue

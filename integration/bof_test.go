@@ -38,6 +38,7 @@ var bofTargets = []bofTarget{
 	{goos: "linux", goarch: "ppc64le", zigTarget: "powerpc64le-linux-none", format: "elf"},
 	{goos: "linux", goarch: "riscv64", zigTarget: "riscv64-linux-none", format: "elf"},
 	{goos: "netbsd", goarch: "amd64", zigTarget: "x86_64-netbsd-none", format: "elf"},
+	{goos: "netbsd", goarch: "arm64", zigTarget: "aarch64-netbsd-none", format: "elf"},
 	{goos: "windows", goarch: "386", zigTarget: "x86-windows-gnu", format: "coff"},
 	{goos: "windows", goarch: "amd64", zigTarget: "x86_64-windows-gnu", format: "coff"},
 	{goos: "windows", goarch: "arm64", zigTarget: "aarch64-windows-gnu", format: "coff"},
