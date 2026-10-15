@@ -3,11 +3,17 @@ package bofloader
 import (
 	"errors"
 	"fmt"
+	"runtime"
 	"sync"
 	"sync/atomic"
 )
 
 const maxFormatAllocation = 16 << 20
+
+const (
+	maxManagedWorkers     = 32
+	maxManagedWorkerBytes = 16 << 20
+)
 
 var executionContexts sync.Map // map[uint64]*executionContext, keyed by native OS thread ID
 
@@ -19,6 +25,12 @@ func registerExecutionContext(context *executionContext) (func(), error) {
 	if _, loaded := executionContexts.LoadOrStore(threadID, context); loaded {
 		return nil, fmt.Errorf("BOF execution context already active on thread %d", threadID)
 	}
+	context.mu.Lock()
+	if !context.entryThreadSet {
+		context.entryThreadID = threadID
+		context.entryThreadSet = true
+	}
+	context.mu.Unlock()
 	return func() { executionContexts.Delete(threadID) }, nil
 }
 
@@ -34,7 +46,7 @@ func activeExecutionContext() *executionContext {
 	return value.(*executionContext)
 }
 
-// InvokeHostCallback runs an opt-in host service only on the BOF entry thread.
+// InvokeHostCallback runs an opt-in host service on a registered BOF thread.
 // It converts service errors and panics into Execute errors so neither crosses
 // the native callback boundary.
 func InvokeHostCallback(name string, invoke func() (uintptr, error)) (result uintptr) {
@@ -56,17 +68,47 @@ func InvokeHostCallback(name string, invoke func() (uintptr, error)) (result uin
 	return result
 }
 
+// InvokeEntryHostCallback refuses token services on managed workers. Token
+// cleanup is scoped to the original execution thread, so allowing a worker to
+// impersonate would leave that worker's thread state outside its cleanup.
+func InvokeEntryHostCallback(name string, invoke func() (uintptr, error)) uintptr {
+	context := activeExecutionContext()
+	if context == nil {
+		return 0
+	}
+	threadID, err := currentExecutionThreadID()
+	if err != nil {
+		context.addError(fmt.Errorf("%s host callback: identify execution thread: %w", name, err))
+		return 0
+	}
+	context.mu.Lock()
+	entry := context.entryThreadSet && threadID == context.entryThreadID
+	context.mu.Unlock()
+	if !entry {
+		context.addError(fmt.Errorf("%s host callback requires the BOF entry thread", name))
+		return 0
+	}
+	return InvokeHostCallback(name, invoke)
+}
+
 type executionContext struct {
-	mu          sync.Mutex
-	outputs     []Output
-	errors      []error
-	allocations map[uintptr][]byte
-	cleanups    map[any]hostCleanup
-	cleanupKeys []any
-	emit        func(Output)
-	capture     bool
-	stop        <-chan struct{}
-	stopSeen    atomic.Bool
+	mu             sync.Mutex
+	outputs        []Output
+	errors         []error
+	allocations    map[uintptr][]byte
+	cleanups       map[any]hostCleanup
+	cleanupKeys    []any
+	emit           func(Output)
+	capture        bool
+	stop           <-chan struct{}
+	stopSeen       atomic.Bool
+	entryThreadID  uint64
+	entryThreadSet bool
+	workersEnabled bool
+	workerRanges   []executableRange
+	workers        int
+	workerBytes    int
+	workerCond     *sync.Cond
 }
 
 type hostCleanup struct {
@@ -81,8 +123,15 @@ func RegisterHostCleanup(key any, name string, call func() error) error {
 	if context == nil {
 		return errors.New("no BOF execution is active")
 	}
+	threadID, err := currentExecutionThreadID()
+	if err != nil {
+		return fmt.Errorf("identify BOF execution thread: %w", err)
+	}
 	context.mu.Lock()
 	defer context.mu.Unlock()
+	if !context.entryThreadSet || threadID != context.entryThreadID {
+		return errors.New("host cleanup may be registered only on the BOF entry thread")
+	}
 	if context.cleanups == nil {
 		context.cleanups = make(map[any]hostCleanup)
 	}
@@ -100,7 +149,15 @@ func ClearHostCleanup(key any) {
 	if context == nil {
 		return
 	}
+	threadID, err := currentExecutionThreadID()
+	if err != nil {
+		return
+	}
 	context.mu.Lock()
+	if !context.entryThreadSet || threadID != context.entryThreadID {
+		context.mu.Unlock()
+		return
+	}
 	delete(context.cleanups, key)
 	for index, registered := range context.cleanupKeys {
 		if registered == key {
@@ -137,7 +194,14 @@ func (context *executionContext) runHostCleanups() {
 }
 
 func newExecutionContext(emit func(Output), capture bool) *executionContext {
-	return &executionContext{allocations: make(map[uintptr][]byte), emit: emit, capture: capture}
+	context := &executionContext{allocations: make(map[uintptr][]byte), emit: emit, capture: capture}
+	context.workerCond = sync.NewCond(&context.mu)
+	return context
+}
+
+type executableRange struct {
+	address uintptr
+	size    uint64
 }
 
 func (context *executionContext) stopRequested() bool {
@@ -163,23 +227,22 @@ func (context *executionContext) appendOutput(outputType int, data []byte) {
 	copyOfData := append([]byte(nil), data...)
 	output := Output{Type: outputType, Data: copyOfData}
 	context.mu.Lock()
+	defer context.mu.Unlock()
 	if context.capture {
 		context.outputs = append(context.outputs, output)
 	}
-	emit := context.emit
-	context.mu.Unlock()
-	if emit != nil {
+	if context.emit != nil {
 		// A callback into Go must not panic across the native BOF stack.
+		// Keep delivery under this lock so all threads observe the same order
+		// for captured and streamed records.
 		func() {
 			defer func() {
 				if recovered := recover(); recovered != nil {
-					context.mu.Lock()
 					context.emit = nil
-					context.mu.Unlock()
-					context.addError(fmt.Errorf("BOF output callback panic: %v", recovered))
+					context.errors = append(context.errors, fmt.Errorf("BOF output callback panic: %v", recovered))
 				}
 			}()
-			emit(output)
+			context.emit(output)
 		}()
 	}
 }
@@ -190,6 +253,95 @@ func (context *executionContext) addError(err error) {
 	}
 	context.mu.Lock()
 	context.errors = append(context.errors, err)
+	context.mu.Unlock()
+}
+
+// startWorker reserves a managed thread before launching it. The reservation
+// remains live until the native function has returned and its callback context
+// has been removed, so Execute cannot release the image while it is in use.
+func (context *executionContext) startWorker(entry, dataAddress, lengthValue uintptr) uintptr {
+	if context == nil {
+		return 0
+	}
+	length := int(int32(lengthValue))
+	context.mu.Lock()
+	var reason string
+	switch {
+	case !context.workersEnabled:
+		reason = "managed workers are disabled for this execution"
+	case length < 0 || length > maxCallbackData:
+		reason = fmt.Sprintf("worker argument length %d is outside 0..%d", length, maxCallbackData)
+	case length != 0 && dataAddress == 0:
+		reason = "nonempty worker arguments have a nil address"
+	case context.workers >= maxManagedWorkers:
+		reason = fmt.Sprintf("at most %d managed workers may be active", maxManagedWorkers)
+	case length > maxManagedWorkerBytes-context.workerBytes:
+		reason = fmt.Sprintf("managed worker arguments exceed %d bytes", maxManagedWorkerBytes)
+	default:
+		valid := false
+		for _, region := range context.workerRanges {
+			if entry >= region.address && uint64(entry-region.address) < region.size {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			reason = "worker address is not in a mapped executable BOF section"
+		}
+	}
+	if reason != "" {
+		context.errors = append(context.errors, fmt.Errorf("ReflektorStartWorker: %s", reason))
+		context.mu.Unlock()
+		return 0
+	}
+	context.workers++
+	context.workerBytes += length
+	context.mu.Unlock()
+
+	launched := false
+	defer func() {
+		if !launched {
+			context.finishWorker(length)
+		}
+	}()
+	data := append([]byte(nil), pointerBytes(dataAddress, length)...)
+	go context.runWorker(entry, data, length)
+	launched = true
+	return 1
+}
+
+func (context *executionContext) runWorker(entry uintptr, data []byte, length int) {
+	defer context.finishWorker(length)
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			context.addError(fmt.Errorf("managed BOF worker panic: %v", recovered))
+		}
+	}()
+	unregister, err := registerExecutionContext(context)
+	if err != nil {
+		context.addError(fmt.Errorf("register managed BOF worker: %w", err))
+		return
+	}
+	defer unregister()
+	invokeEntry(entry, byteSliceAddress(data), int32(len(data)))
+	runtime.KeepAlive(data)
+}
+
+func (context *executionContext) finishWorker(length int) {
+	context.mu.Lock()
+	context.workers--
+	context.workerBytes -= length
+	context.workerCond.Broadcast()
+	context.mu.Unlock()
+}
+
+func (context *executionContext) waitWorkers() {
+	context.mu.Lock()
+	for context.workers != 0 {
+		context.workerCond.Wait()
+	}
 	context.mu.Unlock()
 }
 

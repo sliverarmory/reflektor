@@ -140,7 +140,7 @@ func (adapter *HostAdapter) resolve(name string) (address uintptr, err error) {
 }
 
 func (adapter *HostAdapter) useToken(handle uintptr) uintptr {
-	return bofloader.InvokeHostCallback("BeaconUseToken", func() (uintptr, error) {
+	return bofloader.InvokeEntryHostCallback("BeaconUseToken", func() (uintptr, error) {
 		if err := bofloader.RegisterHostCleanup(adapter, "BeaconRevertToken", adapter.services.RevertToken); err != nil {
 			return 0, err
 		}
@@ -153,7 +153,7 @@ func (adapter *HostAdapter) useToken(handle uintptr) uintptr {
 }
 
 func (adapter *HostAdapter) revertToken() uintptr {
-	return bofloader.InvokeHostCallback("BeaconRevertToken", func() (uintptr, error) {
+	return bofloader.InvokeEntryHostCallback("BeaconRevertToken", func() (uintptr, error) {
 		err := adapter.services.RevertToken()
 		if err == nil {
 			bofloader.ClearHostCleanup(adapter)

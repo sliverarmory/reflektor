@@ -93,7 +93,7 @@ assert_no_skips "${bof_unit_log}"
 
 bof_log="freebsd-bof-test.log"
 CGO_ENABLED=0 go test "${purego_gcflags[@]}" ./integration \
-	-run '^(TestPlatformSupportManifest|TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestBOFHostAdapterNativeCallbacks|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop|TestBOFPackageDependencyGraphIsIsolated)$' \
+	-run '^(TestPlatformSupportManifest|TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestBOFHostAdapterNativeCallbacks|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop|TestManagedBOFWorkers|TestBOFPackageDependencyGraphIsIsolated)$' \
 	-count=1 -v | tee "${bof_log}"
 assert_required_tests "${bof_log}" \
 	TestPlatformSupportManifest \
@@ -103,8 +103,14 @@ assert_required_tests "${bof_log}" \
 	TestConcurrentBOFStreaming \
 	TestSameImageBOFExecutionIsSerialized \
 	TestCooperativeBOFStop \
+	TestManagedBOFWorkers \
 	TestBOFPackageDependencyGraphIsIsolated
 assert_no_skips "${bof_log}"
+
+bof_workers_cgo_log="freebsd-bof-workers-cgo-test.log"
+CGO_ENABLED=1 go test ./integration -run '^(TestManagedBOFWorkers|TestBOFHostAdapterNativeCallbacks)$' -count=1 -v | tee "${bof_workers_cgo_log}"
+assert_required_tests "${bof_workers_cgo_log}" TestManagedBOFWorkers TestBOFHostAdapterNativeCallbacks
+assert_no_skips "${bof_workers_cgo_log}"
 
 corpus_log="freebsd-bof-corpus-test.log"
 CGO_ENABLED=0 go test "${purego_gcflags[@]}" ./integration \

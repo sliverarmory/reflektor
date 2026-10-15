@@ -18,7 +18,7 @@ func (loader *scriptedOutputLoader) Execute([]byte) ([]bofloader.Output, error) 
 	return loader.outputs, loader.err
 }
 
-func (loader *scriptedOutputLoader) ExecuteWithOptions(_ []byte, emit func(bofloader.Output), stop <-chan struct{}) error {
+func (loader *scriptedOutputLoader) ExecuteWithOptions(_ []byte, emit func(bofloader.Output), stop <-chan struct{}, _ bool) error {
 	loader.receivedStop = stop
 	if emit != nil {
 		for _, output := range loader.outputs {
