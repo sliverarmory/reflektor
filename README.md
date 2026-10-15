@@ -33,6 +33,8 @@ the surface, `runtime-emulated` means CI executes it through emulation,
 `unsupported` means Reflektor has not implemented that surface, and `n-a`
 means the pinned Go toolchain does not provide the applicable build mode.
 
+The [roadmap](ROADMAP.md) tracks proposed platform and feature milestones.
+
 ## Public API
 
 Import path:
@@ -100,6 +102,31 @@ lib, err := reflektor.LoadLibraryRecursive(payload)
 Both recursive APIs read the complete custom dependency graph before the root
 export is invoked. `LoadLibraryFileRecursive` is preferred for libraries that
 use origin-relative names such as `$ORIGIN`, `@loader_path`, or `@rpath`.
+
+To supply application dependencies from memory, pass a resolver and a stable
+absolute origin path. The origin and returned dependency paths identify images
+in the graph; the paths do not need to exist on disk:
+
+```go
+lib, err := reflektor.LoadLibraryRecursiveWithResolver(payload, "/virtual/payload.so",
+    func(request reflektor.DependencyRequest) (reflektor.Dependency, error) {
+        image, ok := embedded[request.Name]
+        if !ok {
+            return reflektor.Dependency{}, reflektor.ErrDependencyNotFound
+        }
+        return reflektor.Dependency{
+            Data: image,
+            Path: filepath.Join("/virtual", filepath.Base(request.Name)),
+        }, nil
+    })
+```
+
+The resolver receives the importing image's path and loader search paths, so it
+can resolve nested `$ORIGIN`, `@loader_path`, and `@rpath` imports. Return a
+stable absolute path for each image to deduplicate shared dependencies and
+cycles. Reflektor copies returned bytes, limits each dependency to 512 MiB,
+and limits the complete graph to 1 GiB. A missing application dependency is
+reported as an error; known system libraries remain delegated to the OS loader.
 
 ## Beacon Object Files
 
@@ -302,6 +329,11 @@ Usage:
 - Reflektor normalizes common symbol naming differences where possible (for example underscore-prefixed forms).
 - The root `reflektor.Library` API remains intentionally small:
   `CallExport()`, `CallExportWithArgs()`, and `Close()`.
+- `Library.Close` waits for calls already using the handle, marks it closed,
+  then runs native unload and destructors without holding the library lock.
+  Reentrant or concurrent `Close` calls return once the handle is closed; the
+  first `Close` returns after unload finishes. New export calls return
+  `ErrLibraryClosed`.
 - Recursive mode maps file-backed application dependencies from their bytes and
   resolves imports within the in-memory graph. Platform runtime libraries remain
   delegated to the native loader: Darwin shared-cache libraries, Windows

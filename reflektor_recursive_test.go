@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/sliverarmory/reflektor/memmod"
@@ -94,5 +95,56 @@ func TestMemoryLibraryOriginIsUnique(t *testing.T) {
 	}
 	if first == second {
 		t.Fatalf("memory library origins collided: %q", first)
+	}
+}
+
+func TestRecursiveResolverInputValidation(t *testing.T) {
+	resolver := func(DependencyRequest) (Dependency, error) { return Dependency{}, ErrDependencyNotFound }
+	for _, test := range []struct {
+		name     string
+		data     []byte
+		origin   string
+		resolver DependencyResolver
+		message  string
+	}{
+		{"empty image", nil, filepath.Join(t.TempDir(), "root.so"), resolver, "empty library image"},
+		{"relative origin", []byte{1}, "root.so", resolver, "absolute path"},
+		{"nil resolver", []byte{1}, filepath.Join(t.TempDir(), "root.so"), nil, "resolver is nil"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := LoadLibraryRecursiveWithResolver(test.data, test.origin, test.resolver)
+			if err == nil || !strings.Contains(err.Error(), test.message) {
+				t.Fatalf("error = %v, want %q", err, test.message)
+			}
+		})
+	}
+}
+
+func TestCheckedResolvedDependencyCopiesBytesAndLimitsSize(t *testing.T) {
+	request := memmod.DependencyRequest{Name: "child.so", ImporterPath: filepath.Join(t.TempDir(), "root.so")}
+	path := filepath.Join(t.TempDir(), "child.so")
+	input := []byte{1, 2, 3}
+	result, err := checkedResolvedDependency(Dependency{Data: input, Path: path}, request, 3)
+	if err != nil {
+		t.Fatalf("checkedResolvedDependency: %v", err)
+	}
+	input[0] = 9
+	if result.Data[0] != 1 || result.Path != path {
+		t.Fatalf("resolved dependency = %#v, want copied bytes and stable absolute path", result)
+	}
+
+	for _, test := range []struct {
+		name       string
+		dependency Dependency
+	}{
+		{"relative path", Dependency{Data: []byte{1}, Path: "child.so"}},
+		{"oversized bytes", Dependency{Data: []byte{1, 2, 3, 4}, Path: path}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := checkedResolvedDependency(test.dependency, request, 3)
+			if err == nil || errors.Is(err, ErrDependencyNotFound) {
+				t.Fatalf("invalid resolved dependency error = %v, want terminal error", err)
+			}
+		})
 	}
 }

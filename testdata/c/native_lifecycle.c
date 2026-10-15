@@ -11,6 +11,7 @@
 
 static uintptr_t reflektor_lifecycle_state;
 static uintptr_t* reflektor_lifecycle_output;
+static uintptr_t (*reflektor_lifecycle_close_callback)(void);
 
 __attribute__((constructor)) static void reflektor_lifecycle_init(void) {
   reflektor_lifecycle_state = REFLEKTOR_CONSTRUCTOR_STATE;
@@ -20,6 +21,9 @@ __attribute__((destructor)) static void reflektor_lifecycle_fini(void) {
   if (reflektor_lifecycle_output != (uintptr_t*)0) {
     reflektor_lifecycle_output[0] = REFLEKTOR_DESTRUCTOR_SENTINEL;
     reflektor_lifecycle_output[1] += (uintptr_t)1u;
+  }
+  if (reflektor_lifecycle_close_callback != (uintptr_t (*)(void))0) {
+    (void)reflektor_lifecycle_close_callback();
   }
 }
 
@@ -33,4 +37,9 @@ REFLEKTOR_EXPORT uintptr_t ReflektorLifecycleBind(uintptr_t output) {
     reflektor_lifecycle_output[0] = reflektor_lifecycle_state;
   }
   return reflektor_lifecycle_state;
+}
+
+REFLEKTOR_EXPORT uintptr_t ReflektorLifecycleSetCloseCallback(uintptr_t callback) {
+  reflektor_lifecycle_close_callback = (uintptr_t (*)(void))callback;
+  return 0;
 }
