@@ -150,6 +150,23 @@ jobs:
     timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
+      - name: Check out Situational Awareness BOF corpus
+        uses: actions/checkout@v4
+        with:
+          repository: sliverarmory/Situational-Awareness-BOFs
+          ref: 693174ff525595c5ec61b08fdccb5f057ad52c94
+          path: test/corpus/Situational-Awareness-BOFs
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Prepare and build NetBSD BOF corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash testdata/corpus/prepare-situational-awareness-netbsd.sh "${REFLEKTOR_BOF_CORPUS_DIR}"
+          "${REFLEKTOR_BOF_CORPUS_DIR}/scripts/build-target.sh" netbsd amd64
       - name: Start NetBSD 10.1 amd64 VM
         uses: cross-platform-actions/action@5ea7e8e4677bd726033a10b094ba1c5762b15dee # v1.3.0
         with:
@@ -159,6 +176,7 @@ jobs:
           shell: sh
           memory: 6G
           cpu_count: 4
+          environment_variables: REFLEKTOR_BOF_CORPUS_DIR
       - name: Install pinned NetBSD toolchains
         shell: cpa.sh {0} --sync-files runner-to-vm
         run: |

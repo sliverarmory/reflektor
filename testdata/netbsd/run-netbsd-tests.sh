@@ -13,6 +13,14 @@ for command in bash cargo cc file go pmap rustc zig; do
 	command -v "${command}" >/dev/null || { echo "missing NetBSD test tool: ${command}" >&2; exit 1; }
 done
 
+: "${REFLEKTOR_BOF_CORPUS_DIR:?REFLEKTOR_BOF_CORPUS_DIR must point to the pinned BOF corpus checkout}"
+corpus_dir="${REFLEKTOR_BOF_CORPUS_DIR}/dist/netbsd/amd64"
+corpus_count="$(find "${corpus_dir}" -maxdepth 1 -type f -name '*.o' | wc -l | tr -d '[:space:]')"
+if [[ "${corpus_count}" != 25 ]]; then
+	echo "NetBSD/amd64 BOF corpus contains ${corpus_count} objects, want exactly 25" >&2
+	exit 1
+fi
+
 export GOCACHE="${GOCACHE:-/tmp/reflektor-netbsd-go-build-cache}"
 export GOMODCACHE="${GOMODCACHE:-/tmp/reflektor-netbsd-go-mod-cache}"
 export GOTOOLCHAIN=local
@@ -53,6 +61,9 @@ bof_tests=(
 bof_pattern="^($(IFS='|'; echo "${bof_tests[*]}"))$"
 CGO_ENABLED=0 go test "${purego_gcflags[@]}" ./integration -run "${bof_pattern}" -count=1 -v | tee netbsd-bof-test.log
 assert_passes netbsd-bof-test.log "${bof_tests[@]}"
+
+CGO_ENABLED=0 go test "${purego_gcflags[@]}" ./integration -run '^TestSituationalAwarenessBOFCorpus$' -timeout 45m -count=1 -v | tee netbsd-bof-corpus-test.log
+assert_passes netbsd-bof-corpus-test.log TestSituationalAwarenessBOFCorpus
 
 common_shared_tests=(
 	TestLoadGeneratedCNetBSDSOAndCallStartW

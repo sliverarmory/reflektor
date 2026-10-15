@@ -1,0 +1,273 @@
+diff --git a/portable/src/portable.c b/portable/src/portable.c
+index 4ba067a..a4197ee 100644
+--- a/portable/src/portable.c
++++ b/portable/src/portable.c
+@@ -7,6 +7,11 @@
+ 
+ #define BOF_O_RDONLY 0
+ 
++#if defined(BOF_NETBSD)
++#define opendir __opendir30
++#define readdir __readdir30
++#endif
++
+ typedef void bof_dir;
+ typedef void bof_file;
+ 
+@@ -17,7 +22,7 @@ struct bof_addrinfo {
+     int socket_type;
+     int protocol;
+     bof_u32 address_length;
+-#if defined(BOF_DARWIN) || defined(BOF_FREEBSD)
++#if defined(BOF_DARWIN) || (defined(BOF_FREEBSD) || defined(BOF_NETBSD))
+     char *canonical_name;
+     void *address;
+ #else
+@@ -95,6 +100,12 @@ extern int clock_gettime(int clock_id, void *time_value);
+ #define BOF_NI_NUMERICHOST 2
+ #define BOF_O_NONBLOCK 0x0004
+ #define BOF_TCP_CONNECTIONTIMEOUT 0x20
++#elif defined(BOF_NETBSD)
++#define BOF_AF_INET6 24
++#define BOF_SOL_SOCKET 0xffff
++#define BOF_SO_ERROR 0x1007
++#define BOF_NI_NUMERICHOST 2
++#define BOF_O_NONBLOCK 0x0004
+ #elif defined(BOF_FREEBSD)
+ #define BOF_AF_INET6 28
+ #define BOF_SOL_SOCKET 0xffff
+@@ -223,6 +234,8 @@ static const char *bof_dirent_name(void *entry) {
+     bof_u8 *raw = (bof_u8 *)entry;
+ #if defined(BOF_DARWIN)
+     return (const char *)(raw + 21U);
++#elif defined(BOF_NETBSD)
++    return (const char *)(raw + 13U);
+ #elif defined(BOF_FREEBSD)
+     return (const char *)(raw + 24U);
+ #elif defined(__i386__)
+@@ -243,6 +256,8 @@ static int bof_monotonic_milliseconds(bof_u64 *milliseconds) {
+     bof_timespec value;
+ #if defined(BOF_DARWIN)
+     const int clock_id = 6; /* CLOCK_MONOTONIC */
++#elif defined(BOF_NETBSD)
++    const int clock_id = 3; /* CLOCK_MONOTONIC */
+ #elif defined(BOF_FREEBSD)
+     const int clock_id = 4; /* CLOCK_MONOTONIC */
+ #else
+@@ -289,7 +304,7 @@ static void run_command(char *buffer, int length) {
+     (void)length;
+     bof_writer_init(&writer, CALLBACK_OUTPUT);
+     bof_puts(&writer, "ARP table:\n");
+-#if defined(BOF_DARWIN) || defined(BOF_FREEBSD)
++#if defined(BOF_DARWIN) || (defined(BOF_FREEBSD) || defined(BOF_NETBSD))
+     bof_file *stream = popen("/usr/sbin/arp -an", "r");
+     bof_uptr amount;
+     if (stream == (bof_file *)0) {
+@@ -299,7 +314,7 @@ static void run_command(char *buffer, int length) {
+     while ((amount = fread(chunk, 1U, sizeof(chunk), stream)) != 0U) {
+         bof_write(&writer, (const char *)chunk, amount);
+     }
+-#if defined(BOF_FREEBSD)
++#if (defined(BOF_FREEBSD) || defined(BOF_NETBSD))
+     if (pclose(stream) != 0) {
+         bof_error("/usr/sbin/arp returned an error");
+         return;
+@@ -346,7 +361,7 @@ static void run_command(char *buffer, int length) {
+         bof_puts(&writer, *environment++);
+         bof_putc(&writer, '\n');
+     }
+-#elif defined(BOF_FREEBSD)
++#elif (defined(BOF_FREEBSD) || defined(BOF_NETBSD))
+     bof_writer_init(&writer, CALLBACK_OUTPUT);
+     if (!bof_emit_command(&writer, "/usr/bin/env")) {
+         bof_error("unable to enumerate environment");
+@@ -443,6 +458,8 @@ static void run_command(char *buffer, int length) {
+     bof_timespec uptime;
+ #if defined(BOF_DARWIN)
+     const int clock_id = 6; /* CLOCK_MONOTONIC */
++#elif defined(BOF_NETBSD)
++    const int clock_id = 3; /* CLOCK_MONOTONIC */
+ #elif defined(BOF_FREEBSD)
+     const int clock_id = 5; /* CLOCK_UPTIME */
+ #else
+@@ -466,7 +483,7 @@ static void run_command(char *buffer, int length) {
+ 
+ static int bof_sockaddr_family(const void *address) {
+     const bof_u8 *raw = (const bof_u8 *)address;
+-#if defined(BOF_DARWIN) || defined(BOF_FREEBSD)
++#if defined(BOF_DARWIN) || (defined(BOF_FREEBSD) || defined(BOF_NETBSD))
+     return (int)raw[1];
+ #else
+     return (int)((bof_u16)raw[0] | ((bof_u16)raw[1] << 8U));
+@@ -474,7 +491,7 @@ static int bof_sockaddr_family(const void *address) {
+ }
+ 
+ static bof_u32 bof_sockaddr_length(const void *address, int family) {
+-#if defined(BOF_DARWIN) || defined(BOF_FREEBSD)
++#if defined(BOF_DARWIN) || (defined(BOF_FREEBSD) || defined(BOF_NETBSD))
+     const bof_u8 *raw = (const bof_u8 *)address;
+     if (raw[0] != 0U) {
+         return (bof_u32)raw[0];
+@@ -591,7 +608,7 @@ static void run_command(char *buffer, int length) {
+     if (!bof_emit_command(&writer, "/usr/sbin/netstat -an")) {
+         bof_puts(&writer, "netstat unavailable\n");
+     }
+-#elif defined(BOF_FREEBSD)
++#elif (defined(BOF_FREEBSD) || defined(BOF_NETBSD))
+     bof_puts(&writer, "requested_filter=");
+     bof_put_uint(&writer, (unsigned long)(unsigned int)filter);
+     bof_putc(&writer, '\n');
+@@ -825,7 +842,7 @@ static void run_command(char *buffer, int length) {
+ #if defined(BOF_DARWIN)
+     bof_puts(&writer, "Memory:\n");
+     if (!bof_emit_command(&writer, "/usr/bin/vm_stat")) bof_puts(&writer, "unavailable\n");
+-#elif defined(BOF_FREEBSD)
++#elif (defined(BOF_FREEBSD) || defined(BOF_NETBSD))
+     bof_puts(&writer, "Memory and load:\n");
+     if (!bof_emit_command(&writer, "/sbin/sysctl hw.physmem hw.usermem vm.loadavg")) {
+         bof_puts(&writer, "unavailable\n");
+@@ -853,7 +870,7 @@ static void run_command(char *buffer, int length) {
+     if (!bof_emit_command(&writer, "/usr/sbin/netstat -rn")) {
+         bof_puts(&writer, "routing information unavailable\n");
+     }
+-#elif defined(BOF_FREEBSD)
++#elif (defined(BOF_FREEBSD) || defined(BOF_NETBSD))
+     if (!bof_emit_command(&writer, "/usr/bin/netstat -rn")) {
+         bof_puts(&writer, "routing information unavailable\n");
+     }
+@@ -909,7 +926,7 @@ static void run_command(char *buffer, int length) {
+     if (!bof_emit_command(&writer, "/bin/ps -axo pid=,ppid=,comm=")) {
+         bof_puts(&writer, "process enumeration unavailable\n");
+     }
+-#elif defined(BOF_FREEBSD)
++#elif (defined(BOF_FREEBSD) || defined(BOF_NETBSD))
+     if (!bof_emit_command(&writer, "/bin/ps ax -o pid= -o ppid= -o comm=")) {
+         bof_puts(&writer, "process enumeration unavailable\n");
+     }
+diff --git a/portable/src/posix.c b/portable/src/posix.c
+index c721353..388dcc4 100644
+--- a/portable/src/posix.c
++++ b/portable/src/posix.c
+@@ -13,6 +13,12 @@
+ #error "define exactly one BOF_COMMAND_* macro"
+ #endif
+ 
++#if defined(BOF_NETBSD)
++#define getpwent __getpwent50
++#define getpwnam __getpwnam50
++#define getpwuid __getpwuid50
++#endif
++
+ #define POSIX_F_OK 0
+ #define POSIX_X_OK 1
+ #define POSIX_W_OK 2
+@@ -41,7 +47,7 @@ typedef struct posix_group {
+     char **members;
+ } posix_group;
+ 
+-#if defined(BOF_DARWIN) || defined(BOF_FREEBSD)
++#if defined(BOF_DARWIN) || (defined(BOF_FREEBSD) || defined(BOF_NETBSD))
+ typedef struct posix_passwd {
+     char *name;
+     char *password;
+@@ -82,7 +88,7 @@ extern posix_group *getgrgid(posix_gid gid);
+ extern unsigned int _dyld_image_count(void);
+ extern const char *_dyld_get_image_name(unsigned int index);
+ extern const char *getprogname(void);
+-#elif defined(BOF_FREEBSD)
++#elif (defined(BOF_FREEBSD) || defined(BOF_NETBSD))
+ extern const char *getprogname(void);
+ typedef struct {
+     bof_uptr address;
+@@ -384,7 +390,7 @@ static int posix_current_process_name(char *output, bof_uptr capacity) {
+ #endif
+ 
+ static const char *posix_process_name(char *storage, bof_uptr capacity) {
+-#if defined(BOF_DARWIN) || defined(BOF_FREEBSD)
++#if defined(BOF_DARWIN) || (defined(BOF_FREEBSD) || defined(BOF_NETBSD))
+     const char *name = getprogname();
+     (void)storage;
+     (void)capacity;
+@@ -423,7 +429,7 @@ static void posix_process_maps_line(bof_writer *writer, const char *line, bof_up
+ }
+ #endif
+ 
+-#if defined(BOF_FREEBSD)
++#if (defined(BOF_FREEBSD) || defined(BOF_NETBSD))
+ typedef struct {
+     bof_writer *writer;
+     const char *filter;
+@@ -459,7 +465,7 @@ static unsigned long posix_list_current_modules(bof_writer *writer, const char *
+             count++;
+         }
+     }
+-#elif defined(BOF_FREEBSD)
++#elif (defined(BOF_FREEBSD) || defined(BOF_NETBSD))
+     posix_module_context context;
+     context.writer = writer;
+     context.filter = filter;
+diff --git a/scripts/build-target.sh b/scripts/build-target.sh
+index 406a5fc..e977ba3 100755
+--- a/scripts/build-target.sh
++++ b/scripts/build-target.sh
+@@ -21,6 +21,7 @@ case "$goos/$goarch" in
+     linux/amd64) zig_target=x86_64-linux-none; platform_define=BOF_LINUX; object_pattern="ELF 64-bit LSB relocatable, x86-64" ;;
+     linux/arm64) zig_target=aarch64-linux-none; platform_define=BOF_LINUX; object_pattern="ELF 64-bit LSB relocatable, ARM aarch64" ;;
+     freebsd/amd64) zig_target=x86_64-freebsd-none; platform_define=BOF_FREEBSD; object_pattern="ELF 64-bit LSB relocatable, x86-64" ;;
++    netbsd/amd64) zig_target=x86_64-netbsd-none; platform_define=BOF_NETBSD; object_pattern="ELF 64-bit LSB relocatable, x86-64" ;;
+     freebsd/arm64) zig_target=aarch64-freebsd-none; platform_define=BOF_FREEBSD; object_pattern="ELF 64-bit LSB relocatable, ARM aarch64" ;;
+     darwin/amd64) zig_target=x86_64-macos-none; platform_define=BOF_DARWIN; object_pattern="Mach-O"; macho_cpu=07000001 ;;
+     darwin/arm64) zig_target=aarch64-macos-none; platform_define=BOF_DARWIN; object_pattern="Mach-O"; macho_cpu=0c000001 ;;
+diff --git a/scripts/generate-e2e-manifest.mjs b/scripts/generate-e2e-manifest.mjs
+index bb7f9ca..620b708 100755
+--- a/scripts/generate-e2e-manifest.mjs
++++ b/scripts/generate-e2e-manifest.mjs
+@@ -243,11 +243,21 @@ const freeBSDForbiddenMarkers = {
+   tasklist: ["process enumeration unavailable"],
+ };
+ 
++const netBSDExpectations = {
++  ...freeBSDExpectations,
++  findLoadedModule: ["Current-process loaded module matches:", "libc.so.12"],
++  listmods: ["Loaded modules:", "libc.so.12"],
++  netuser: ["Local POSIX user information:", "User name: root", "UID: 0", "Primary GID: 0"],
++  resources: ["System resources:", "Memory and load:", "hw.physmem:", "Disk:", "Filesystem"],
++  tasklist: ["Processes:", "init"],
++};
++
+ function expectation(command, os) {
+-  if (os === "freebsd" && freeBSDExpectations[command]) {
++  const bsdExpectations = os === "netbsd" ? netBSDExpectations : freeBSDExpectations;
++  if ((os === "freebsd" || os === "netbsd") && bsdExpectations[command]) {
+     return {
+       types: [0],
+-      contains_all: freeBSDExpectations[command],
++      contains_all: bsdExpectations[command],
+       not_contains: freeBSDForbiddenMarkers[command] ?? [],
+       min_callbacks: 1,
+     };
+@@ -309,7 +319,7 @@ for (const arch of ["386", "amd64", "arm64"]) {
+     });
+   }
+ }
+-for (const [os, arches] of [["linux", ["386", "amd64", "arm64"]], ["freebsd", ["amd64", "arm64"]], ["darwin", ["amd64", "arm64"]]]) {
++for (const [os, arches] of [["linux", ["386", "amd64", "arm64"]], ["freebsd", ["amd64", "arm64"]], ["netbsd", ["amd64"]], ["darwin", ["amd64", "arm64"]]]) {
+   for (const arch of arches) {
+     for (const command of portableCommands) {
+       let args = [];
+@@ -317,13 +327,13 @@ for (const [os, arches] of [["linux", ["386", "amd64", "arm64"]], ["freebsd", ["
+         args = [{ type: "string", value: fixtureDir }, { type: "int16", value: 0 }];
+       } else if (digestExpectations[command]) {
+         args = [{ type: "string", value: fixtureFile }];
+-      } else if (os === "freebsd" && freeBSDExplicitArguments[command]) {
++      } else if ((os === "freebsd" || os === "netbsd") && freeBSDExplicitArguments[command]) {
+         args = freeBSDExplicitArguments[command];
+       } else if (portableExplicitArguments[command]) {
+         args = portableExplicitArguments[command];
+       }
+       const artifact = { name: command, os, arch, path: `dist/${os}/${arch}/${command}.o`, args, expect: expectation(command, os) };
+-      if (os === "freebsd" && command === "probe") artifact.tcp_listener = { port_argument: 1 };
++      if ((os === "freebsd" || os === "netbsd") && command === "probe") artifact.tcp_listener = { port_argument: 1 };
+       artifacts.push(artifact);
+     }
+   }
