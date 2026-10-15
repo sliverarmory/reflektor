@@ -53,6 +53,31 @@ func writeThunk(destination []byte, target, thunk, got, toc uintptr) error {
 	return nil
 }
 
+func isMachOARM64VariadicCallback(object *objectFile, symbol string) bool {
+	if object.format != "macho" || object.arch != "arm64" {
+		return false
+	}
+	name := normalizeImportedSymbol(symbol)
+	return name == "BeaconPrintf" || name == "BeaconFormatPrintf"
+}
+
+func writeMachOARM64VariadicThunk(destination []byte, target uintptr) error {
+	if len(destination) < 24 || target == 0 {
+		return errors.New("Mach-O arm64 variadic bridge requires a 24-byte destination and callback")
+	}
+	clear(destination)
+	// Apple puts every variadic argument in 8-byte stack slots. The first
+	// two fixed Beacon arguments are already in x0/x1. Pass the original SP
+	// as a third fixed argument to a callback that reads slots on demand.
+	// ADD x2, sp, #0; LDR x16, #12; BR x16; NOP; .quad callback.
+	binary.LittleEndian.PutUint32(destination[0:4], 0x910003e2)
+	binary.LittleEndian.PutUint32(destination[4:8], 0x58000070)
+	binary.LittleEndian.PutUint32(destination[8:12], 0xd61f0200)
+	binary.LittleEndian.PutUint32(destination[12:16], 0xd503201f)
+	binary.LittleEndian.PutUint64(destination[16:24], uint64(target))
+	return nil
+}
+
 func writePPC64LEThunk(destination []byte, got, toc uintptr) error {
 	if len(destination) < 32 {
 		return errors.New("PPC64 ELFv2 import thunk requires a 32-byte destination")

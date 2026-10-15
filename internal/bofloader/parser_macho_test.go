@@ -81,7 +81,7 @@ func TestParseMachOAMD64Object(t *testing.T) {
 	}
 }
 
-func TestMachOArm64RejectsAppleVariadicCallbacksBeforeMapping(t *testing.T) {
+func TestMachOArm64AcceptsAppleVariadicCallbackImport(t *testing.T) {
 	image := buildMachOTestObject(machoCPUARM64, []machoTestSection{{
 		name:    "__text",
 		segment: "__TEXT",
@@ -94,9 +94,13 @@ func TestMachOArm64RejectsAppleVariadicCallbacksBeforeMapping(t *testing.T) {
 		{name: "_go", typeID: machoNSection | 1, section: 1},
 		{name: "_BeaconPrintf", typeID: machoNUndef | 1},
 	})
-	_, err := parseMachO(image)
-	if err == nil || !strings.Contains(err.Error(), "Apple's arm64 variadic ABI") || !strings.Contains(err.Error(), "BeaconOutput") {
-		t.Fatalf("parseMachO() error = %v, want Apple variadic-ABI guidance", err)
+	object, err := parseMachO(image)
+	if err != nil {
+		t.Fatalf("parseMachO() error = %v", err)
+	}
+	imports := objectImports(object, referencedLinkageSymbols(object))
+	if len(imports) != 1 || imports[0].Name != "_BeaconPrintf" || !imports[0].Builtin {
+		t.Fatalf("Mach-O imports = %#v, want native BeaconPrintf", imports)
 	}
 }
 

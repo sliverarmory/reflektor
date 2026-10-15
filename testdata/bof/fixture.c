@@ -49,15 +49,7 @@ void go(char *buffer, int32_t length) {
     BeaconOutput(0, success, (int32_t)(sizeof(success) - 1));
     // Keep these as literals so ARM64/COFF emits a section-symbol ADRP
     // relocation with a non-zero implicit byte addend.
-#if defined(BOF_DARWIN_ARM64_MACHO)
-    // Native Apple arm64 variadic arguments use a different ABI. Exercise the
-    // native Mach-O relocation path with BeaconOutput; the legacy Darwin ELF
-    // fixture retains the BeaconPrintf callback test.
-    static char formatted[] = "bof-printf=7:callback-ok";
-    BeaconOutput(0, formatted, (int32_t)(sizeof(formatted) - 1));
-#else
     BeaconPrintf(0, "bof-printf=%d:%s", 7, "callback-ok");
-#endif
 #if defined(__linux__) && defined(__arm__)
     // AAPCS32 leaves an alignment slot between the int and long long. Keep
     // this in the runtime fixture so the callback bridge proves that it
