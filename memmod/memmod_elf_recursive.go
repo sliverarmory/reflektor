@@ -830,9 +830,6 @@ func validateRecursiveELFFeatures(f *elf.File, symbols []elf.Symbol, goRuntime b
 			return fmt.Errorf("recursive ELF loading does not support TLS symbol %q", symbol.Name)
 		}
 	}
-	if section := f.Section(".relr.dyn"); section != nil && section.Size != 0 {
-		return errors.New("recursive ELF loading does not support packed RELR relocations")
-	}
 	if hasRecursiveIRelative(f) {
 		return errors.New("recursive ELF loading does not support IRELATIVE/IFUNC relocations")
 	}

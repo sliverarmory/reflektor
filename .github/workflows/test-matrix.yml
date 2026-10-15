@@ -274,7 +274,7 @@ jobs:
       - name: Install libcurl development files
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libcurl4-openssl-dev
+          sudo apt-get install -y --no-install-recommends libcurl4-openssl-dev lld
       - name: Run Linux C, Go, and Rust fixture tests
         run: |
           set -euo pipefail
@@ -298,6 +298,7 @@ jobs:
             TestNativePackageRustCallExportWithArgsLinux \
             TestNativePackageELFLifecycleLinux \
             TestNativePackageCSharedConsumerLinux \
+            TestPackedRELRSharedLibraries \
             TestLoadLibraryAndCallExport_Linux; do
             if ! grep -Fq -- "--- PASS: ${test_name} " linux-test.log; then
               echo "Required Linux test did not pass: ${test_name}"
@@ -310,7 +311,7 @@ jobs:
             echo "${unexpected_skips}"
             exit 1
           fi
-          CGO_ENABLED=0 go test ./integration -run '^(TestCallExportWith(Args|PuregoCallback)|TestNativePackage(CallExport|CallExportWithArgsLinux|RustCallExportWithArgsLinux|ELFLifecycleLinux|LinuxDependencyGraphIsIsolated))$' -count=1 -v | tee linux-nocgo-test.log
+          CGO_ENABLED=0 go test ./integration -run '^(TestCallExportWith(Args|PuregoCallback)|TestNativePackage(CallExport|CallExportWithArgsLinux|RustCallExportWithArgsLinux|ELFLifecycleLinux|LinuxDependencyGraphIsIsolated)|TestPackedRELRSharedLibraries)$' -count=1 -v | tee linux-nocgo-test.log
           for test_name in \
             TestCallExportWithArgs \
             TestCallExportWithPuregoCallback \
@@ -324,6 +325,10 @@ jobs:
               exit 1
             fi
           done
+          if ! grep -Fq -- '--- PASS: TestPackedRELRSharedLibraries ' linux-nocgo-test.log; then
+            echo 'Required CGO-free Linux packed RELR test did not pass'
+            exit 1
+          fi
           CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop)$' -count=1 -v | tee linux-bof-nocgo-test.log
           for test_name in TestLoadAndExecuteGeneratedBOF TestBOFLoadWithOptions TestConcurrentBOFStreaming TestSameImageBOFExecutionIsSerialized TestCooperativeBOFStop; do
             if ! grep -Fq -- "--- PASS: ${test_name} " linux-bof-nocgo-test.log; then

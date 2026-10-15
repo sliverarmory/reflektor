@@ -125,6 +125,7 @@ common_shared_tests=(
 	TestNativePackageCallExportWithArgsFreeBSD
 	TestNativePackageRustCallExportWithArgsFreeBSD
 	TestNativePackageELFLifecycleFreeBSD
+	TestPackedRELRSharedLibraries
 )
 for cgo_enabled in 0 1; do
 	shared_log="freebsd-shared-cgo-${cgo_enabled}-test.log"

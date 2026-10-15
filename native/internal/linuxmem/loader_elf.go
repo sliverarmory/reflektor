@@ -21,6 +21,7 @@ import (
 	"sync"
 	"unsafe"
 
+	"github.com/sliverarmory/reflektor/internal/elfrelr"
 	"github.com/sliverarmory/reflektor/native/internal/rejection"
 	"golang.org/x/sys/unix"
 )
@@ -412,6 +413,9 @@ func applyDynamicRelocations(mapped mappedELF, f *elf.File, resolver *symbolReso
 	}
 	if f.Data != elf.ELFDATA2LSB {
 		return fmt.Errorf("unsupported ELF endianness: %s", f.Data)
+	}
+	if err := elfrelr.Apply(f, mapped.mapping, mapped.loadBias); err != nil {
+		return err
 	}
 
 	dynSyms, err := f.DynamicSymbols()
