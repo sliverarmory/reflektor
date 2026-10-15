@@ -16,6 +16,7 @@ import (
 	"sync"
 	"unsafe"
 
+	"github.com/sliverarmory/reflektor/internal/elftls"
 	"golang.org/x/sys/unix"
 )
 
@@ -48,21 +49,24 @@ const (
 )
 
 type Module struct {
-	mu        sync.RWMutex
-	mapping   []byte
-	loadBias  uintptr
-	symbols   map[string]uintptr
-	goRuntime bool
-	recursive *linuxRecursiveGroup
-	closed    bool
+	mu          sync.RWMutex
+	mapping     []byte
+	loadBias    uintptr
+	symbols     map[string]uintptr
+	goRuntime   bool
+	tlsModuleID uint64
+	recursive   *linuxRecursiveGroup
+	closed      bool
 }
 
 type mappedELF struct {
-	mapping   []byte
-	loadBias  uintptr
-	progs     []*elf.Prog
-	tlsOffset int64
-	hasTLS    bool
+	mapping     []byte
+	loadBias    uintptr
+	progs       []*elf.Prog
+	tlsOffset   int64
+	hasTLS      bool
+	tlsModuleID uint64
+	tlsSize     uint64
 }
 
 type dynamicInitInfo struct {
@@ -117,13 +121,27 @@ func LoadLibrary(data []byte) (*Module, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := rejectGeneralELFTLS(f, goRuntime); err != nil {
-		return nil, err
+	var generalTLS *elftls.Template
+	if !goRuntime {
+		generalTLS, err = elftls.Inspect(f, data)
+		if err != nil {
+			return nil, err
+		}
 	}
 	tlsSlotReserved := goRuntime
 	defer func() {
 		if tlsSlotReserved {
 			releaseLinuxGoTLSSlot(tlsSlot)
+		}
+	}()
+	tlsModuleID, err := generalTLS.Register()
+	if err != nil {
+		return nil, err
+	}
+	generalTLSReserved := tlsModuleID != 0
+	defer func() {
+		if generalTLSReserved {
+			elftls.Release(tlsModuleID)
 		}
 	}()
 
@@ -133,6 +151,8 @@ func LoadLibrary(data []byte) (*Module, error) {
 	}
 	mapped.tlsOffset = tlsOffset
 	mapped.hasTLS = goRuntime
+	mapped.tlsModuleID = tlsModuleID
+	mapped.tlsSize = generalTLS.Size()
 	cleanup := true
 	defer func() {
 		if cleanup && len(mapped.mapping) != 0 {
@@ -167,11 +187,13 @@ func LoadLibrary(data []byte) (*Module, error) {
 	}
 
 	module := &Module{
-		mapping:   mapped.mapping,
-		loadBias:  mapped.loadBias,
-		symbols:   buildExportedSymbolTable(f, mapped.loadBias),
-		goRuntime: goRuntime,
+		mapping:     mapped.mapping,
+		loadBias:    mapped.loadBias,
+		symbols:     buildExportedSymbolTable(f, mapped.loadBias),
+		goRuntime:   goRuntime,
+		tlsModuleID: tlsModuleID,
 	}
+	generalTLSReserved = false
 	cleanup = false
 	return module, nil
 }
@@ -225,29 +247,6 @@ func prepareLinuxGoRuntimeTLS(f *elf.File) (bool, uintptr, int64, error) {
 	return true, slot, offset, nil
 }
 
-func rejectGeneralELFTLS(f *elf.File, goRuntime bool) error {
-	if goRuntime {
-		return nil
-	}
-	for _, program := range f.Progs {
-		if program.Type == elf.PT_TLS && (program.Memsz != 0 || program.Filesz != 0) {
-			return fmt.Errorf("general PT_TLS requires thread-local storage registration (filesz=%#x memsz=%#x)", program.Filesz, program.Memsz)
-		}
-	}
-	for _, readSymbols := range []func() ([]elf.Symbol, error){f.DynamicSymbols, f.Symbols} {
-		symbols, err := readSymbols()
-		if err != nil {
-			continue
-		}
-		for _, symbol := range symbols {
-			if elf.ST_TYPE(symbol.Info) == elf.STT_TLS {
-				return fmt.Errorf("TLS symbol %q requires thread-local storage registration", symbol.Name)
-			}
-		}
-	}
-	return nil
-}
-
 func releaseLinuxGoTLSSlot(slot uintptr) {
 	if slot >= linuxGoTLSSlotCount {
 		return
@@ -287,6 +286,8 @@ func (module *Module) Free() {
 		_ = unix.Munmap(module.mapping)
 		module.mapping = nil
 	}
+	elftls.Release(module.tlsModuleID)
+	module.tlsModuleID = 0
 	module.symbols = nil
 	module.loadBias = 0
 }
@@ -620,6 +621,20 @@ func applyOneRelocation(machine elf.Machine, class elf.Class, mapped mappedELF, 
 			addend = int64(int32(readU32(place)))
 		default:
 			return fmt.Errorf("unsupported ELF class: %s", class)
+		}
+	}
+	if machine == elf.EM_X86_64 && mapped.tlsModuleID != 0 {
+		if elf.R_X86_64(relocType) == elf.R_X86_64_DTPMOD64 &&
+			(!mappedAddressInRange(mapped.mapping, place+8, 8) || readU64(place+8) >= mapped.tlsSize) {
+			return errors.New("general PT_TLS module descriptor has an out-of-range offset")
+		}
+		value, handled, err := elftls.Relocate(mapped.tlsModuleID, mapped.tlsSize, dynSyms, symIndex, relocType, addend)
+		if handled {
+			if err != nil {
+				return err
+			}
+			writeU64(place, value)
+			return nil
 		}
 	}
 

@@ -309,9 +309,17 @@ Usage:
   libraries require OS-managed TLS, symbol versioning, loader registration, and
   other facilities that cannot be reproduced by simply reading a file—and some
   Darwin shared-cache images do not exist as standalone readable files.
-- FreeBSD and Linux root, `native`, and recursive custom images reject general
-  ELF TLS until thread-local storage registration and lifetime are implemented.
-  Recursive custom images also reject IFUNC/IRELATIVE and RELR with explicit
+- Linux/amd64 hosts built with `CGO_ENABLED=1` support local general-dynamic
+  C ELF TLS in root, `native`, and recursive custom images. The loader accepts
+  `PT_TLS` templates up to 64 KiB with alignment up to 4096, local
+  `R_X86_64_DTPMOD64` relocations, and `__tls_get_addr` calls. Each thread gets
+  its own initialized and zero-filled block on first access. `Close` releases
+  the shared template; a thread's block is reclaimed when that thread exits.
+  Module IDs are never reused, so a later load cannot alias old thread state.
+  Initial-exec TLS, TLSDESC, external TLS symbols, other ELF targets, and
+  `CGO_ENABLED=0` still receive explicit errors before mapping. Go c-shared
+  images continue to use their separate runtime TLS reservation.
+- Recursive custom images also reject IFUNC/IRELATIVE and RELR with explicit
   errors; these features remain available through the system-library carveout.
   Windows custom dependency cycles and delay-load import tables are also
   rejected explicitly. Darwin, FreeBSD, and Linux graph cycles are deduplicated.
@@ -335,6 +343,10 @@ C test shared libraries are generated from:
 - `reflektor/testdata/c/recursive_leaf.c`
 - `reflektor/testdata/c/recursive_middle.c`
 - `reflektor/testdata/c/recursive_root.c`
+- `reflektor/testdata/c/tls_runtime.c`
+- `reflektor/testdata/c/tls_external.c`
+- `reflektor/testdata/c/tls_recursive_root.c`
+- `reflektor/testdata/c/tls_recursive_leaf.c`
 
 The recursive C fixture is a transitive root -> middle -> leaf graph. Its test
 checks that the graph is absent from FreeBSD `procstat -v` mappings,

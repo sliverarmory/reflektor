@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/sliverarmory/reflektor/internal/elftls"
 	"golang.org/x/sys/unix"
 )
 
@@ -62,6 +63,8 @@ type linuxRecursiveNode struct {
 	exports  map[string][]linuxRecursiveExport
 
 	goRuntime       bool
+	tlsTemplate     *elftls.Template
+	tlsModuleID     uint64
 	tlsSlot         uintptr
 	tlsSlotReserved bool
 	initializers    []uintptr
@@ -214,7 +217,14 @@ func (loader *linuxRecursiveLoader) parseCustomNode(data []byte, path string) (*
 		return nil, fmt.Errorf("read dynamic symbol table: %w", err)
 	}
 	goRuntime := f.Section(".go.buildinfo") != nil
-	if err := validateRecursiveELFFeatures(f, dynamicSyms, goRuntime); err != nil {
+	var generalTLS *elftls.Template
+	if !goRuntime {
+		generalTLS, err = elftls.Inspect(f, data)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := validateRecursiveELFFeatures(f, dynamicSyms, goRuntime, generalTLS != nil); err != nil {
 		return nil, err
 	}
 
@@ -236,6 +246,7 @@ func (loader *linuxRecursiveLoader) parseCustomNode(data []byte, path string) (*
 		initInfo:    initInfo,
 		finiInfo:    finiInfo,
 		goRuntime:   goRuntime,
+		tlsTemplate: generalTLS,
 	}
 	node.addAlias(path)
 	node.addAlias(soname)
@@ -378,6 +389,11 @@ func (loader *linuxRecursiveLoader) mapAll() error {
 			node.tlsSlot = tlsSlot
 			node.tlsSlotReserved = true
 		}
+		tlsModuleID, err := node.tlsTemplate.Register()
+		if err != nil {
+			return fmt.Errorf("register TLS for recursive dependency %q: %w", node.path, err)
+		}
+		node.tlsModuleID = tlsModuleID
 
 		mapped, err := mapELFImage(node.raw, node.file)
 		if err != nil {
@@ -385,6 +401,8 @@ func (loader *linuxRecursiveLoader) mapAll() error {
 		}
 		mapped.tlsOffset = tlsOffset
 		mapped.hasTLS = goRuntime
+		mapped.tlsModuleID = tlsModuleID
+		mapped.tlsSize = node.tlsTemplate.Size()
 		node.mapped = mapped
 		node.exports, err = buildRecursiveExportTable(node)
 		if err != nil {
@@ -458,6 +476,7 @@ func (loader *linuxRecursiveLoader) releaseLoadMetadata() {
 			node.file = nil
 		}
 		node.raw = nil
+		node.tlsTemplate = nil
 		node.dynamicSyms = nil
 		node.exports = nil
 		node.dependencies = nil
@@ -667,6 +686,8 @@ func (group *linuxRecursiveGroup) free() {
 			_ = unix.Munmap(node.mapped.mapping)
 			node.mapped.mapping = nil
 		}
+		elftls.Release(node.tlsModuleID)
+		node.tlsModuleID = 0
 		if node.tlsSlotReserved {
 			releaseLinuxGoTLSSlot(node.tlsSlot)
 			node.tlsSlotReserved = false
@@ -816,9 +837,9 @@ func appendUniqueLinuxPaths(paths []string, additions []string) []string {
 	return paths
 }
 
-func validateRecursiveELFFeatures(f *elf.File, symbols []elf.Symbol, goRuntime bool) error {
+func validateRecursiveELFFeatures(f *elf.File, symbols []elf.Symbol, goRuntime bool, generalTLS bool) error {
 	for _, program := range f.Progs {
-		if program.Type == elf.PT_TLS && program.Memsz != 0 && !goRuntime {
+		if program.Type == elf.PT_TLS && program.Memsz != 0 && !goRuntime && !generalTLS {
 			return fmt.Errorf("recursive ELF loading does not support general PT_TLS (filesz=%#x memsz=%#x)", program.Filesz, program.Memsz)
 		}
 	}
@@ -826,7 +847,7 @@ func validateRecursiveELFFeatures(f *elf.File, symbols []elf.Symbol, goRuntime b
 		if elf.ST_TYPE(symbol.Info) == elf.STT_GNU_IFUNC {
 			return fmt.Errorf("recursive ELF loading does not support GNU IFUNC symbol %q", symbol.Name)
 		}
-		if elf.ST_TYPE(symbol.Info) == elf.STT_TLS && !goRuntime {
+		if elf.ST_TYPE(symbol.Info) == elf.STT_TLS && !goRuntime && !generalTLS {
 			return fmt.Errorf("recursive ELF loading does not support TLS symbol %q", symbol.Name)
 		}
 	}

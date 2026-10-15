@@ -1,4 +1,4 @@
-//go:build (freebsd && (amd64 || arm64)) || (linux && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64))
+//go:build ((freebsd && (amd64 || arm64)) || (linux && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64))) && !(linux && amd64 && cgo)
 
 package reflektor_test
 
