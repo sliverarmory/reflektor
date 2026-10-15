@@ -21,6 +21,7 @@ import (
 	"sync"
 	"unsafe"
 
+	"github.com/sliverarmory/reflektor/internal/elftls"
 	"github.com/sliverarmory/reflektor/native/internal/rejection"
 	"golang.org/x/sys/unix"
 )
@@ -80,15 +81,18 @@ type Module struct {
 	dynamicAPI        *linuxDynAPI
 	ownedDlopen       []uintptr
 	closeDlopenHandle func(*linuxDynAPI, uintptr) error
+	tlsModuleID       uint64
 	closed            bool
 }
 
 type mappedELF struct {
-	mapping   []byte
-	loadBias  uintptr
-	progs     []*elf.Prog
-	tlsOffset int64
-	hasTLS    bool
+	mapping     []byte
+	loadBias    uintptr
+	progs       []*elf.Prog
+	tlsOffset   int64
+	hasTLS      bool
+	tlsModuleID uint64
+	tlsSize     uint64
 }
 
 type dynamicInitInfo struct {
@@ -142,9 +146,20 @@ func LoadLibrary(data []byte) (*Module, error) {
 	if err := validateELFImage(data, f); err != nil {
 		return nil, err
 	}
-	if err := rejectGeneralELFTLS(f); err != nil {
+	generalTLS, err := elftls.Inspect(f, data)
+	if err != nil {
 		return nil, err
 	}
+	tlsModuleID, err := generalTLS.Register()
+	if err != nil {
+		return nil, err
+	}
+	tlsReserved := tlsModuleID != 0
+	defer func() {
+		if tlsReserved {
+			elftls.Release(tlsModuleID)
+		}
+	}()
 	initInfo, err := parseDynamicInitInfo(f)
 	if err != nil {
 		return nil, err
@@ -154,6 +169,8 @@ func LoadLibrary(data []byte) (*Module, error) {
 	if err != nil {
 		return nil, err
 	}
+	mapped.tlsModuleID = tlsModuleID
+	mapped.tlsSize = generalTLS.Size()
 	cleanup := true
 	defer func() {
 		if cleanup && len(mapped.mapping) != 0 {
@@ -196,7 +213,9 @@ func LoadLibrary(data []byte) (*Module, error) {
 		dynamicAPI:        resolver.api,
 		ownedDlopen:       resolver.takeOwnedLibraries(),
 		closeDlopenHandle: resolver.closeLibrary,
+		tlsModuleID:       tlsModuleID,
 	}
+	tlsReserved = false
 	cleanup = false
 	return module, nil
 }
@@ -213,6 +232,7 @@ func (module *Module) Free() {
 	dynamicAPI := module.dynamicAPI
 	ownedDlopen := module.ownedDlopen
 	closeDlopenHandle := module.closeDlopenHandle
+	tlsModuleID := module.tlsModuleID
 	module.finalizers = nil
 	module.mapping = nil
 	module.symbols = nil
@@ -220,6 +240,7 @@ func (module *Module) Free() {
 	module.dynamicAPI = nil
 	module.ownedDlopen = nil
 	module.closeDlopenHandle = nil
+	module.tlsModuleID = 0
 	module.mu.Unlock()
 
 	for _, finalizer := range finalizers {
@@ -228,6 +249,7 @@ func (module *Module) Free() {
 	if len(mapping) != 0 {
 		_ = unix.Munmap(mapping)
 	}
+	elftls.Release(tlsModuleID)
 	closeDlopenHandles(dynamicAPI, closeDlopenHandle, ownedDlopen)
 }
 
@@ -551,6 +573,20 @@ func applyOneRelocation(machine elf.Machine, class elf.Class, mapped mappedELF, 
 			addend = int64(int32(readU32(place)))
 		default:
 			return fmt.Errorf("unsupported ELF class: %s", class)
+		}
+	}
+	if machine == elf.EM_X86_64 && mapped.tlsModuleID != 0 {
+		if elf.R_X86_64(relocType) == elf.R_X86_64_DTPMOD64 &&
+			(!mappedAddressInRange(mapped.mapping, place+8, 8) || readU64(place+8) >= mapped.tlsSize) {
+			return errors.New("general PT_TLS module descriptor has an out-of-range offset")
+		}
+		value, handled, err := elftls.Relocate(mapped.tlsModuleID, mapped.tlsSize, dynSyms, symIndex, relocType, addend)
+		if handled {
+			if err != nil {
+				return err
+			}
+			writeU64(place, value)
+			return nil
 		}
 	}
 
@@ -1011,26 +1047,6 @@ func normalizeInitFnAddress(mapped mappedELF, fn uintptr) (uintptr, bool) {
 		return rebased, true
 	}
 	return 0, false
-}
-
-func rejectGeneralELFTLS(f *elf.File) error {
-	for _, program := range f.Progs {
-		if program.Type == elf.PT_TLS && (program.Memsz != 0 || program.Filesz != 0) {
-			return fmt.Errorf("general PT_TLS requires thread-local storage registration (filesz=%#x memsz=%#x)", program.Filesz, program.Memsz)
-		}
-	}
-	for _, readSymbols := range []func() ([]elf.Symbol, error){f.DynamicSymbols, f.Symbols} {
-		symbols, err := readSymbols()
-		if err != nil {
-			continue
-		}
-		for _, symbol := range symbols {
-			if elf.ST_TYPE(symbol.Info) == elf.STT_TLS {
-				return fmt.Errorf("TLS symbol %q requires thread-local storage registration", symbol.Name)
-			}
-		}
-	}
-	return nil
 }
 
 func buildExportedSymbolTable(f *elf.File, loadBias uintptr) map[string]uintptr {
