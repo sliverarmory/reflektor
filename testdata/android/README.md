@@ -1,6 +1,6 @@
 # Android arm64 feasibility probe
 
-This probe runs on the GitHub hosted `macos-15-arm64` runner. It uses the
+This probe runs on GitHub's arm64 `macos-15` runner. It uses the
 runner's preinstalled Android SDK and NDK to build two Android arm64 programs,
 then boots an Android API 35 arm64 emulator and runs them through `adb shell`.
 

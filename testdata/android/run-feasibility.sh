@@ -5,6 +5,11 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${repo_root}"
 
+if [[ "$(uname -m)" != arm64 ]]; then
+	echo "Android arm64 emulator probe requires an arm64 macOS runner" >&2
+	exit 1
+fi
+
 : "${ANDROID_HOME:?Android SDK must be preinstalled on the runner}"
 : "${ANDROID_NDK_HOME:?Android NDK must be preinstalled on the runner}"
 

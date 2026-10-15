@@ -16,7 +16,7 @@ permissions:
 jobs:
   android-arm64-feasibility:
     name: android-arm64-feasibility
-    runs-on: macos-15-arm64
+    runs-on: macos-15
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
