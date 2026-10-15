@@ -96,8 +96,6 @@ jobs:
             TestLoadGeneratedGoSharedLibraryRecursiveMode \
             TestLoadGeneratedRustSharedLibraryRecursiveMode \
             TestLoadLibraryRecursiveDependencies \
-            TestWindowsRecursiveDelayImports \
-            TestWindowsRecursiveDelayImportRejectsLegacyDescriptor \
             TestCallExportWithArgs \
             TestBOFPackageDependencyGraphIsIsolated \
             TestNativePackageCallExport \
@@ -637,6 +635,8 @@ jobs:
             TestLoadGeneratedGoSharedLibraryRecursiveMode \
             TestLoadGeneratedRustSharedLibraryRecursiveMode \
             TestLoadLibraryRecursiveDependencies \
+            TestWindowsRecursiveDelayImports \
+            TestWindowsRecursiveDelayImportRejectsLegacyDescriptor \
             TestCallExportWithArgs \
             TestBOFPackageDependencyGraphIsIsolated \
             TestNativePackageCallExport \
