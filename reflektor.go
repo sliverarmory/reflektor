@@ -31,8 +31,14 @@ const maxRecursiveDependencyFileSize = int64(512 << 20)
 
 type Library struct {
 	mu     sync.RWMutex
-	module *memmod.Module
+	module libraryModule
 	closed bool
+}
+
+type libraryModule interface {
+	CallExport(name string) error
+	CallExportWithArgs(name string, args ...uintptr) (uintptr, error)
+	Free()
 }
 
 // LoadLibrary loads a shared library image from memory.
@@ -346,20 +352,27 @@ func (library *Library) CallExportWithArgs(name string, args ...uintptr) (uintpt
 	return result, nil
 }
 
-// Close releases library resources. Go c-shared images remain mapped until
+// Close releases library resources. It waits for calls already using the
+// library, then marks it closed before unloading the module. Concurrent or
+// reentrant Close calls return once the handle is marked closed; only the first
+// Close waits for native unload and destructors to finish. Calls begun after
+// closure return ErrLibraryClosed. Go c-shared images remain mapped until
 // process exit because a started Go runtime cannot be unloaded safely.
 func (library *Library) Close() error {
 	library.mu.Lock()
-	defer library.mu.Unlock()
-
 	if library.closed {
+		library.mu.Unlock()
 		return nil
 	}
 	library.closed = true
+	module := library.module
+	library.module = nil
+	library.mu.Unlock()
 
-	if library.module != nil {
-		library.module.Free()
-		library.module = nil
+	// Native destructors may re-enter this Library. Do not hold its lock while
+	// running them; the closed state keeps new calls off the unmapped module.
+	if module != nil {
+		module.Free()
 	}
 	return nil
 }
