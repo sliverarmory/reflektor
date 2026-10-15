@@ -18,6 +18,10 @@ case "${target}" in
     zig_target="riscv64-linux-gnu"
     rust_target="riscv64gc-unknown-linux-gnu"
     ;;
+  linux/loong64)
+    zig_target="loongarch64-linux-gnu"
+    rust_target="loongarch64-unknown-linux-gnu"
+    ;;
   linux/ppc64le)
     zig_target="powerpc64le-linux-gnu"
     rust_target="powerpc64le-unknown-linux-gnu"

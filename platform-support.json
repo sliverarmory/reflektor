@@ -3,7 +3,7 @@
   "status_values": ["runtime", "runtime-emulated", "unsupported", "n-a"],
   "endian_values": ["little", "big"],
   "bof_format_values": ["elf", "macho", "coff", "xcoff", "undefined"],
-  "runner_values": ["github-native", "github-container", "github-qemu-freebsd-amd64", "github-qemu-freebsd-arm64", "github-qemu-arm-v7", "github-qemu-ppc64le", "github-qemu-riscv64", "none"],
+  "runner_values": ["github-native", "github-container", "github-qemu-freebsd-amd64", "github-qemu-freebsd-arm64", "github-qemu-arm-v7", "github-qemu-loong64", "github-qemu-ppc64le", "github-qemu-riscv64", "none"],
   "excluded_targets": ["js/wasm", "wasip1/wasm"],
   "targets": [
     {"goos": "aix", "goarch": "ppc64", "endian": "big", "bof_format": "xcoff", "bof": "unsupported", "bof_cgo_free": false, "root_shared": "unsupported", "native_shared": "unsupported", "recursive_shared": "unsupported", "go_c_shared": "n-a", "shared_cgo_free": false, "runner": "none"},
@@ -25,7 +25,7 @@
     {"goos": "linux", "goarch": "amd64", "endian": "little", "bof_format": "elf", "bof": "runtime", "bof_cgo_free": true, "root_shared": "runtime", "native_shared": "runtime", "recursive_shared": "runtime", "go_c_shared": "runtime", "shared_cgo_free": true, "runner": "github-native"},
     {"goos": "linux", "goarch": "arm", "goarm": "7,hardfloat", "endian": "little", "bof_format": "elf", "bof": "runtime-emulated", "bof_cgo_free": true, "root_shared": "runtime-emulated", "native_shared": "runtime-emulated", "recursive_shared": "runtime-emulated", "go_c_shared": "runtime-emulated", "shared_cgo_free": true, "runner": "github-qemu-arm-v7"},
     {"goos": "linux", "goarch": "arm64", "endian": "little", "bof_format": "elf", "bof": "runtime", "bof_cgo_free": true, "root_shared": "runtime", "native_shared": "runtime", "recursive_shared": "runtime", "go_c_shared": "runtime", "shared_cgo_free": true, "runner": "github-native"},
-    {"goos": "linux", "goarch": "loong64", "endian": "little", "bof_format": "elf", "bof": "unsupported", "bof_cgo_free": false, "root_shared": "unsupported", "native_shared": "unsupported", "recursive_shared": "unsupported", "go_c_shared": "unsupported", "shared_cgo_free": false, "runner": "none"},
+    {"goos": "linux", "goarch": "loong64", "endian": "little", "bof_format": "elf", "bof": "runtime-emulated", "bof_cgo_free": true, "root_shared": "runtime-emulated", "native_shared": "runtime-emulated", "recursive_shared": "runtime-emulated", "go_c_shared": "runtime-emulated", "shared_cgo_free": true, "runner": "github-qemu-loong64"},
     {"goos": "linux", "goarch": "mips", "endian": "big", "bof_format": "elf", "bof": "unsupported", "bof_cgo_free": false, "root_shared": "unsupported", "native_shared": "unsupported", "recursive_shared": "unsupported", "go_c_shared": "n-a", "shared_cgo_free": false, "runner": "none"},
     {"goos": "linux", "goarch": "mips64", "endian": "big", "bof_format": "elf", "bof": "unsupported", "bof_cgo_free": false, "root_shared": "unsupported", "native_shared": "unsupported", "recursive_shared": "unsupported", "go_c_shared": "n-a", "shared_cgo_free": false, "runner": "none"},
     {"goos": "linux", "goarch": "mips64le", "endian": "little", "bof_format": "elf", "bof": "unsupported", "bof_cgo_free": false, "root_shared": "unsupported", "native_shared": "unsupported", "recursive_shared": "unsupported", "go_c_shared": "n-a", "shared_cgo_free": false, "runner": "none"},

@@ -1,4 +1,4 @@
-//go:build (linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)) || (freebsd && (amd64 || arm64))
+//go:build (linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64 || loong64)) || (freebsd && (amd64 || arm64))
 
 package memmod
 
@@ -617,6 +617,8 @@ func applyOneRelocation(machine elf.Machine, class elf.Class, mapped mappedELF, 
 		return applyARMReloc(relocType, place, mapped.loadBias, symValue, addend, mapped.tlsOffset, mapped.hasTLS)
 	case elf.EM_RISCV:
 		return applyRISCV64Reloc(relocType, place, mapped.loadBias, symValue, addend, mapped.tlsOffset, mapped.hasTLS)
+	case elf.EM_LOONGARCH:
+		return applyLoong64Reloc(relocType, place, mapped.loadBias, symValue, addend, mapped.tlsOffset, mapped.hasTLS)
 	case elf.EM_PPC64:
 		return applyPPC64LEReloc(relocType, place, mapped.loadBias, symValue, addend, mapped.tlsOffset, mapped.hasTLS)
 	default:
@@ -766,6 +768,34 @@ func applyRISCV64Reloc(relocType uint32, place uintptr, loadBias uintptr, symVal
 		return nil
 	default:
 		return fmt.Errorf("unsupported riscv64 relocation type: %d", relocType)
+	}
+}
+
+func applyLoong64Reloc(relocType uint32, place uintptr, loadBias uintptr, symValue uintptr, addend int64, tlsOffset int64, hasTLS bool) error {
+	switch elf.R_LARCH(relocType) {
+	case elf.R_LARCH_NONE:
+		return nil
+	case elf.R_LARCH_RELATIVE:
+		writeU64(place, uint64(int64(loadBias)+addend))
+		return nil
+	case elf.R_LARCH_TLS_TPREL64:
+		if !hasTLS {
+			return errors.New("loong64 static TLS relocation has no reserved host TLS slot")
+		}
+		writeU64(place, uint64(tlsOffset+addend))
+		return nil
+	case elf.R_LARCH_JUMP_SLOT, elf.R_LARCH_64:
+		writeU64(place, uint64(int64(symValue)+addend))
+		return nil
+	case elf.R_LARCH_32:
+		value := int64(symValue) + addend
+		if value < 0 || value > 0xffffffff {
+			return fmt.Errorf("loong64 32-bit relocation overflow: value=%d", value)
+		}
+		writeU32(place, uint32(value))
+		return nil
+	default:
+		return fmt.Errorf("unsupported loong64 relocation type: %d", relocType)
 	}
 }
 
@@ -1160,6 +1190,8 @@ func commonLinuxDependencies() []string {
 		deps = append(deps, "ld-linux-armhf.so.3", "ld-linux.so.3", "ld-musl-armhf.so.1")
 	case "riscv64":
 		deps = append(deps, "ld-linux-riscv64-lp64d.so.1", "ld-musl-riscv64.so.1")
+	case "loong64":
+		deps = append(deps, "ld-linux-loongarch-lp64d.so.1", "ld-musl-loongarch64.so.1")
 	case "ppc64le":
 		deps = append(deps, "ld64.so.2", "ld-musl-powerpc64le.so.1")
 	}
@@ -1327,6 +1359,8 @@ func linuxLibrarySearchDirs() []string {
 		dirs = append(dirs, "/lib/arm-linux-gnueabihf", "/usr/lib/arm-linux-gnueabihf")
 	case "riscv64":
 		dirs = append(dirs, "/lib/riscv64-linux-gnu", "/usr/lib/riscv64-linux-gnu")
+	case "loong64":
+		dirs = append(dirs, "/lib/loongarch64-linux-gnu", "/usr/lib/loongarch64-linux-gnu")
 	case "ppc64le":
 		dirs = append(dirs, "/lib/powerpc64le-linux-gnu", "/usr/lib/powerpc64le-linux-gnu")
 	}
@@ -1883,6 +1917,10 @@ func validateLinuxELFABI(machine elf.Machine, class elf.Class, flags uint32) err
 		if unknown := flags &^ uint32(riscvKnownFlags); unknown != 0 {
 			return fmt.Errorf("unsupported RISC-V ELF flags %#x; unknown flags %#x", flags, unknown)
 		}
+	case elf.EM_LOONGARCH:
+		if flags != 0x43 {
+			return fmt.Errorf("unsupported LoongArch ELF flags %#x; require LP64D ABI v1 (0x43)", flags)
+		}
 	case elf.EM_PPC64:
 		const ppc64ABIMask = 0x00000003
 		if flags&ppc64ABIMask != 2 || flags&^uint32(ppc64ABIMask) != 0 {
@@ -1904,6 +1942,8 @@ func currentELFMachine() (elf.Machine, error) {
 		return elf.EM_ARM, nil
 	case "riscv64":
 		return elf.EM_RISCV, nil
+	case "loong64":
+		return elf.EM_LOONGARCH, nil
 	case "ppc64le":
 		return elf.EM_PPC64, nil
 	default:

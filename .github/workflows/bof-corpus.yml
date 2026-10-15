@@ -233,6 +233,10 @@ jobs:
             platform: linux/riscv64
             qemu_platform: riscv64
             dockerfile: testdata/docker/linux-riscv64-bof.Dockerfile
+          - goarch: loong64
+            platform: linux/loong64
+            qemu_platform: loong64
+            dockerfile: testdata/docker/linux-loong64-bof.Dockerfile
     defaults:
       run:
         shell: bash
@@ -281,14 +285,37 @@ jobs:
         with:
           version: 0.14.0
 
+      - name: Prepare pinned linux/loong64 corpus target
+        if: matrix.goarch == 'loong64'
+        working-directory: runtime/test/corpus/Situational-Awareness-BOFs
+        run: |
+          set -euo pipefail
+          git apply "${GITHUB_WORKSPACE}/runtime/testdata/corpus/situational-awareness-linux-loong64.patch"
+          manifest_tmp="$(mktemp)"
+          jq '
+            .artifacts += [
+              .artifacts[]
+              | select(.os == "linux" and .arch == "arm64")
+              | .os = "linux"
+              | .arch = "loong64"
+              | .path |= sub("^dist/linux/arm64/"; "dist/linux/loong64/")
+            ]
+          ' testdata/e2e-manifest.json > "${manifest_tmp}"
+          mv "${manifest_tmp}" testdata/e2e-manifest.json
+
       - name: Build and inspect target BOF corpus
         working-directory: runtime/test/corpus/Situational-Awareness-BOFs
         run: ./scripts/build-target.sh linux "$GOARCH"
 
       - name: Set up QEMU
+        if: matrix.goarch != 'loong64'
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
         with:
           platforms: ${{ matrix.qemu_platform }}
+
+      - name: Install pinned LoongArch QEMU binfmt
+        if: matrix.goarch == 'loong64'
+        run: docker run --privileged --rm ghcr.io/loong64/binfmt@sha256:abe730caa95d5495aa1b888e2d77eadc41b3ea303ef75e2d82f8dad420b7f4d9 --install loong64
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
