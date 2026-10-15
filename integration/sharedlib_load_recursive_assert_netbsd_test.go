@@ -1,4 +1,4 @@
-//go:build netbsd && amd64
+//go:build netbsd && (amd64 || arm64)
 
 package reflektor_test
 

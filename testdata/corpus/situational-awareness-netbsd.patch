@@ -210,11 +210,12 @@ diff --git a/scripts/build-target.sh b/scripts/build-target.sh
 index 406a5fc..e977ba3 100755
 --- a/scripts/build-target.sh
 +++ b/scripts/build-target.sh
-@@ -21,6 +21,7 @@ case "$goos/$goarch" in
+@@ -21,6 +21,8 @@ case "$goos/$goarch" in
      linux/amd64) zig_target=x86_64-linux-none; platform_define=BOF_LINUX; object_pattern="ELF 64-bit LSB relocatable, x86-64" ;;
      linux/arm64) zig_target=aarch64-linux-none; platform_define=BOF_LINUX; object_pattern="ELF 64-bit LSB relocatable, ARM aarch64" ;;
      freebsd/amd64) zig_target=x86_64-freebsd-none; platform_define=BOF_FREEBSD; object_pattern="ELF 64-bit LSB relocatable, x86-64" ;;
 +    netbsd/amd64) zig_target=x86_64-netbsd-none; platform_define=BOF_NETBSD; object_pattern="ELF 64-bit LSB relocatable, x86-64" ;;
++    netbsd/arm64) zig_target=aarch64-netbsd-none; platform_define=BOF_NETBSD; object_pattern="ELF 64-bit LSB relocatable, ARM aarch64" ;;
      freebsd/arm64) zig_target=aarch64-freebsd-none; platform_define=BOF_FREEBSD; object_pattern="ELF 64-bit LSB relocatable, ARM aarch64" ;;
      darwin/amd64) zig_target=x86_64-macos-none; platform_define=BOF_DARWIN; object_pattern="Mach-O"; macho_cpu=07000001 ;;
      darwin/arm64) zig_target=aarch64-macos-none; platform_define=BOF_DARWIN; object_pattern="Mach-O"; macho_cpu=0c000001 ;;
@@ -251,7 +252,7 @@ index bb7f9ca..620b708 100755
    }
  }
 -for (const [os, arches] of [["linux", ["386", "amd64", "arm64"]], ["freebsd", ["amd64", "arm64"]], ["darwin", ["amd64", "arm64"]]]) {
-+for (const [os, arches] of [["linux", ["386", "amd64", "arm64"]], ["freebsd", ["amd64", "arm64"]], ["netbsd", ["amd64"]], ["darwin", ["amd64", "arm64"]]]) {
++for (const [os, arches] of [["linux", ["386", "amd64", "arm64"]], ["freebsd", ["amd64", "arm64"]], ["netbsd", ["amd64", "arm64"]], ["darwin", ["amd64", "arm64"]]]) {
    for (const arch of arches) {
      for (const command of portableCommands) {
        let args = [];

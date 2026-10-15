@@ -75,6 +75,8 @@ func rustTargetFor(goos string, goarch string) (string, bool) {
 		return "aarch64-unknown-freebsd", true
 	case goos == "netbsd" && goarch == "amd64":
 		return "x86_64-unknown-netbsd", true
+	case goos == "netbsd" && goarch == "arm64":
+		return "aarch64-unknown-netbsd", true
 	case goos == "linux" && goarch == "386":
 		return "i686-unknown-linux-gnu", true
 	case goos == "linux" && goarch == "amd64":

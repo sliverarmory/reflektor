@@ -28,6 +28,7 @@ var sharedLibTargets = []sharedLibTarget{
 	{goos: "linux", goarch: "ppc64le", ext: "so", fileProbe: "64-bit PowerPC"},
 	{goos: "linux", goarch: "riscv64", ext: "so", fileProbe: "UCB RISC-V"},
 	{goos: "netbsd", goarch: "amd64", ext: "so", fileProbe: "x86-64"},
+	{goos: "netbsd", goarch: "arm64", ext: "so", fileProbe: "ARM aarch64"},
 	{goos: "windows", goarch: "386", ext: "dll", fileProbe: "Intel 80386"},
 	{goos: "windows", goarch: "amd64", ext: "dll", fileProbe: "x86-64"},
 	{goos: "windows", goarch: "arm64", ext: "dll", fileProbe: "Aarch64"},
@@ -119,6 +120,8 @@ func buildCSharedLib(t *testing.T, outDir string, goos string, goarch string, ba
 		zigTarget, ext = "aarch64-freebsd", "so"
 	case goos == "netbsd" && goarch == "amd64":
 		zigTarget, ext = "x86_64-netbsd", "so"
+	case goos == "netbsd" && goarch == "arm64":
+		zigTarget, ext = "aarch64-netbsd", "so"
 	case goos == "linux" && goarch == "386":
 		zigTarget, ext = "x86-linux-gnu", "so"
 	case goos == "linux" && goarch == "amd64":

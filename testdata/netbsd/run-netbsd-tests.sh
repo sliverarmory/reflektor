@@ -5,19 +5,24 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${repo_root}"
 
-if [[ "$(uname -s)" != NetBSD || "$(go env GOOS)/$(go env GOARCH)" != netbsd/amd64 ]]; then
-	echo "NetBSD/amd64 runtime tests require a NetBSD/amd64 guest" >&2
+goarch="$(go env GOARCH)"
+if [[ "$(uname -s)" != NetBSD || "$(go env GOOS)" != netbsd || ( "${goarch}" != amd64 && "${goarch}" != arm64 ) ]]; then
+	echo "NetBSD runtime tests require a NetBSD/amd64 or NetBSD/arm64 guest" >&2
 	exit 1
 fi
+case "${goarch}" in
+	amd64) zig_arch=x86_64; rust_arch=x86_64 ;;
+	arm64) zig_arch=aarch64; rust_arch=aarch64 ;;
+esac
 for command in bash cargo cc file go pmap rustc zig; do
 	command -v "${command}" >/dev/null || { echo "missing NetBSD test tool: ${command}" >&2; exit 1; }
 done
 
 : "${REFLEKTOR_BOF_CORPUS_DIR:?REFLEKTOR_BOF_CORPUS_DIR must point to the pinned BOF corpus checkout}"
-corpus_dir="${REFLEKTOR_BOF_CORPUS_DIR}/dist/netbsd/amd64"
+corpus_dir="${REFLEKTOR_BOF_CORPUS_DIR}/dist/netbsd/${goarch}"
 corpus_count="$(find "${corpus_dir}" -maxdepth 1 -type f -name '*.o' | wc -l | tr -d '[:space:]')"
 if [[ "${corpus_count}" != 25 ]]; then
-	echo "NetBSD/amd64 BOF corpus contains ${corpus_count} objects, want exactly 25" >&2
+	echo "NetBSD/${goarch} BOF corpus contains ${corpus_count} objects, want exactly 25" >&2
 	exit 1
 fi
 
@@ -47,12 +52,12 @@ assert_passes() {
 	local name
 	for name in "$@"; do
 		if ! grep -Fq -- "--- PASS: ${name} " "${log_path}"; then
-			echo "required NetBSD/amd64 test did not pass: ${name}" >&2
+			echo "required NetBSD/${goarch} test did not pass: ${name}" >&2
 			exit 1
 		fi
 	done
 	if grep -Eq '^[[:space:]]*--- SKIP:' "${log_path}"; then
-		echo "NetBSD/amd64 tests were skipped:" >&2
+		echo "NetBSD/${goarch} tests were skipped:" >&2
 		grep -E '^[[:space:]]*--- SKIP:' "${log_path}" >&2
 		exit 1
 	fi
@@ -109,18 +114,18 @@ for cgo_enabled in 0 1; do
 		rm -rf "${shared_test_dir}"
 	fi
 	if grep -Eq '^[[:space:]]*--- SKIP:' "netbsd-packages-cgo-${cgo_enabled}-test.log"; then
-		echo "NetBSD/amd64 package tests were skipped with CGO_ENABLED=${cgo_enabled}" >&2
+		echo "NetBSD/${goarch} package tests were skipped with CGO_ENABLED=${cgo_enabled}" >&2
 		exit 1
 	fi
 	assert_passes "netbsd-shared-cgo-${cgo_enabled}-test.log" "${required_tests[@]}"
 done
 
 if CGO_ENABLED=1 go build -buildmode=c-shared -o /tmp/reflektor-netbsd-unsupported.so ./testdata/go/basic >netbsd-go-c-shared-unsupported.log 2>&1; then
-	echo "Go unexpectedly built a netbsd/amd64 c-shared image" >&2
+	echo "Go unexpectedly built a netbsd/${goarch} c-shared image" >&2
 	exit 1
 fi
-if ! grep -Fq -- '-buildmode=c-shared not supported on netbsd/amd64' netbsd-go-c-shared-unsupported.log; then
-	echo "Go netbsd/amd64 c-shared failure changed unexpectedly" >&2
+if ! grep -Fq -- "-buildmode=c-shared not supported on netbsd/${goarch}" netbsd-go-c-shared-unsupported.log; then
+	echo "Go netbsd/${goarch} c-shared failure changed unexpectedly" >&2
 	cat netbsd-go-c-shared-unsupported.log >&2
 	exit 1
 fi
@@ -129,15 +134,15 @@ cli_dir="$(mktemp -d /tmp/reflektor-netbsd-cli-e2e.XXXXXX)"
 trap 'rm -rf -- "${cli_dir}"' EXIT
 cli_c_fixture="${cli_dir}/basic-c.so"
 cli_rust_target_dir="${cli_dir}/cargo-target"
-cli_rust_fixture="${cli_rust_target_dir}/x86_64-unknown-netbsd/release/libreflektor_http_fixture.so"
+cli_rust_fixture="${cli_rust_target_dir}/${rust_arch}-unknown-netbsd/release/libreflektor_http_fixture.so"
 
-zig cc -target x86_64-netbsd -shared -fPIC -O2 -g0 \
+zig cc -target "${zig_arch}-netbsd" -shared -fPIC -O2 -g0 \
 	-o "${cli_c_fixture}" testdata/c/basic.c
 cargo build \
 	--manifest-path testdata/rust/Cargo.toml \
 	--locked \
 	--release \
-	--target x86_64-unknown-netbsd \
+	--target "${rust_arch}-unknown-netbsd" \
 	--target-dir "${cli_rust_target_dir}"
 
 run_cli_fixture() {
@@ -151,11 +156,11 @@ run_cli_fixture() {
 	rm -f "${marker_path}"
 	output="$(REFLEKTOR_MARKER="${marker_path}" "${cli_path}" "${fixture_path}" --call-export StartW)"
 	if [[ "${output}" != "ok" ]]; then
-		echo "NetBSD/amd64 ${fixture_name} CLI with CGO_ENABLED=${cgo_enabled} output=${output@Q}, want ok" >&2
+		echo "NetBSD/${goarch} ${fixture_name} CLI with CGO_ENABLED=${cgo_enabled} output=${output@Q}, want ok" >&2
 		exit 1
 	fi
 	if [[ ! -s "${marker_path}" || "$(cat "${marker_path}")" != "${expected_marker}" ]]; then
-		echo "NetBSD/amd64 ${fixture_name} CLI with CGO_ENABLED=${cgo_enabled} marker mismatch" >&2
+		echo "NetBSD/${goarch} ${fixture_name} CLI with CGO_ENABLED=${cgo_enabled} marker mismatch" >&2
 		exit 1
 	fi
 }
@@ -172,4 +177,4 @@ for cgo_enabled in 0 1; do
 	run_cli_fixture "${cgo_enabled}" rust "${cli_rust_fixture}" ok:200
 done
 
-echo "NetBSD/amd64 BOF, C/Rust root, native, recursive, and CLI runtime tests passed"
+echo "NetBSD/${goarch} BOF, C/Rust root, native, recursive, and CLI runtime tests passed"

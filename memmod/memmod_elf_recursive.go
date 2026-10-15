@@ -1,4 +1,4 @@
-//go:build (linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)) || (freebsd && (amd64 || arm64)) || (netbsd && amd64)
+//go:build (linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)) || (freebsd && (amd64 || arm64)) || (netbsd && (amd64 || arm64))
 
 package memmod
 
@@ -215,7 +215,7 @@ func (loader *linuxRecursiveLoader) parseCustomNode(data []byte, path string) (*
 	}
 	goRuntime := f.Section(".go.buildinfo") != nil
 	if goRuntime && runtime.GOOS == "netbsd" {
-		return nil, errors.New("Go c-shared images are unsupported on netbsd/amd64")
+		return nil, fmt.Errorf("Go c-shared images are unsupported on netbsd/%s", runtime.GOARCH)
 	}
 	if err := validateRecursiveELFFeatures(f, dynamicSyms, goRuntime); err != nil {
 		return nil, err

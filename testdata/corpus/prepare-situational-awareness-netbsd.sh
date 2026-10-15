@@ -26,10 +26,10 @@ else
 fi
 
 node "${corpus_dir}/scripts/generate-e2e-manifest.mjs" --write
-count="$(jq -er '[.artifacts[] | select(.os == "netbsd" and .arch == "amd64")] | length' "${corpus_dir}/testdata/e2e-manifest.json")"
-if [[ "${count}" -ne 25 ]]; then
-	echo "error: generated manifest has ${count} NetBSD/amd64 BOFs, want 25" >&2
+count="$(jq -er '[.artifacts[] | select(.os == "netbsd" and (.arch == "amd64" or .arch == "arm64"))] | length' "${corpus_dir}/testdata/e2e-manifest.json")"
+if [[ "${count}" -ne 50 ]]; then
+	echo "error: generated manifest has ${count} NetBSD BOFs, want 50" >&2
 	exit 1
 fi
 
-echo "prepared Situational-Awareness-BOFs for NetBSD/amd64"
+echo "prepared Situational-Awareness-BOFs for NetBSD/amd64 and arm64"
