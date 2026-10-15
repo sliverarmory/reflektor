@@ -36,6 +36,9 @@ jobs:
       - name: Check OpenBSD executable-memory policy in guest
         shell: cpa.sh {0} --sync-files runner-to-vm
         run: sh testdata/openbsd/run-feasibility.sh
+      - name: Check CGo foreign call and callback in OpenBSD guest
+        shell: cpa.sh {0} --sync-files runner-to-vm
+        run: sh testdata/openbsd/check-cgo-bridge.sh
 
   darwin:
     name: darwin-${{ matrix.goarch }}

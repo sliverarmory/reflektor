@@ -30,7 +30,16 @@ Reflektor's BOF callback and invocation paths and its shared-library call and
 dynamic-symbol paths all use this dependency. Adding OpenBSD build tags alone
 would leave those paths unbuildable.
 
-To repeat the two probes:
+The same PureGo probe also fails natively in the OpenBSD 7.9 guest with
+Go 1.26.6 and `CGO_ENABLED=1`, with the same missing ABI definitions. A small
+[CGo probe](cgo_ffi_probe/main.go) did pass in that guest: it used `dlopen`
+and `dlsym` to call libc's `getpid` through a function pointer, then called
+back into Go through an exported function. This establishes the primitive
+foreign call and callback path only. A maintained Reflektor bridge would need
+the loader's complete argument and callback signatures, symbol resolution,
+thread and lifetime rules, and end-to-end BOF and library tests.
+
+To repeat the probes:
 
 ```sh
 # On a host with the pinned Go toolchain:
@@ -38,11 +47,13 @@ bash testdata/openbsd/check-purego-bridge.sh
 
 # Inside an OpenBSD/amd64 guest with the checkout synchronized:
 sh testdata/openbsd/run-feasibility.sh
+sh testdata/openbsd/check-cgo-bridge.sh
 ```
 
-The CI feasibility job repeats both probes. Its PureGo step accepts only a
-successful build or the known missing-ABI failure. An unrelated build error
-fails the job.
+The CI feasibility job repeats the executable-memory and CGo probes in its
+OpenBSD guest, then verifies the native CGo-enabled PureGo result. Both PureGo
+checks accept only a successful build or the known missing-ABI failure. An
+unrelated build error fails the job.
 
 ## Full support gate
 
