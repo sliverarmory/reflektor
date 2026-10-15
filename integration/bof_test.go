@@ -179,6 +179,11 @@ func nativeBOFTarget() (bofTarget, bool) {
 			return target, true
 		}
 	}
+	if runtime.GOOS == "netbsd" && runtime.GOARCH == "amd64" {
+		// Exercise every native BOF lifecycle before claiming runtime support
+		// in the fixture matrix and capability manifest.
+		return bofTarget{goos: "netbsd", goarch: "amd64", zigTarget: "x86_64-netbsd-none", format: "elf"}, true
+	}
 	return bofTarget{}, false
 }
 

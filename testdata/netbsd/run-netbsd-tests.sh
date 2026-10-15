@@ -56,10 +56,16 @@ CGO_ENABLED=0 go test "${purego_gcflags[@]}" ./bof ./internal/bofloader -count=1
 
 bof_tests=(
 	TestNetBSDGeneratedBOF
+	TestLoadAndExecuteGeneratedBOF
+	TestBOFLoadWithOptions
+	TestConcurrentBOFStreaming
+	TestSameImageBOFExecutionIsSerialized
+	TestCooperativeBOFStop
+	TestBOFPackageDependencyGraphIsIsolated
 	TestPlatformSupportManifest
 )
 bof_pattern="^($(IFS='|'; echo "${bof_tests[*]}"))$"
-CGO_ENABLED=0 go test "${purego_gcflags[@]}" ./integration -run "${bof_pattern}" -count=1 -v | tee netbsd-bof-test.log
+CGO_ENABLED=0 go test "${purego_gcflags[@]}" ./integration -run "${bof_pattern}" -timeout 45m -count=1 -v | tee netbsd-bof-test.log
 assert_passes netbsd-bof-test.log "${bof_tests[@]}"
 
 CGO_ENABLED=0 go test "${purego_gcflags[@]}" ./integration -run '^TestSituationalAwarenessBOFCorpus$' -timeout 45m -count=1 -v | tee netbsd-bof-corpus-test.log
