@@ -78,6 +78,7 @@ CGO_ENABLED=0 go test "${purego_gcflags[@]}" ./integration -run '^TestSituationa
 assert_passes netbsd-bof-corpus-test.log TestSituationalAwarenessBOFCorpus
 
 common_shared_tests=(
+	TestNetBSDSharedLoadersRejectMalformedAndWrongArchitecture
 	TestLoadGeneratedCNetBSDSOAndCallStartW
 	TestLoadGeneratedRustNetBSDSharedLibrary
 	TestLoadGeneratedCSharedLibraryRecursiveMode

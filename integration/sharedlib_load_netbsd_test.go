@@ -4,6 +4,8 @@ package reflektor_test
 
 import (
 	"bytes"
+	"debug/elf"
+	"encoding/binary"
 	"errors"
 	"os"
 	"path/filepath"
@@ -18,6 +20,45 @@ func TestNetBSDGeneratedBOF(t *testing.T) {
 	testLoadAndExecuteGeneratedBOF(t, bofTarget{
 		goos: "netbsd", goarch: "amd64", zigTarget: "x86_64-netbsd-none", format: "elf",
 	})
+}
+
+func TestNetBSDSharedLoadersRejectMalformedAndWrongArchitecture(t *testing.T) {
+	path := buildOneSharedLib(t, t.TempDir(), "netbsd", "amd64")
+	image, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongMachine := bytes.Clone(image)
+	binary.LittleEndian.PutUint16(wrongMachine[18:20], uint16(elf.EM_AARCH64))
+
+	for _, input := range []struct {
+		name string
+		data []byte
+	}{
+		{name: "malformed", data: []byte("not an ELF image")},
+		{name: "wrong architecture", data: wrongMachine},
+	} {
+		t.Run(input.name, func(t *testing.T) {
+			if library, err := reflektor.LoadLibrary(input.data); err == nil {
+				if library != nil {
+					_ = library.Close()
+				}
+				t.Fatal("root loader accepted invalid image")
+			}
+			if library, err := reflektor.LoadLibraryRecursive(input.data); err == nil {
+				if library != nil {
+					_ = library.Close()
+				}
+				t.Fatal("recursive loader accepted invalid image")
+			}
+			if library, err := native.LoadLibrary(input.data); err == nil {
+				if library != nil {
+					_ = library.Close()
+				}
+				t.Fatal("native loader accepted invalid image")
+			}
+		})
+	}
 }
 
 func TestLoadGeneratedCNetBSDSOAndCallStartW(t *testing.T) {
