@@ -511,6 +511,71 @@ jobs:
           docker build --platform linux/riscv64 -f testdata/docker/linux-riscv64-bof.Dockerfile -t reflektor-linux-riscv64-bof-ci .
           docker run --rm --platform linux/riscv64 reflektor-linux-riscv64-bof-ci
 
+  linux-loong64-bof:
+    name: linux-loong64-full-qemu
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out Situational Awareness BOF corpus
+        uses: actions/checkout@v4
+        with:
+          repository: sliverarmory/Situational-Awareness-BOFs
+          ref: 693174ff525595c5ec61b08fdccb5f057ad52c94
+          path: test/corpus/Situational-Awareness-BOFs
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.0
+      - name: Build and inspect linux/loong64 BOF fixtures
+        run: |
+          set -euo pipefail
+          mkdir -p test/bof-fixtures
+          REFLEKTOR_BOF_FIXTURE_DIR="${GITHUB_WORKSPACE}/test/bof-fixtures" \
+            CGO_ENABLED=0 go test ./integration \
+              -run '^TestBuildBOFMatrix$/^linux-loong64$' -count=1 -v | tee linux-loong64-fixture-build-test.log
+          if ! grep -Fq -- '--- PASS: TestBuildBOFMatrix ' linux-loong64-fixture-build-test.log; then
+            echo "The linux/loong64 BOF fixture build and inspection did not pass."
+            exit 1
+          fi
+          test -s test/bof-fixtures/fixture_linux_loong64.o
+          test -s test/bof-fixtures/options_fixture_linux_loong64.o
+          test -s test/bof-fixtures/async_fixture_linux_loong64.o
+          test -s test/bof-fixtures/stop_fixture_linux_loong64.o
+      - name: Prepare pinned linux/loong64 BOF corpus
+        working-directory: test/corpus/Situational-Awareness-BOFs
+        run: |
+          set -euo pipefail
+          git apply "${GITHUB_WORKSPACE}/testdata/corpus/situational-awareness-linux-loong64.patch"
+          manifest_tmp="$(mktemp)"
+          jq '
+            .artifacts += [
+              .artifacts[]
+              | select(.os == "linux" and .arch == "arm64")
+              | .os = "linux"
+              | .arch = "loong64"
+              | .path |= sub("^dist/linux/arm64/"; "dist/linux/loong64/")
+            ]
+          ' testdata/e2e-manifest.json > "${manifest_tmp}"
+          mv "${manifest_tmp}" testdata/e2e-manifest.json
+          ./scripts/build-target.sh linux loong64
+      - name: Install pinned LoongArch QEMU binfmt
+        run: docker run --privileged --rm ghcr.io/loong64/binfmt@sha256:abe730caa95d5495aa1b888e2d77eadc41b3ea303ef75e2d82f8dad420b7f4d9 --install loong64
+      - uses: docker/setup-buildx-action@v3
+      - name: Run full linux/loong64 BOF and shared-library tests under QEMU
+        run: |
+          set -euo pipefail
+          docker build --platform linux/loong64 -f testdata/docker/linux-loong64-bof.Dockerfile -t reflektor-linux-loong64-bof-ci .
+          docker run --rm --platform linux/loong64 reflektor-linux-loong64-bof-ci
+
   linux-ppc64le-bof:
     name: linux-ppc64le-full-qemu
     runs-on: ubuntu-24.04
@@ -741,6 +806,7 @@ jobs:
           linux amd64
           linux arm
           linux arm64
+          linux loong64
           linux ppc64le
           linux riscv64
           windows 386
@@ -784,6 +850,7 @@ jobs:
           linux amd64
           linux arm
           linux arm64
+          linux loong64
           linux ppc64le
           linux riscv64
           windows 386
@@ -812,6 +879,7 @@ jobs:
           linux amd64
           linux arm
           linux arm64
+          linux loong64
           linux ppc64le
           linux riscv64
           windows 386

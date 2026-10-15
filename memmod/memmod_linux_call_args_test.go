@@ -1,4 +1,4 @@
-//go:build linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)
+//go:build linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64 || loong64)
 
 package memmod
 
@@ -212,6 +212,8 @@ func linuxCallArgsZigTarget(t *testing.T) string {
 		return "arm-linux-gnueabihf"
 	case "riscv64":
 		return "riscv64-linux-gnu"
+	case "loong64":
+		return "loongarch64-linux-gnu"
 	case "ppc64le":
 		return "powerpc64le-linux-gnu"
 	default:

@@ -144,8 +144,10 @@ func patchLoongPageHigh20(location []byte, target, place uint64, addend int64) e
 func patchLoongLow12(location []byte, target uint64, addend int64) error {
 	word := binary.LittleEndian.Uint32(location)
 	// The BOF fixtures use addi.d for addresses and ld.d for GOT slots.
-	if word&0xffc00000 != 0x02c00000 && word&0xffc00000 != 0x28c00000 {
-		return fmt.Errorf("LoongArch low relocation requires addi.d or ld.d, got %#08x", word)
+	// Corpus hash routines load constant vectors with LSX vld.
+	if word&0xffc00000 != 0x02c00000 && word&0xffc00000 != 0x28c00000 &&
+		word&0xffc00000 != 0x2c000000 {
+		return fmt.Errorf("LoongArch low relocation requires addi.d, ld.d, or vld, got %#08x", word)
 	}
 	value, err := addSigned(target, addend)
 	if err != nil {

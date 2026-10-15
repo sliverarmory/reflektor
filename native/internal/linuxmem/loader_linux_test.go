@@ -1,4 +1,4 @@
-//go:build (linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)) || (freebsd && (amd64 || arm64))
+//go:build (linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64 || loong64)) || (freebsd && (amd64 || arm64))
 
 package linuxmem
 
@@ -227,6 +227,26 @@ func TestNewLinuxArchitectureRelocations(t *testing.T) {
 		}
 	})
 
+	t.Run("loong64", func(t *testing.T) {
+		var word uint64
+		place := uintptr(unsafe.Pointer(&word))
+		if err := applyLoong64Reloc(uint32(elf.R_LARCH_RELATIVE), place, 0x1000, 0, 0x234, 0, false); err != nil {
+			t.Fatal(err)
+		}
+		if word != 0x1234 {
+			t.Fatalf("R_LARCH_RELATIVE = %#x, want 0x1234", word)
+		}
+		if err := applyLoong64Reloc(uint32(elf.R_LARCH_64), place, 0, 0x5000, 0x678, 0, false); err != nil {
+			t.Fatal(err)
+		}
+		if word != 0x5678 {
+			t.Fatalf("R_LARCH_64 = %#x, want 0x5678", word)
+		}
+		if err := applyLoong64Reloc(uint32(elf.R_LARCH_TLS_TPREL64), place, 0, 0, 0, 0, false); err == nil {
+			t.Fatal("R_LARCH_TLS_TPREL64 without a TLS slot succeeded")
+		}
+	})
+
 	t.Run("ppc64le", func(t *testing.T) {
 		var word uint64
 		place := uintptr(unsafe.Pointer(&word))
@@ -263,6 +283,9 @@ func TestNewLinuxArchitectureABIFlags(t *testing.T) {
 		{name: "riscv64 RVE", machine: elf.EM_RISCV, flags: riscvELFFloatABIDouble | riscvELFRVE, wantErr: true},
 		{name: "riscv64 TSO", machine: elf.EM_RISCV, flags: riscvELFFloatABIDouble | riscvELFTSO, wantErr: true},
 		{name: "riscv64 unknown", machine: elf.EM_RISCV, flags: riscvELFFloatABIDouble | 0x20, wantErr: true},
+		{name: "loong64 LP64D ABI v1", machine: elf.EM_LOONGARCH, flags: 0x43},
+		{name: "loong64 LP64S", machine: elf.EM_LOONGARCH, flags: 0x41, wantErr: true},
+		{name: "loong64 unknown extension", machine: elf.EM_LOONGARCH, flags: 0x4b, wantErr: true},
 		{name: "ppc64le ELFv2", machine: elf.EM_PPC64, flags: ppc64ELFABI2},
 		{name: "ppc64 ELFv1", machine: elf.EM_PPC64, flags: 1, wantErr: true},
 		{name: "ppc64 unspecified ABI", machine: elf.EM_PPC64, flags: 0, wantErr: true},

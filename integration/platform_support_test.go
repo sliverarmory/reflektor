@@ -74,7 +74,7 @@ func TestPlatformSupportManifest(t *testing.T) {
 	if !slices.Equal(manifest.BOFFormatValues, []string{"elf", "macho", "coff", "xcoff", "undefined"}) {
 		t.Fatalf("bof_format_values = %v, want the declared native object formats", manifest.BOFFormatValues)
 	}
-	if !slices.Equal(manifest.RunnerValues, []string{"github-native", "github-container", "github-qemu-freebsd-amd64", "github-qemu-freebsd-arm64", "github-qemu-arm-v7", "github-qemu-ppc64le", "github-qemu-riscv64", "none"}) {
+	if !slices.Equal(manifest.RunnerValues, []string{"github-native", "github-container", "github-qemu-freebsd-amd64", "github-qemu-freebsd-arm64", "github-qemu-arm-v7", "github-qemu-loong64", "github-qemu-ppc64le", "github-qemu-riscv64", "none"}) {
 		t.Fatalf("runner_values = %v, want the checked-in CI proof types", manifest.RunnerValues)
 	}
 
@@ -186,6 +186,7 @@ func TestPlatformSupportManifest(t *testing.T) {
 	}, goCSharedRuntimeTargets)
 
 	sawLinuxARM := false
+	sawLinuxLOONG64 := false
 	sawLinuxPPC64LE := false
 	sawLinuxRISCV64 := false
 	sawFreeBSDAMD64 := false
@@ -227,6 +228,15 @@ func TestPlatformSupportManifest(t *testing.T) {
 			}
 			sawLinuxRISCV64 = true
 		}
+		if target.GOOS == "linux" && target.GOARCH == "loong64" {
+			if target.BOF != "runtime-emulated" || !target.BOFCGOFree ||
+				target.RootShared != "runtime-emulated" || target.NativeShared != "runtime-emulated" ||
+				target.RecursiveShared != "runtime-emulated" || target.GoCShared != "runtime-emulated" ||
+				!target.SharedCGOFree || target.Runner != "github-qemu-loong64" {
+				t.Fatalf("linux/loong64 capabilities = %#v, want full QEMU runtime support with Go c-shared and CGO-free C/Rust loading", target)
+			}
+			sawLinuxLOONG64 = true
+		}
 		if target.GOOS == "linux" && target.GOARCH == "ppc64le" {
 			if target.BOF != "runtime-emulated" || !target.BOFCGOFree ||
 				target.RootShared != "runtime-emulated" || target.NativeShared != "runtime-emulated" ||
@@ -240,8 +250,8 @@ func TestPlatformSupportManifest(t *testing.T) {
 	if !sawFreeBSDAMD64 || !sawFreeBSDARM64 {
 		t.Fatalf("platform support manifest emulated FreeBSD targets: amd64=%v arm64=%v, want both", sawFreeBSDAMD64, sawFreeBSDARM64)
 	}
-	if !sawLinuxARM || !sawLinuxPPC64LE || !sawLinuxRISCV64 {
-		t.Fatalf("platform support manifest emulated Linux targets: arm=%v ppc64le=%v riscv64=%v, want all three", sawLinuxARM, sawLinuxPPC64LE, sawLinuxRISCV64)
+	if !sawLinuxARM || !sawLinuxLOONG64 || !sawLinuxPPC64LE || !sawLinuxRISCV64 {
+		t.Fatalf("platform support manifest emulated Linux targets: arm=%v loong64=%v ppc64le=%v riscv64=%v, want all four", sawLinuxARM, sawLinuxLOONG64, sawLinuxPPC64LE, sawLinuxRISCV64)
 	}
 }
 
