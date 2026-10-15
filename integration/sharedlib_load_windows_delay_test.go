@@ -3,6 +3,7 @@
 package reflektor_test
 
 import (
+	"bytes"
 	"debug/pe"
 	"errors"
 	"os"
@@ -109,6 +110,7 @@ func buildWindowsDelayFixtures(t *testing.T, dir string, forwarder bool) (rootPa
 		runWindowsDelayTool(t, "lld-link", "/dll", "/nodefaultlib", "/machine:"+machine,
 			"/entry:DllMain", "/def:"+filepath.Join("..", "testdata", "c", "windows_delay_forwarder.def"),
 			"/out:"+forwarderPath, "/implib:"+forwarderImport, filepath.Join(dir, "forwarder.obj"))
+		normalizeWindowsDelayForwarderFixture(t, forwarderPath)
 		leafImport = forwarderImport
 	} else {
 		delayName = "libreflektor_delay_leaf.dll"
@@ -118,6 +120,34 @@ func buildWindowsDelayFixtures(t *testing.T, dir string, forwarder bool) (rootPa
 		"/entry:DllMain", "/delayload:"+delayName,
 		"/out:"+rootPath, filepath.Join(dir, "root.obj"), leafImport)
 	return rootPath, delayName
+}
+
+// The Windows/386 Actions linker decorates the module portion of .def
+// forwarders with a leading underscore. Keep the fixture's forwarder naming
+// identical across architectures; dependency resolution remains literal.
+func normalizeWindowsDelayForwarderFixture(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := false
+	for _, symbol := range []string{"ReflektorDelayValue", "ReflektorDelaySetObserver"} {
+		canonical := []byte("libreflektor_delay_leaf." + symbol + "\x00")
+		decorated := []byte("_libreflektor_delay_leaf." + symbol + "\x00")
+		if bytes.Contains(data, decorated) {
+			replacement := append(append([]byte{}, canonical...), 0)
+			data = bytes.Replace(data, decorated, replacement, 1)
+			changed = true
+		} else if !bytes.Contains(data, canonical) {
+			t.Fatalf("forwarder DLL lacks %s target", symbol)
+		}
+	}
+	if changed {
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatalf("normalize x86 PE forwarders: %v", err)
+		}
+	}
 }
 
 func runWindowsDelayTool(t *testing.T, name string, args ...string) {
