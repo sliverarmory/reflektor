@@ -313,9 +313,10 @@ Usage:
   explicit errors; those features remain available through the system-library
   carveout. Windows delay-load import tables are rejected explicitly. Custom
   dependency cycles are deduplicated on Windows, Darwin, FreeBSD, and Linux.
-  Windows recursive loads bind the whole PE graph before initialization;
-  dependencies initialize before importers, and unload detaches every DLL
-  before unmapping any member of a cycle.
+  Windows recursive loads bind the whole PE graph before initialization.
+  Acyclic dependencies initialize before importers; members of a cycle follow
+  deterministic depth-first postorder. Unload detaches every DLL before
+  unmapping any member of a cycle.
 - After the first export call, Darwin recursive mappings remain process-resident
   because dyld retains their loader records. Reusing a Darwin install-name in a
   later load follows dyld's first-loaded identity semantics. Calls made through

@@ -134,6 +134,9 @@ func (session *recursiveLoadSession) bindModules() error {
 	return nil
 }
 
+// initializationOrder visits dependencies first. A cycle cannot satisfy every
+// dependency edge, so an edge to an active module is treated as a back edge;
+// discovery and import order make the resulting order deterministic.
 func (session *recursiveLoadSession) initializationOrder(root *Module) []*Module {
 	order := make([]*Module, 0, len(session.loaded))
 	seen := make(map[*Module]bool, len(session.loaded))
