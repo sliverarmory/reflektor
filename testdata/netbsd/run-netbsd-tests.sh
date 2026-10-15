@@ -32,7 +32,7 @@ export CPATH="/usr/pkg/include${CPATH:+:${CPATH}}"
 export LIBRARY_PATH="/usr/pkg/lib${LIBRARY_PATH:+:${LIBRARY_PATH}}"
 export LD_LIBRARY_PATH="/usr/pkg/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 export PKG_CONFIG_PATH="/usr/pkg/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
-export CURL_CA_BUNDLE=/usr/pkg/etc/openssl/certs/ca-certificates.crt
+export CURL_CA_BUNDLE=/etc/openssl/certs/ca-certificates.crt
 export SSL_CERT_FILE="${CURL_CA_BUNDLE}"
 if [[ ! -s "${CURL_CA_BUNDLE}" ]]; then
 	echo "NetBSD HTTPS trust bundle is absent: ${CURL_CA_BUNDLE}" >&2
