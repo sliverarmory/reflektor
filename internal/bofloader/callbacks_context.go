@@ -34,15 +34,106 @@ func activeExecutionContext() *executionContext {
 	return value.(*executionContext)
 }
 
+// InvokeHostCallback runs an opt-in host service only on the BOF entry thread.
+// It converts service errors and panics into Execute errors so neither crosses
+// the native callback boundary.
+func InvokeHostCallback(name string, invoke func() (uintptr, error)) (result uintptr) {
+	context := activeExecutionContext()
+	if context == nil {
+		return 0
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			context.addError(fmt.Errorf("%s host callback panic: %v", name, recovered))
+			result = 0
+		}
+	}()
+	result, err := invoke()
+	if err != nil {
+		context.addError(fmt.Errorf("%s host callback: %w", name, err))
+		return 0
+	}
+	return result
+}
+
 type executionContext struct {
 	mu          sync.Mutex
 	outputs     []Output
 	errors      []error
 	allocations map[uintptr][]byte
+	cleanups    map[any]hostCleanup
+	cleanupKeys []any
 	emit        func(Output)
 	capture     bool
 	stop        <-chan struct{}
 	stopSeen    atomic.Bool
+}
+
+type hostCleanup struct {
+	name string
+	call func() error
+}
+
+// RegisterHostCleanup schedules a service cleanup on the BOF entry thread.
+// Re-registering the same key replaces its pending cleanup.
+func RegisterHostCleanup(key any, name string, call func() error) error {
+	context := activeExecutionContext()
+	if context == nil {
+		return errors.New("no BOF execution is active")
+	}
+	context.mu.Lock()
+	defer context.mu.Unlock()
+	if context.cleanups == nil {
+		context.cleanups = make(map[any]hostCleanup)
+	}
+	if _, exists := context.cleanups[key]; !exists {
+		context.cleanupKeys = append(context.cleanupKeys, key)
+	}
+	context.cleanups[key] = hostCleanup{name: name, call: call}
+	return nil
+}
+
+// ClearHostCleanup cancels a pending cleanup after an explicit successful
+// service cleanup. It has no effect outside a BOF execution.
+func ClearHostCleanup(key any) {
+	context := activeExecutionContext()
+	if context == nil {
+		return
+	}
+	context.mu.Lock()
+	delete(context.cleanups, key)
+	for index, registered := range context.cleanupKeys {
+		if registered == key {
+			context.cleanupKeys = append(context.cleanupKeys[:index], context.cleanupKeys[index+1:]...)
+			break
+		}
+	}
+	context.mu.Unlock()
+}
+
+func (context *executionContext) runHostCleanups() {
+	context.mu.Lock()
+	keys := context.cleanupKeys
+	cleanups := context.cleanups
+	context.cleanupKeys = nil
+	context.cleanups = nil
+	context.mu.Unlock()
+	for index := len(keys) - 1; index >= 0; index-- {
+		cleanup, ok := cleanups[keys[index]]
+		if !ok {
+			continue
+		}
+		func() {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					context.addError(fmt.Errorf("%s host cleanup panic: %v", cleanup.name, recovered))
+				}
+			}()
+			if err := cleanup.call(); err != nil {
+				context.addError(fmt.Errorf("%s host cleanup: %w", cleanup.name, err))
+			}
+		}()
+	}
 }
 
 func newExecutionContext(emit func(Output), capture bool) *executionContext {

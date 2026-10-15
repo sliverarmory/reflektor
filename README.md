@@ -207,12 +207,41 @@ object format requires it. Windows data declarations should use
 `__declspec(dllimport)` so COFF emits an import-pointer reference rather than a
 range-limited direct reference.
 
-Unsupported Beacon integration APIs—including token, temporary-process, and
+Host-dependent Beacon integration APIs—including token, temporary-process, and
 process-injection callbacks—are marked `RequiresHost` and fail explicitly
 unless `ResolveSymbol` supplies them; they are never silent stubs or system
 symbol lookups. The built-in compatibility set also includes the bounded
 `BeaconDataExtractOrNull` helper and `toWideChar`, whose destination is always
 UTF-16LE and whose maximum length is measured in bytes.
+
+For selected host services, `bof.NewHostAdapter` supplies an opt-in typed
+bridge for `BeaconUseToken`, `BeaconRevertToken`, `BeaconIsAdmin`, and
+`BeaconGetSpawnTo`. Apply it to load options before loading the object:
+
+```go
+adapter := bof.NewHostAdapter(bof.HostServices{
+    UseToken: func(token bof.TokenHandle) (bool, error) {
+        return host.UseToken(token)
+    },
+    RevertToken: host.RevertToken,
+    IsAdmin: host.IsAdmin,
+    GetSpawnTo: host.GetSpawnTo,
+})
+object, err := bof.LoadWithOptions(objectBytes, adapter.Apply(bof.LoadOptions{}))
+```
+
+The host owns the token handles, side effects, and spawn-path encoding. The
+adapter validates host-required imports before allocating the BOF image;
+unregistered imports, including process spawn and injection callbacks, fail
+explicitly. `UseToken` requires `RevertToken`. The adapter schedules a revert
+before each token-use attempt and calls it before releasing the execution
+thread if the BOF did not. `RevertToken` must be idempotent and safe after a
+failed attempt. Services run synchronously on the entry thread. Their errors
+and panics surface from `Execute` after the BOF returns. Construct one adapter for
+a stable set of services and reuse it: native callback registrations are valid
+for the process lifetime and cannot be unregistered by the pinned PureGo
+runtime. The lower-level `ResolveSymbol` option remains available when the
+host supplies a platform ABI-correct native implementation for other imports.
 
 The loader supplies the Beacon data, format, and output callbacks, preserves
 each output record's channel, and uses page-level W^X protections. Separately

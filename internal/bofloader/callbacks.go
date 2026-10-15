@@ -95,6 +95,13 @@ func normalizeImportedSymbol(symbol string) string {
 	return name
 }
 
+// CanonicalBeaconImport returns the Beacon API name after applying the same
+// object-format spelling rules used by the loader. Callers must still validate
+// that the name has a supported ABI and signature before binding it.
+func CanonicalBeaconImport(symbol string) string {
+	return normalizeImportedSymbol(symbol)
+}
+
 func trimStdcallSuffix(name string) string {
 	separator := strings.LastIndexByte(name, '@')
 	if separator <= 0 || separator == len(name)-1 {

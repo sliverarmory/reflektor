@@ -74,8 +74,8 @@ for test_name in \
   fi
 done
 
-CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop)$' -count=1 -v | tee linux-bof-nocgo-test.log
-for test_name in TestLoadAndExecuteGeneratedBOF TestBOFLoadWithOptions TestConcurrentBOFStreaming TestSameImageBOFExecutionIsSerialized TestCooperativeBOFStop; do
+CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestBOFHostAdapterNativeCallbacks|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop)$' -count=1 -v | tee linux-bof-nocgo-test.log
+for test_name in TestLoadAndExecuteGeneratedBOF TestBOFLoadWithOptions TestBOFHostAdapterNativeCallbacks TestConcurrentBOFStreaming TestSameImageBOFExecutionIsSerialized TestCooperativeBOFStop; do
   if ! grep -Fq -- "--- PASS: ${test_name} " linux-bof-nocgo-test.log; then
     echo "Required CGO-free linux/386 BOF execution test did not pass: ${test_name}" >&2
     exit 1

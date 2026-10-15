@@ -20,7 +20,8 @@ for fixture in \
   "${REFLEKTOR_BOF_FIXTURE_DIR}/fixture_linux_ppc64le.o" \
   "${REFLEKTOR_BOF_FIXTURE_DIR}/options_fixture_linux_ppc64le.o" \
   "${REFLEKTOR_BOF_FIXTURE_DIR}/async_fixture_linux_ppc64le.o" \
-  "${REFLEKTOR_BOF_FIXTURE_DIR}/stop_fixture_linux_ppc64le.o"; do
+  "${REFLEKTOR_BOF_FIXTURE_DIR}/stop_fixture_linux_ppc64le.o" \
+  "${REFLEKTOR_BOF_FIXTURE_DIR}/host_adapter_fixture_linux_ppc64le.o"; do
   if [[ ! -s "${fixture}" ]]; then
     echo "required prebuilt BOF fixture is absent or empty: ${fixture}" >&2
     exit 1
@@ -55,13 +56,14 @@ fi
 go test ./bof ./internal/bofloader -count=1
 
 go test ./integration \
-  -run '^(TestPlatformSupportManifest|TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop|TestBOFPackageDependencyGraphIsIsolated)$' \
+  -run '^(TestPlatformSupportManifest|TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestBOFHostAdapterNativeCallbacks|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop|TestBOFPackageDependencyGraphIsIsolated)$' \
   -count=1 -v | tee linux-ppc64le-bof-test.log
 
 for test_name in \
   TestPlatformSupportManifest \
   TestLoadAndExecuteGeneratedBOF \
   TestBOFLoadWithOptions \
+  TestBOFHostAdapterNativeCallbacks \
   TestConcurrentBOFStreaming \
   TestSameImageBOFExecutionIsSerialized \
   TestCooperativeBOFStop \
