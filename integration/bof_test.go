@@ -31,7 +31,6 @@ var bofTargets = []bofTarget{
 	{goos: "darwin", goarch: "arm64", zigTarget: "aarch64-macos-none", format: "macho"},
 	{goos: "freebsd", goarch: "amd64", zigTarget: "x86_64-freebsd-none", format: "elf"},
 	{goos: "freebsd", goarch: "arm64", zigTarget: "aarch64-freebsd-none", format: "elf"},
-	{goos: "netbsd", goarch: "amd64", zigTarget: "x86_64-netbsd-none", format: "elf"},
 	{goos: "linux", goarch: "386", zigTarget: "x86-linux-none", format: "elf"},
 	{goos: "linux", goarch: "amd64", zigTarget: "x86_64-linux-none", format: "elf"},
 	{goos: "linux", goarch: "arm", zigTarget: "arm-linux-none", format: "elf"},
@@ -66,7 +65,7 @@ func TestBuildBOFMatrix(t *testing.T) {
 			// Zig dependency, so seed and inspect their options fixture alongside
 			// the primary fixture. Other targets continue to build it in their
 			// native LoadWithOptions execution test.
-			if target.goos == "freebsd" || target.goos == "netbsd" ||
+			if target.goos == "freebsd" ||
 				(target.goos == "linux" && (target.goarch == "arm" || target.goarch == "ppc64le" || target.goarch == "riscv64")) {
 				optionsPath := buildBOFSource(t, outputDirectory, target, "options_fixture", "options_fixture.c")
 				validateBOFObject(t, optionsPath, target)

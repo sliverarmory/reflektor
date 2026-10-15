@@ -144,6 +144,52 @@ jobs:
             exit 1
           fi
 
+  netbsd-amd64:
+    name: netbsd-amd64-qemu
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start NetBSD 10.1 amd64 VM
+        uses: cross-platform-actions/action@5ea7e8e4677bd726033a10b094ba1c5762b15dee # v1.3.0
+        with:
+          operating_system: netbsd
+          architecture: x86-64
+          version: "10.1"
+          shell: sh
+          memory: 6G
+          cpu_count: 4
+      - name: Install pinned NetBSD toolchains
+        shell: cpa.sh {0} --sync-files runner-to-vm
+        run: |
+          set -eu
+          export PATH="/usr/pkg/bin:/usr/pkg/sbin:/usr/bin:/bin:/sbin"
+          sudo pkgin -y update
+          sudo pkgin -y install bash binutils curl file git jq libcurl pkgconf rust
+          go_archive="/tmp/go1.26.6.netbsd-amd64.tar.gz"
+          curl -fL -o "${go_archive}" "https://go.dev/dl/go1.26.6.netbsd-amd64.tar.gz"
+          test "$(sha256 -q "${go_archive}")" = "f37d9e86d24d04a83ef241d8467cae2d14e134e1c51c954b3ec860517135a5a2"
+          sudo mkdir -p /usr/local
+          sudo rm -rf /usr/local/go
+          sudo tar -C /usr/local -xzf "${go_archive}"
+          zig_archive="/tmp/zig-x86_64-netbsd-0.16.0.tar.xz"
+          curl -fL -o "${zig_archive}" "https://ziglang.org/download/0.16.0/zig-x86_64-netbsd-0.16.0.tar.xz"
+          test "$(sha256 -q "${zig_archive}")" = "e235ca96f63034a009aca831c69394a1c14498a8e06ff5f358fc3fb4bed73dfb"
+          sudo rm -rf /usr/local/zig
+          sudo mkdir -p /usr/local/zig
+          sudo tar -C /usr/local/zig --strip-components=1 -xJf "${zig_archive}"
+          /usr/local/go/bin/go version
+          /usr/local/zig/zig version
+          /usr/pkg/bin/rustc --version
+          /usr/pkg/bin/cargo --version
+          uname -a
+      - name: Execute NetBSD BOF and shared-library E2E
+        shell: cpa.sh {0} --sync-files runner-to-vm
+        run: |
+          set -eu
+          export PATH="/usr/local/go/bin:/usr/local/zig:/usr/pkg/bin:/usr/pkg/sbin:/usr/bin:/bin:/sbin"
+          bash testdata/netbsd/run-netbsd-tests.sh
+
   freebsd:
     name: freebsd-${{ matrix.goarch }}-qemu
     runs-on: ubuntu-24.04

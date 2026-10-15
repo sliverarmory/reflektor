@@ -21,7 +21,6 @@ var sharedLibTargets = []sharedLibTarget{
 	{goos: "darwin", goarch: "arm64", ext: "dylib", fileProbe: "arm64"},
 	{goos: "freebsd", goarch: "amd64", ext: "so", fileProbe: "x86-64"},
 	{goos: "freebsd", goarch: "arm64", ext: "so", fileProbe: "ARM aarch64"},
-	{goos: "netbsd", goarch: "amd64", ext: "so", fileProbe: "x86-64"},
 	{goos: "linux", goarch: "386", ext: "so", fileProbe: "Intel 80386"},
 	{goos: "linux", goarch: "amd64", ext: "so", fileProbe: "x86-64"},
 	{goos: "linux", goarch: "arm", ext: "so", fileProbe: "ARM"},

@@ -13,6 +13,13 @@ import (
 	"github.com/sliverarmory/reflektor/native"
 )
 
+func TestNetBSDGeneratedBOF(t *testing.T) {
+	requireCommand(t, "zig")
+	testLoadAndExecuteGeneratedBOF(t, bofTarget{
+		goos: "netbsd", goarch: "amd64", zigTarget: "x86_64-netbsd-none", format: "elf",
+	})
+}
+
 func TestLoadGeneratedCNetBSDSOAndCallStartW(t *testing.T) {
 	requireCommand(t, "zig")
 	path := buildOneSharedLib(t, t.TempDir(), "netbsd", "amd64")
@@ -65,6 +72,27 @@ func TestNativeNetBSDCImageAndClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("native C image load: %v", err)
 	}
+	if err := library.Close(); err != nil {
+		t.Fatalf("native Close: %v", err)
+	}
+}
+
+func TestNativeNetBSDRustImageAndClose(t *testing.T) {
+	path := buildOneRustSharedLib(t, newRustBuildDir(t), "netbsd", "amd64")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(t.TempDir(), "native-rust-marker")
+	t.Setenv("REFLEKTOR_MARKER", marker)
+	library, err := native.LoadLibrary(data)
+	if err != nil {
+		t.Fatalf("native Rust image load: %v", err)
+	}
+	if err := library.CallExport("StartW"); err != nil {
+		t.Fatalf("native Rust CallExport: %v", err)
+	}
+	assertRustHTTPMarker(t, marker)
 	if err := library.Close(); err != nil {
 		t.Fatalf("native Close: %v", err)
 	}
