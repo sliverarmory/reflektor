@@ -88,12 +88,12 @@ assert_no_skips() {
 }
 
 bof_unit_log="freebsd-bof-unit-test.log"
-CGO_ENABLED=0 go test "${purego_gcflags[@]}" ./bof ./internal/bofloader -count=1 -v | tee "${bof_unit_log}"
+CGO_ENABLED=0 go test "${purego_gcflags[@]}" ./bof ./internal/bofloader ./internal/bofworker ./cmd/reflektor-bof-worker -count=1 -v | tee "${bof_unit_log}"
 assert_no_skips "${bof_unit_log}"
 
 bof_log="freebsd-bof-test.log"
 CGO_ENABLED=0 go test "${purego_gcflags[@]}" ./integration \
-	-run '^(TestPlatformSupportManifest|TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop|TestBOFPackageDependencyGraphIsIsolated)$' \
+	-run '^(TestPlatformSupportManifest|TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop|TestIsolatedBOFWorker|TestBOFPackageDependencyGraphIsIsolated)$' \
 	-count=1 -v | tee "${bof_log}"
 assert_required_tests "${bof_log}" \
 	TestPlatformSupportManifest \
@@ -102,6 +102,7 @@ assert_required_tests "${bof_log}" \
 	TestConcurrentBOFStreaming \
 	TestSameImageBOFExecutionIsSerialized \
 	TestCooperativeBOFStop \
+	TestIsolatedBOFWorker \
 	TestBOFPackageDependencyGraphIsIsolated
 assert_no_skips "${bof_log}"
 

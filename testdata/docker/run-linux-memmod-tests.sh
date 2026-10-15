@@ -25,7 +25,7 @@ CGO_ENABLED=0 go test ./bof ./internal/bofloader -count=1
 # Run every platform-applicable shared-library and lightweight BOF test. The
 # cross-platform build matrices have their own CI job, while native BOF
 # execution and corpus coverage run in dedicated CGO-free passes below.
-intentional_skip_pattern='TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)|TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop|TestSituationalAwarenessBOFCorpus(Child)?'
+intentional_skip_pattern='TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)|TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop|TestIsolatedBOFWorker|TestSituationalAwarenessBOFCorpus(Child)?'
 go test ./... -skip "${intentional_skip_pattern}" -count=1 -v | tee linux-test.log
 
 for test_name in \
