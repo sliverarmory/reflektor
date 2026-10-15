@@ -24,6 +24,7 @@ static void log_event(char event) {
 #if !defined(REFLEKTOR_GRAPH_BOOTSTRAP)
 IMPORT int CycleBValue(void);
 IMPORT int CycleBCallA(void);
+IMPORT int CycleForwardedA(void);
 #endif
 
 static int state;
@@ -55,6 +56,13 @@ EXPORT int CycleRoundTrip(void) {
   return 0;
 #else
   return CycleBCallA();
+#endif
+}
+EXPORT int CycleForwardedResult(void) {
+#if defined(REFLEKTOR_GRAPH_BOOTSTRAP)
+  return 0;
+#else
+  return CycleForwardedA();
 #endif
 }
 

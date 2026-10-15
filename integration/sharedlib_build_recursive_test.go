@@ -68,6 +68,12 @@ func TestBuildRecursiveCSharedLibraryMatrix(t *testing.T) {
 							}
 						}
 					}
+					if graph.export == "CycleRoundTrip" {
+						out := runCmd(t, "objdump", "-p", graph.modules[1])
+						if !strings.Contains(out, "CycleForwardedA") || !strings.Contains(out, "reflektor_cycle_a.CycleAValue") {
+							t.Fatalf("cyclic Windows graph is missing its PE export forwarder:\n%s", out)
+						}
+					}
 				}
 			case "darwin":
 				if out := runCmd(t, "nm", libraries.root); !strings.Contains(out, "_StartW") {

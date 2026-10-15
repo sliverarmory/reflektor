@@ -106,6 +106,12 @@ func TestWindowsRecursiveGraphChild(t *testing.T) {
 		if err != nil || got != want {
 			t.Fatalf("%s graph call %d = %d, %v; want %d", kind, i+1, got, err, want)
 		}
+		if kind == "cycle" {
+			forwarded, forwardErr := library.CallExportWithArgs("CycleForwardedResult")
+			if forwardErr != nil || forwarded != 42 {
+				t.Fatalf("cycle graph forwarded call %d = %d, %v; want 42", i+1, forwarded, forwardErr)
+			}
+		}
 	}
 	if err := library.Close(); err != nil {
 		t.Fatalf("close %s graph: %v", kind, err)

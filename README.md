@@ -344,9 +344,9 @@ Linux `/proc/self/maps`, or the Windows loader module registry, then renames
 the dependency directory before calling `StartW`. On Darwin the rename happens
 before the lazy dyld transaction. These
 checks prove the custom dependencies came from bytes captured by Reflektor.
-The Windows graph fixture additionally tests cyclic imports and a shared-leaf
-diamond, including initializer order, repeated calls after source files are
-hidden, and reverse detach order.
+The Windows graph fixture additionally tests cyclic imports, an export
+forwarder back into the cycle, and a shared-leaf diamond. It checks initializer
+order, repeated calls after source files are hidden, and reverse detach order.
 
 The Rust fixtures are built from `reflektor/testdata/rust` and
 `reflektor/testdata/rust/native_args.rs`. The HTTPS fixture exports `StartW`,

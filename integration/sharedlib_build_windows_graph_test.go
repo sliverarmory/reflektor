@@ -21,6 +21,7 @@ func buildWindowsCycleGraph(t *testing.T, outDir string, goarch string) windowsR
 	}
 	common := []string{"cc", "-target", target, "-O2", "-g0"}
 	source := filepath.Join("..", "testdata", "c", "windows_recursive_graph.c")
+	forwarder := filepath.Join("..", "testdata", "c", "windows_recursive_cycle_b.def")
 	a := filepath.Join(outDir, "reflektor_cycle_a.dll")
 	b := filepath.Join(outDir, "reflektor_cycle_b.dll")
 	aImport := filepath.Join(outDir, "reflektor_cycle_a.lib")
@@ -34,7 +35,7 @@ func buildWindowsCycleGraph(t *testing.T, outDir string, goarch string) windowsR
 	})
 	buildRecursiveFixture(t, common, []string{
 		"-shared", "-DREFLEKTOR_CYCLE_B",
-		"-Wl,--out-implib," + bImport, "-o", b, source, aImport,
+		"-Wl,--out-implib," + bImport, "-o", b, source, forwarder, aImport,
 	})
 	buildRecursiveFixture(t, common, []string{
 		"-shared", "-DREFLEKTOR_CYCLE_A",
