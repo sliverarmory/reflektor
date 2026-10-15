@@ -100,7 +100,14 @@ for cgo_enabled in 0 1; do
 		CGO_ENABLED=0 go test "${purego_gcflags[@]}" ./integration -run "${shared_pattern}" -timeout 45m -count=1 -v | tee "netbsd-shared-cgo-${cgo_enabled}-test.log"
 	else
 		CGO_ENABLED=1 go test . ./cli ./memmod ./native/... -timeout 45m -count=1 -v | tee "netbsd-packages-cgo-${cgo_enabled}-test.log"
-		CGO_ENABLED=1 go test ./integration -run "${shared_pattern}" -timeout 45m -count=1 -v | tee "netbsd-shared-cgo-${cgo_enabled}-test.log"
+		# Externally linked cgo executables carry a NetBSD PaX note. The
+		# in-memory loader requires the per-executable MPROTECT opt-out.
+		shared_test_dir="$(mktemp -d /tmp/reflektor-netbsd-integration-cgo-1.XXXXXX)"
+		shared_test_binary="${shared_test_dir}/integration.test"
+		CGO_ENABLED=1 go test -c -o "${shared_test_binary}" ./integration
+		/usr/sbin/paxctl +m "${shared_test_binary}"
+		"${shared_test_binary}" -test.run "${shared_pattern}" -test.timeout 45m -test.count 1 -test.v | tee "netbsd-shared-cgo-${cgo_enabled}-test.log"
+		rm -rf "${shared_test_dir}"
 	fi
 	if grep -Eq '^[[:space:]]*--- SKIP:' "netbsd-packages-cgo-${cgo_enabled}-test.log"; then
 		echo "NetBSD/amd64 package tests were skipped with CGO_ENABLED=${cgo_enabled}" >&2
@@ -160,6 +167,7 @@ for cgo_enabled in 0 1; do
 		CGO_ENABLED=0 go build "${purego_gcflags[@]}" -buildvcs=false -trimpath -o "${cli_path}" ./cli
 	else
 		CGO_ENABLED=1 go build -buildvcs=false -trimpath -o "${cli_path}" ./cli
+		/usr/sbin/paxctl +m "${cli_path}"
 	fi
 	run_cli_fixture "${cgo_enabled}" c "${cli_c_fixture}" ok
 	run_cli_fixture "${cgo_enabled}" rust "${cli_rust_fixture}" ok:200
