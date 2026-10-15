@@ -309,10 +309,12 @@ Usage:
   libraries require OS-managed TLS, symbol versioning, loader registration, and
   other facilities that cannot be reproduced by simply reading a file—and some
   Darwin shared-cache images do not exist as standalone readable files.
-- FreeBSD and Linux custom images reject general ELF TLS, IFUNC/IRELATIVE, and RELR with
-  explicit errors; those features remain available through the system-library
-  carveout. Windows custom dependency cycles and delay-load import tables are
-  also rejected explicitly. Darwin, FreeBSD, and Linux graph cycles are deduplicated.
+- FreeBSD `amd64`/`arm64` and Linux `386`/`amd64`/`arm64` custom images support
+  ELF packed RELR relocations. Other ELF targets reject packed RELR explicitly.
+  General ELF TLS and IFUNC/IRELATIVE remain rejected explicitly; those
+  features remain available through the system-library carveout. Windows custom
+  dependency cycles and delay-load import tables are also rejected explicitly.
+  Darwin, FreeBSD, and Linux graph cycles are deduplicated.
 - After the first export call, Darwin recursive mappings remain process-resident
   because dyld retains their loader records. Reusing a Darwin install-name in a
   later load follows dyld's first-loaded identity semantics. Calls made through
