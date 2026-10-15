@@ -22,10 +22,7 @@ func TestCLIArgumentsAndRecursiveLoad(t *testing.T) {
 		cliName += ".exe"
 	}
 	cliPath := filepath.Join(outDir, cliName)
-	build := exec.Command("go", "build", "-o", cliPath, "../cli")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build CLI: %v\n%s", err, output)
-	}
+	buildCLIForIntegration(t, cliPath)
 
 	argsLibrary := buildCSharedLib(t, outDir, runtime.GOOS, runtime.GOARCH, "cli_args", filepath.Join("..", "testdata", "c", "cli_args.c"))
 	if output := runCLI(t, cliPath, nil,
@@ -66,15 +63,25 @@ func TestCLIBOFExecution(t *testing.T) {
 		cliName += ".exe"
 	}
 	cliPath := filepath.Join(outDir, cliName)
-	build := exec.Command("go", "build", "-o", cliPath, "../cli")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build CLI: %v\n%s", err, output)
-	}
+	buildCLIForIntegration(t, cliPath)
 	bofPath := buildBOFFixture(t, outDir, target)
 	output := runCLI(t, cliPath, nil, "bof", bofPath,
 		"--bof-arg", "int32:0x12345678", "--bof-arg", "int16:0x1234", "--bof-arg", "string:bof")
 	if !strings.Contains(output, "type=0 data=\"bof-e2e-ok\"") || strings.Contains(output, "bof-e2e-invalid-arguments") {
 		t.Fatalf("CLI BOF output = %q", output)
+	}
+}
+
+func buildCLIForIntegration(t *testing.T, path string) {
+	t.Helper()
+	arguments := []string{"build"}
+	if runtime.GOOS == "freebsd" && os.Getenv("CGO_ENABLED") == "0" {
+		arguments = append(arguments, "-gcflags=github.com/ebitengine/purego/internal/fakecgo=-std")
+	}
+	arguments = append(arguments, "-o", path, "../cli")
+	build := exec.Command("go", arguments...)
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build CLI: %v\n%s", err, output)
 	}
 }
 
