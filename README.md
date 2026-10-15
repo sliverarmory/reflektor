@@ -311,8 +311,11 @@ Usage:
   Darwin shared-cache images do not exist as standalone readable files.
 - FreeBSD and Linux custom images reject general ELF TLS, IFUNC/IRELATIVE, and RELR with
   explicit errors; those features remain available through the system-library
-  carveout. Windows custom dependency cycles and delay-load import tables are
-  also rejected explicitly. Darwin, FreeBSD, and Linux graph cycles are deduplicated.
+  carveout. Windows delay-load import tables are rejected explicitly. Custom
+  dependency cycles are deduplicated on Windows, Darwin, FreeBSD, and Linux.
+  Windows recursive loads bind the whole PE graph before initialization;
+  dependencies initialize before importers, and unload detaches every DLL
+  before unmapping any member of a cycle.
 - After the first export call, Darwin recursive mappings remain process-resident
   because dyld retains their loader records. Reusing a Darwin install-name in a
   later load follows dyld's first-loaded identity semantics. Calls made through
@@ -333,6 +336,7 @@ C test shared libraries are generated from:
 - `reflektor/testdata/c/recursive_leaf.c`
 - `reflektor/testdata/c/recursive_middle.c`
 - `reflektor/testdata/c/recursive_root.c`
+- `reflektor/testdata/c/windows_recursive_graph.c`
 
 The recursive C fixture is a transitive root -> middle -> leaf graph. Its test
 checks that the graph is absent from FreeBSD `procstat -v` mappings,
@@ -340,6 +344,9 @@ Linux `/proc/self/maps`, or the Windows loader module registry, then renames
 the dependency directory before calling `StartW`. On Darwin the rename happens
 before the lazy dyld transaction. These
 checks prove the custom dependencies came from bytes captured by Reflektor.
+The Windows graph fixture additionally tests cyclic imports and a shared-leaf
+diamond, including initializer order, repeated calls after source files are
+hidden, and reverse detach order.
 
 The Rust fixtures are built from `reflektor/testdata/rust` and
 `reflektor/testdata/rust/native_args.rs`. The HTTPS fixture exports `StartW`,

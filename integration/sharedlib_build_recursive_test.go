@@ -48,6 +48,27 @@ func TestBuildRecursiveCSharedLibraryMatrix(t *testing.T) {
 				if out := runCmd(t, "objdump", "-p", libraries.root); !strings.Contains(out, "StartW") || !strings.Contains(strings.ToLower(out), "libreflektor_middle.dll") {
 					t.Fatalf("recursive Windows root is missing StartW or middle import:\n%s", out)
 				}
+				for _, graph := range []windowsRecursiveGraph{
+					buildWindowsCycleGraph(t, graphDir, target.goarch),
+					buildWindowsDiamondGraph(t, graphDir, target.goarch),
+				} {
+					for _, path := range graph.modules {
+						if info, err := os.Stat(path); err != nil || info.Size() == 0 {
+							t.Fatalf("missing or empty recursive Windows graph fixture %s: %v", path, err)
+						}
+					}
+					if out := runCmd(t, "objdump", "-p", graph.root); !strings.Contains(out, graph.export) {
+						t.Fatalf("recursive Windows graph root is missing %s:\n%s", graph.export, out)
+					}
+					for path, imports := range graph.imports {
+						out := strings.ToLower(runCmd(t, "objdump", "-p", path))
+						for _, name := range imports {
+							if !strings.Contains(out, strings.ToLower(name)) {
+								t.Fatalf("recursive Windows graph module %s is missing import %s:\n%s", path, name, out)
+							}
+						}
+					}
+				}
 			case "darwin":
 				if out := runCmd(t, "nm", libraries.root); !strings.Contains(out, "_StartW") {
 					t.Fatalf("recursive Darwin root is missing _StartW:\n%s", out)

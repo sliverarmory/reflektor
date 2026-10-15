@@ -155,3 +155,41 @@ func TestRecursiveResolverCallsReaderAfterSystemMiss(t *testing.T) {
 		t.Fatalf("dependency request search paths = %#v, want %#v", gotRequest.SearchPaths, wantPaths)
 	}
 }
+
+func TestRecursiveInitializationOrderHandlesCyclesAndDiamonds(t *testing.T) {
+	newRecord := func(name string) *recursiveModuleRecord {
+		path := `C:\fixture\` + name + `.dll`
+		return &recursiveModuleRecord{
+			key: strings.ToLower(path), path: path,
+			module: &Module{recursivePath: path},
+		}
+	}
+	a := newRecord("a")
+	b := newRecord("b")
+	a.dependencies = []*Module{b.module}
+	b.dependencies = []*Module{a.module}
+	cycle := &recursiveLoadSession{
+		records: map[string]*recursiveModuleRecord{a.key: a, b.key: b},
+		loaded:  []*Module{a.module, b.module},
+	}
+	if got, want := cycle.initializationOrder(a.module), []*Module{b.module, a.module}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("cycle initialization order = %v, want %v", got, want)
+	}
+
+	root := newRecord("root")
+	left := newRecord("left")
+	right := newRecord("right")
+	leaf := newRecord("leaf")
+	root.dependencies = []*Module{left.module, right.module}
+	left.dependencies = []*Module{leaf.module}
+	right.dependencies = []*Module{leaf.module}
+	diamond := &recursiveLoadSession{
+		records: map[string]*recursiveModuleRecord{
+			root.key: root, left.key: left, right.key: right, leaf.key: leaf,
+		},
+		loaded: []*Module{root.module, left.module, right.module, leaf.module},
+	}
+	if got, want := diamond.initializationOrder(root.module), []*Module{leaf.module, left.module, right.module, root.module}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("diamond initialization order = %v, want %v", got, want)
+	}
+}
