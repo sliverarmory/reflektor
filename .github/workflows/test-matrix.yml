@@ -350,6 +350,32 @@ jobs:
             exit 1
           fi
 
+  linux-musl:
+    name: alpine-musl-${{ matrix.arch }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+        if: matrix.arch == 'arm64'
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v3
+      - name: Run native-musl BOF, shared-library, and CLI probes
+        run: |
+          set -euo pipefail
+          image="reflektor-alpine-musl-${{ matrix.arch }}-ci"
+          docker build --platform "linux/${{ matrix.arch }}" \
+            -f testdata/docker/linux-musl.Dockerfile -t "${image}" .
+          docker run --rm --platform "linux/${{ matrix.arch }}" "${image}"
+
   linux-386:
     name: linux-386-docker
     runs-on: ubuntu-24.04
