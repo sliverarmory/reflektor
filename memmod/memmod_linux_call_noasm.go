@@ -1,4 +1,4 @@
-//go:build linux && !android && !cgo && ((arm && arm.7) || ppc64le || riscv64)
+//go:build linux && !android && !cgo && ((arm && arm.7) || ppc64le || riscv64 || loong64)
 
 package memmod
 

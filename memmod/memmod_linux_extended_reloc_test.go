@@ -1,4 +1,4 @@
-//go:build (linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)) || (freebsd && (amd64 || arm64)) || (netbsd && (amd64 || arm64))
+//go:build (linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64 || loong64)) || (freebsd && (amd64 || arm64)) || (netbsd && (amd64 || arm64))
 
 package memmod
 
@@ -56,6 +56,29 @@ func TestLinuxExtendedArchitectureDynamicRelocations(t *testing.T) {
 		}
 	})
 
+	t.Run("loong64", func(t *testing.T) {
+		word := make([]byte, 8)
+		place := uintptr(unsafe.Pointer(&word[0]))
+		if err := applyLoong64Reloc(uint32(elf.R_LARCH_RELATIVE), place, 0x1000, 0, 0x28, 0, false); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := readU64(place), uint64(0x1028); got != want {
+			t.Fatalf("R_LARCH_RELATIVE = %#x, want %#x", got, want)
+		}
+		if err := applyLoong64Reloc(uint32(elf.R_LARCH_64), place, 0, 0x2200, -8, 0, false); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := readU64(place), uint64(0x21f8); got != want {
+			t.Fatalf("R_LARCH_64 = %#x, want %#x", got, want)
+		}
+		if err := applyLoong64Reloc(uint32(elf.R_LARCH_TLS_TPREL64), place, 0, 0, 8, -0x400, true); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := readU64(place), ^uint64(0)-0x3f7; got != want {
+			t.Fatalf("R_LARCH_TLS_TPREL64 = %#x, want %#x", got, want)
+		}
+	})
+
 	t.Run("ppc64le", func(t *testing.T) {
 		word := make([]byte, 8)
 		place := uintptr(unsafe.Pointer(&word[0]))
@@ -89,6 +112,7 @@ func TestLinuxExtendedArchitectureTLSRelocationsRequireReservedSlot(t *testing.T
 	}{
 		{name: "arm", call: func() error { return applyARMReloc(uint32(elf.R_ARM_TLS_TPOFF32), place, 0, 0, 0, 0, false) }},
 		{name: "riscv64", call: func() error { return applyRISCV64Reloc(uint32(elf.R_RISCV_TLS_TPREL64), place, 0, 0, 0, 0, false) }},
+		{name: "loong64", call: func() error { return applyLoong64Reloc(uint32(elf.R_LARCH_TLS_TPREL64), place, 0, 0, 0, 0, false) }},
 		{name: "ppc64le", call: func() error { return applyPPC64LEReloc(uint32(elf.R_PPC64_TPREL64), place, 0, 0, 0, 0, false) }},
 	}
 	for _, test := range tests {

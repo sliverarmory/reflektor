@@ -45,6 +45,8 @@ func writeThunk(destination []byte, target, thunk, got, toc uintptr) error {
 		binary.LittleEndian.PutUint64(destination[8:16], uint64(target))
 	case "riscv64":
 		return writeRISCV64Thunk(destination, thunk, got)
+	case "loong64":
+		return writeLoong64Thunk(destination, thunk, got)
 	case "ppc64le":
 		return writePPC64LEThunk(destination, got, toc)
 	default:
@@ -94,6 +96,22 @@ func writeRISCV64Thunk(destination []byte, thunk, got uintptr) error {
 	binary.LittleEndian.PutUint32(destination[8:12], 0x00028067)
 	binary.LittleEndian.PutUint32(destination[12:16], 0x00000013)
 	return nil
+}
+
+func writeLoong64Thunk(destination []byte, thunk, got uintptr) error {
+	if len(destination) < 16 {
+		return errors.New("LoongArch import thunk requires a 16-byte destination")
+	}
+	// pcalau12i t0, page(GOT); ld.d t0, t0, lo12(GOT);
+	// jirl zero, t0, 0; nop. The GOT holds the unrestricted callback address.
+	binary.LittleEndian.PutUint32(destination[0:4], 0x1a00000c)
+	binary.LittleEndian.PutUint32(destination[4:8], 0x28c0018c)
+	binary.LittleEndian.PutUint32(destination[8:12], 0x4c000180)
+	binary.LittleEndian.PutUint32(destination[12:16], 0x03400000)
+	if err := patchLoongPageHigh20(destination[0:4], uint64(got), uint64(thunk), 0); err != nil {
+		return err
+	}
+	return patchLoongLow12(destination[4:8], uint64(got), 0)
 }
 
 func writeARMThunk(destination []byte, target uint32) {

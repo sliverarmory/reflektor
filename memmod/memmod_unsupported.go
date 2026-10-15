@@ -1,4 +1,4 @@
-//go:build android || ios || (darwin && !ios && !(amd64 || arm64)) || (linux && !android && !(386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)) || (freebsd && !(amd64 || arm64)) || (netbsd && !(amd64 || arm64)) || (!windows && !darwin && !linux && !freebsd && !netbsd)
+//go:build android || ios || (darwin && !ios && !(amd64 || arm64)) || (linux && !android && !(386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64 || loong64)) || (freebsd && !(amd64 || arm64)) || (netbsd && !(amd64 || arm64)) || (!windows && !darwin && !linux && !freebsd && !netbsd)
 
 package memmod
 

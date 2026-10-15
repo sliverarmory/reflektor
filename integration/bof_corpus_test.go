@@ -323,7 +323,7 @@ func validateBOFCorpusArguments(t *testing.T, location string, arguments []bofCo
 
 func validBOFCorpusTarget(goos string, goarch string) bool {
 	switch goos + "/" + goarch {
-	case "darwin/amd64", "darwin/arm64", "freebsd/amd64", "freebsd/arm64", "netbsd/amd64", "netbsd/arm64", "linux/386", "linux/amd64", "linux/arm", "linux/arm64", "linux/ppc64le", "linux/riscv64", "windows/386", "windows/amd64", "windows/arm64":
+	case "darwin/amd64", "darwin/arm64", "freebsd/amd64", "freebsd/arm64", "netbsd/amd64", "netbsd/arm64", "linux/386", "linux/amd64", "linux/arm", "linux/arm64", "linux/loong64", "linux/ppc64le", "linux/riscv64", "windows/386", "windows/amd64", "windows/arm64":
 		return true
 	default:
 		return false

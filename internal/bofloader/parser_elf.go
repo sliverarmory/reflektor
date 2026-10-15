@@ -21,6 +21,8 @@ const (
 	riscvELFTSO            = 0x00000010
 	riscvELFKnownFlags     = riscvELFRVC | riscvELFFloatABIMask | riscvELFRVE | riscvELFTSO
 
+	loongELFLP64DABIv1 = 0x43
+
 	ppc64ELFABI          = 0x00000003
 	ppc64ELFABI2         = 0x00000002
 	ppc64LocalEntryMask  = 0xe0
@@ -79,6 +81,12 @@ func parseELF(data []byte) (object *objectFile, err error) {
 			return nil, fmt.Errorf("bofloader: ELF/riscv64 BOF has unknown flags %#08x", unknown)
 		}
 		arch = "riscv64"
+	case file.Machine == elf.EM_LOONGARCH && file.Class == elf.ELFCLASS64:
+		flags := binary.LittleEndian.Uint32(data[48:52])
+		if flags != loongELFLP64DABIv1 {
+			return nil, fmt.Errorf("bofloader: ELF/loong64 BOFs require LP64D ABI v1 flags, got %#08x", flags)
+		}
+		arch = "loong64"
 	case file.Machine == elf.EM_PPC64 && file.Class == elf.ELFCLASS64:
 		flags := binary.LittleEndian.Uint32(data[48:52])
 		if flags&ppc64ELFABI != ppc64ELFABI2 || flags&^uint32(ppc64ELFABI) != 0 {
@@ -271,7 +279,7 @@ func parseELF(data []byte) (object *objectFile, err error) {
 		if !result.sections[targetSection].mapped {
 			continue
 		}
-		if (arch == "riscv64" || arch == "ppc64le") && section.Type != elf.SHT_RELA {
+		if (arch == "riscv64" || arch == "ppc64le" || arch == "loong64") && section.Type != elf.SHT_RELA {
 			return nil, fmt.Errorf("bofloader: ELF/%s relocation section %q must use RELA encoding", arch, section.Name)
 		}
 		contents, dataErr := section.Data()

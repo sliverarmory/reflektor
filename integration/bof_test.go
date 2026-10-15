@@ -37,6 +37,7 @@ var bofTargets = []bofTarget{
 	{goos: "linux", goarch: "arm64", zigTarget: "aarch64-linux-none", format: "elf"},
 	{goos: "linux", goarch: "ppc64le", zigTarget: "powerpc64le-linux-none", format: "elf"},
 	{goos: "linux", goarch: "riscv64", zigTarget: "riscv64-linux-none", format: "elf"},
+	{goos: "linux", goarch: "loong64", zigTarget: "loongarch64-linux-none", format: "elf"},
 	{goos: "netbsd", goarch: "amd64", zigTarget: "x86_64-netbsd-none", format: "elf"},
 	{goos: "netbsd", goarch: "arm64", zigTarget: "aarch64-netbsd-none", format: "elf"},
 	{goos: "windows", goarch: "386", zigTarget: "x86-windows-gnu", format: "coff"},
@@ -68,7 +69,7 @@ func TestBuildBOFMatrix(t *testing.T) {
 			// the primary fixture. Other targets continue to build it in their
 			// native LoadWithOptions execution test.
 			if target.goos == "freebsd" ||
-				(target.goos == "linux" && (target.goarch == "arm" || target.goarch == "ppc64le" || target.goarch == "riscv64")) {
+				(target.goos == "linux" && (target.goarch == "arm" || target.goarch == "ppc64le" || target.goarch == "riscv64" || target.goarch == "loong64")) {
 				optionsPath := buildBOFSource(t, outputDirectory, target, "options_fixture", "options_fixture.c")
 				validateBOFObject(t, optionsPath, target)
 			}
@@ -308,11 +309,11 @@ func validateBOFObject(t *testing.T, path string, target bofTarget) {
 		if file.Data != elf.ELFDATA2LSB {
 			t.Fatalf("ELF data encoding = %s, want ELFDATA2LSB", file.Data)
 		}
-		wantClass := map[string]elf.Class{"386": elf.ELFCLASS32, "amd64": elf.ELFCLASS64, "arm": elf.ELFCLASS32, "arm64": elf.ELFCLASS64, "ppc64le": elf.ELFCLASS64, "riscv64": elf.ELFCLASS64}[target.goarch]
+		wantClass := map[string]elf.Class{"386": elf.ELFCLASS32, "amd64": elf.ELFCLASS64, "arm": elf.ELFCLASS32, "arm64": elf.ELFCLASS64, "ppc64le": elf.ELFCLASS64, "riscv64": elf.ELFCLASS64, "loong64": elf.ELFCLASS64}[target.goarch]
 		if file.Class != wantClass {
 			t.Fatalf("ELF class = %s, want %s", file.Class, wantClass)
 		}
-		wantMachine := map[string]elf.Machine{"386": elf.EM_386, "amd64": elf.EM_X86_64, "arm": elf.EM_ARM, "arm64": elf.EM_AARCH64, "ppc64le": elf.EM_PPC64, "riscv64": elf.EM_RISCV}[target.goarch]
+		wantMachine := map[string]elf.Machine{"386": elf.EM_386, "amd64": elf.EM_X86_64, "arm": elf.EM_ARM, "arm64": elf.EM_AARCH64, "ppc64le": elf.EM_PPC64, "riscv64": elf.EM_RISCV, "loong64": elf.EM_LOONGARCH}[target.goarch]
 		if file.Machine != wantMachine {
 			t.Fatalf("ELF machine = %s, want %s", file.Machine, wantMachine)
 		}
@@ -342,6 +343,12 @@ func validateBOFObject(t *testing.T, path string, target bofTarget) {
 			if flags&efRISCVFloatABIMask != efRISCVFloatABIDouble ||
 				flags&(efRISCVRVE|efRISCVTSO) != 0 || flags&^efRISCVKnownFlags != 0 {
 				t.Fatalf("ELF/riscv64 flags = %#08x, want LP64D with optional RVC and no RVE, RVTSO, or unknown flags", flags)
+			}
+		}
+		if target.goarch == "loong64" {
+			flags := binary.LittleEndian.Uint32(image[48:52])
+			if flags != 0x43 {
+				t.Fatalf("ELF/loong64 flags = %#08x, want LP64D ABI v1 (0x43)", flags)
 			}
 		}
 	case "coff":
