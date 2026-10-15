@@ -634,6 +634,14 @@ func memmodLoader(bufferRO []byte, recursive *darwinRecursivePlan, loadedRoot *d
 	justInTimeLoaderMake2 := findFirstAvailableSymbol(uintptr(dyld), slide, "/usr/lib/dyld",
 		"__ZN5dyld416JustInTimeLoader4makeERNS_12RuntimeStateEPKN5dyld39MachOFileEPKcRKNS_6FileIDEybbbtPKN6mach_o6LayoutE",
 	)
+	// Newer dyld uses mach_o::UnsafeHeader and no longer accepts the final
+	// mach_o::Layout pointer. Keep the ABI distinction explicit at the call site.
+	justInTimeLoaderMake9 := uintptr(0)
+	if justInTimeLoaderMake2 == 0 {
+		justInTimeLoaderMake9 = findFirstAvailableSymbol(uintptr(dyld), slide, "/usr/lib/dyld",
+			"__ZN5dyld416JustInTimeLoader4makeERNS_12RuntimeStateEPKN6mach_o12UnsafeHeaderEPKcRKNS_6FileIDEybbbt",
+		)
+	}
 	loadDependents := findFirstAvailableSymbol(uintptr(dyld), slide, "/usr/lib/dyld",
 		"__ZN5dyld46Loader14loadDependentsER11DiagnosticsRNS_12RuntimeStateERKNS0_11LoadOptionsE",
 		"__ZN5dyld416JustInTimeLoader14loadDependentsER11DiagnosticsRNS_12RuntimeStateERKNS_6Loader11LoadOptionsE",
@@ -753,7 +761,7 @@ func memmodLoader(bufferRO []byte, recursive *darwinRecursivePlan, loadedRoot *d
 	}
 
 	missing := make([]string, 0, 8)
-	if justInTimeLoaderMake2 == 0 {
+	if justInTimeLoaderMake2 == 0 && justInTimeLoaderMake9 == 0 {
 		missing = append(missing, "JustInTimeLoader::make")
 	}
 	if loadDependents == 0 {
@@ -886,18 +894,9 @@ func memmodLoader(bufferRO []byte, recursive *darwinRecursivePlan, loadedRoot *d
 	// mapped image. They must remain process-resident even if a later step fails.
 	recursiveMappingsOwned = false
 
-	topLoader := call10(
-		justInTimeLoaderMake2,
-		apis,
-		mapped.loadAddress,
-		cStringPtr(entryName),
-		uintptr(unsafe.Pointer(fileid)),
-		0,
-		0,
-		1,
-		0,
-		0,
-		0,
+	topLoader := callDarwinJustInTimeLoaderMake(
+		justInTimeLoaderMake2, justInTimeLoaderMake9,
+		apis, mapped.loadAddress, cStringPtr(entryName), uintptr(unsafe.Pointer(fileid)),
 	)
 	runtime.KeepAlive(entryName)
 	if diagnosticsReady && call1(diagnosticsHasError, uintptr(diag)) != 0 {
@@ -925,18 +924,9 @@ func memmodLoader(bufferRO []byte, recursive *darwinRecursivePlan, loadedRoot *d
 		if diagnosticsReady {
 			call1(diagnosticsClearError, uintptr(diag))
 		}
-		dependencyLoader := call10(
-			justInTimeLoaderMake2,
-			apis,
-			dependency.mapped.loadAddress,
-			cStringPtr(dependencyName),
-			uintptr(unsafe.Pointer(fileid)),
-			0,
-			0,
-			1,
-			0,
-			0,
-			0,
+		dependencyLoader := callDarwinJustInTimeLoaderMake(
+			justInTimeLoaderMake2, justInTimeLoaderMake9,
+			apis, dependency.mapped.loadAddress, cStringPtr(dependencyName), uintptr(unsafe.Pointer(fileid)),
 		)
 		runtime.KeepAlive(dependencyName)
 		if diagnosticsReady && call1(diagnosticsHasError, uintptr(diag)) != 0 {
@@ -1044,6 +1034,13 @@ func memmodLoader(bufferRO []byte, recursive *darwinRecursivePlan, loadedRoot *d
 	}
 	runtime.KeepAlive(scratch)
 	return 0
+}
+
+func callDarwinJustInTimeLoaderMake(oldMake, newMake, state, header, name, fileid uintptr) uintptr {
+	if oldMake != 0 {
+		return call10(oldMake, state, header, name, fileid, 0, 0, 1, 0, 0, 0)
+	}
+	return call9(newMake, state, header, name, fileid, 0, 0, 1, 0, 0)
 }
 
 func invokeDarwinExport(address uintptr, isolateGoRuntime bool) error {

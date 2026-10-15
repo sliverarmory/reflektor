@@ -50,6 +50,11 @@ func call6(fn, a0, a1, a2, a3, a4, a5 uintptr) uintptr {
 	return call10(fn, a0, a1, a2, a3, a4, a5, 0, 0, 0, 0)
 }
 
+func call9(fn, a0, a1, a2, a3, a4, a5, a6, a7, a8 uintptr) uintptr {
+	result, _, _ := purego.SyscallN(fn, a0, a1, a2, a3, a4, a5, a6, a7, a8)
+	return result
+}
+
 func call10(fn, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9 uintptr) uintptr {
 	// SyscallN uses runtime.cgocall, which aligns the stack for the C ABI.
 	result, _, _ := purego.SyscallN(fn, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9)
