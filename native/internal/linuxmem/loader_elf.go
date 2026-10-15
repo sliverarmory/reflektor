@@ -142,6 +142,9 @@ func LoadLibrary(data []byte) (*Module, error) {
 	if err := validateELFImage(data, f); err != nil {
 		return nil, err
 	}
+	if err := rejectCustomELFIFUNC(f); err != nil {
+		return nil, err
+	}
 	initInfo, err := parseDynamicInitInfo(f)
 	if err != nil {
 		return nil, err
@@ -530,6 +533,9 @@ func applyRELSection(data []byte, f *elf.File, mapped mappedELF, dynSyms []elf.S
 }
 
 func applyOneRelocation(machine elf.Machine, class elf.Class, mapped mappedELF, dynSyms []elf.Symbol, resolver *symbolResolver, symIndex uint32, relocType uint32, offset uint64, addend int64, hasAddend bool) error {
+	if isELFIRelative(machine, relocType) {
+		return errors.New("custom ELF image does not support IRELATIVE/IFUNC resolver relocations")
+	}
 	place := mapped.loadBias + uintptr(offset)
 
 	wordSize := 8
@@ -575,6 +581,40 @@ func applyOneRelocation(machine elf.Machine, class elf.Class, mapped mappedELF, 
 		return applyPPC64LEReloc(relocType, place, mapped.loadBias, symValue, addend, mapped.tlsOffset, mapped.hasTLS)
 	default:
 		return fmt.Errorf("unsupported machine for relocation: %s", machine)
+	}
+}
+
+func rejectCustomELFIFUNC(f *elf.File) error {
+	for _, readSymbols := range []func() ([]elf.Symbol, error){f.DynamicSymbols, f.Symbols} {
+		symbols, err := readSymbols()
+		if err != nil {
+			continue
+		}
+		for _, symbol := range symbols {
+			if symbol.Section != elf.SHN_UNDEF && elf.ST_TYPE(symbol.Info) == elf.STT_GNU_IFUNC {
+				return fmt.Errorf("custom ELF image does not support GNU IFUNC resolver %q", symbol.Name)
+			}
+		}
+	}
+	return nil
+}
+
+func isELFIRelative(machine elf.Machine, relocationType uint32) bool {
+	switch machine {
+	case elf.EM_X86_64:
+		return elf.R_X86_64(relocationType) == elf.R_X86_64_IRELATIVE
+	case elf.EM_386:
+		return elf.R_386(relocationType) == elf.R_386_IRELATIVE
+	case elf.EM_AARCH64:
+		return elf.R_AARCH64(relocationType) == elf.R_AARCH64_IRELATIVE
+	case elf.EM_ARM:
+		return elf.R_ARM(relocationType) == elf.R_ARM_IRELATIVE
+	case elf.EM_RISCV:
+		return relocationType == 58 // R_RISCV_IRELATIVE
+	case elf.EM_PPC64:
+		return elf.R_PPC64(relocationType) == elf.R_PPC64_IRELATIVE
+	default:
+		return false
 	}
 }
 

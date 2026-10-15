@@ -313,6 +313,10 @@ Usage:
   explicit errors; those features remain available through the system-library
   carveout. Windows custom dependency cycles and delay-load import tables are
   also rejected explicitly. Darwin, FreeBSD, and Linux graph cycles are deduplicated.
+- Root and native ELF loads reject defined GNU IFUNC symbols before mapping and
+  reject IRELATIVE relocations before applying them. Recursive loads enforce the
+  same boundary during graph preflight. System-library imports may still resolve
+  to GNU IFUNC implementations through the native dynamic loader.
 - After the first export call, Darwin recursive mappings remain process-resident
   because dyld retains their loader records. Reusing a Darwin install-name in a
   later load follows dyld's first-loaded identity semantics. Calls made through
@@ -329,6 +333,7 @@ C test shared libraries are generated from:
 - `reflektor/testdata/c/freebsd_ld_library_path_dependency.c`
 - `reflektor/testdata/c/freebsd_ld_library_path_root.c`
 - `reflektor/testdata/c/freebsd_system_dependency.c`
+- `reflektor/testdata/c/ifunc.c`
 - `reflektor/testdata/c/native_lifecycle.c`
 - `reflektor/testdata/c/recursive_leaf.c`
 - `reflektor/testdata/c/recursive_middle.c`
