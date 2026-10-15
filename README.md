@@ -212,7 +212,8 @@ records, err := bof.ExecuteIsolated(ctx, "./reflektor-bof-worker", objectBytes,
 Each call starts and reaps a fresh worker. A cancelled context kills native
 code that does not cooperate; a crash returns `*bof.WorkerExitError` with exit
 status and bounded stderr. Records already emitted remain typed, ordered, and
-owned. A call retains at most 64 MiB of output, with a 16 MiB per-record limit.
+owned. A call retains at most 64 MiB or 1,048,576 output records, with a 16 MiB
+per-record limit.
 Use a trusted worker built from the same Reflektor version; the protocol is
 private and versioned. The worker receives the image and argument bytes and
 has the caller's normal OS permissions. Process isolation does not restrict

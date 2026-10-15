@@ -93,6 +93,9 @@ func ExecuteIsolated(ctx context.Context, workerPath string, image, args []byte,
 	go func() {
 		var totalOutput int64
 		message, responseErr := bofworker.ReadResponse(stdout, func(outputType int, data []byte) error {
+			if len(outputs) >= 1<<20 {
+				return errors.New("reflektor: BOF worker output exceeds 1048576 records")
+			}
 			totalOutput += int64(len(data))
 			if totalOutput > 64<<20 {
 				return errors.New("reflektor: BOF worker output exceeds 64 MiB")
