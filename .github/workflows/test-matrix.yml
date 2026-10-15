@@ -55,8 +55,8 @@ jobs:
       - name: Run Darwin native BOF execution tests without cgo
         run: |
           set -euo pipefail
-          CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions|TestBOFHostAdapterNativeCallbacks|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop)$' -count=1 -v | tee darwin-bof-nocgo-test.log
-          for test_name in TestLoadAndExecuteGeneratedBOF TestLoadAndExecuteLegacyDarwinELFBOF TestBOFLoadWithOptions TestBOFHostAdapterNativeCallbacks TestConcurrentBOFStreaming TestSameImageBOFExecutionIsSerialized TestCooperativeBOFStop; do
+          CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions|TestBOFHostAdapterNativeCallbacks|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop|TestManagedBOFWorkers)$' -count=1 -v | tee darwin-bof-nocgo-test.log
+          for test_name in TestLoadAndExecuteGeneratedBOF TestLoadAndExecuteLegacyDarwinELFBOF TestBOFLoadWithOptions TestBOFHostAdapterNativeCallbacks TestConcurrentBOFStreaming TestSameImageBOFExecutionIsSerialized TestCooperativeBOFStop TestManagedBOFWorkers; do
             if ! grep -Fq -- "--- PASS: ${test_name} " darwin-bof-nocgo-test.log; then
               echo "Required CGO-free Darwin BOF execution test did not pass: ${test_name}"
               exit 1
@@ -66,6 +66,10 @@ jobs:
             echo "CGO-free Darwin BOF execution test was skipped; refusing to pass CI."
             exit 1
           fi
+          CGO_ENABLED=1 go test ./integration -run '^(TestManagedBOFWorkers|TestBOFHostAdapterNativeCallbacks)$' -count=1 -v | tee darwin-bof-workers-cgo-test.log
+          grep -Fq -- '--- PASS: TestManagedBOFWorkers ' darwin-bof-workers-cgo-test.log
+          grep -Fq -- '--- PASS: TestBOFHostAdapterNativeCallbacks ' darwin-bof-workers-cgo-test.log
+          if grep -Fq -- '--- SKIP:' darwin-bof-workers-cgo-test.log; then exit 1; fi
       - name: Run Darwin no-cgo call bridge ABI test
         run: |
           set -euo pipefail
@@ -82,7 +86,7 @@ jobs:
         run: |
           set -euo pipefail
           CGO_ENABLED=0 go test ./bof ./internal/bofloader -count=1
-          intentional_skip_pattern='TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)|TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop|TestSituationalAwarenessBOFCorpus(Child)?'
+          intentional_skip_pattern='TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)|TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop|TestManagedBOFWorkers|TestSituationalAwarenessBOFCorpus(Child)?'
           go test ./... -skip "${intentional_skip_pattern}" -count=1 -v | tee darwin-test.log
           memmod_test="TestLoadLibraryAndCallExport_DarwinArm64"
           if [[ "${GOARCH}" == "amd64" ]]; then
@@ -279,7 +283,7 @@ jobs:
         run: |
           set -euo pipefail
           CGO_ENABLED=0 go test ./bof ./internal/bofloader -count=1
-          intentional_skip_pattern='TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)|TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop|TestSituationalAwarenessBOFCorpus(Child)?'
+          intentional_skip_pattern='TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)|TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop|TestManagedBOFWorkers|TestSituationalAwarenessBOFCorpus(Child)?'
           go test ./... -skip "${intentional_skip_pattern}" -count=1 -v | tee linux-test.log
           for test_name in \
             TestLoadGeneratedCLinuxSOAndCallStartW \
@@ -324,8 +328,8 @@ jobs:
               exit 1
             fi
           done
-          CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestBOFHostAdapterNativeCallbacks|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop)$' -count=1 -v | tee linux-bof-nocgo-test.log
-          for test_name in TestLoadAndExecuteGeneratedBOF TestBOFLoadWithOptions TestBOFHostAdapterNativeCallbacks TestConcurrentBOFStreaming TestSameImageBOFExecutionIsSerialized TestCooperativeBOFStop; do
+          CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestBOFHostAdapterNativeCallbacks|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop|TestManagedBOFWorkers)$' -count=1 -v | tee linux-bof-nocgo-test.log
+          for test_name in TestLoadAndExecuteGeneratedBOF TestBOFLoadWithOptions TestBOFHostAdapterNativeCallbacks TestConcurrentBOFStreaming TestSameImageBOFExecutionIsSerialized TestCooperativeBOFStop TestManagedBOFWorkers; do
             if ! grep -Fq -- "--- PASS: ${test_name} " linux-bof-nocgo-test.log; then
               echo "Required CGO-free Linux BOF execution test did not pass: ${test_name}"
               exit 1
@@ -335,6 +339,10 @@ jobs:
             echo "CGO-free Linux BOF execution test was skipped; refusing to pass CI."
             exit 1
           fi
+          CGO_ENABLED=1 go test ./integration -run '^(TestManagedBOFWorkers|TestBOFHostAdapterNativeCallbacks)$' -count=1 -v | tee linux-bof-workers-cgo-test.log
+          grep -Fq -- '--- PASS: TestManagedBOFWorkers ' linux-bof-workers-cgo-test.log
+          grep -Fq -- '--- PASS: TestBOFHostAdapterNativeCallbacks ' linux-bof-workers-cgo-test.log
+          if grep -Fq -- '--- SKIP:' linux-bof-workers-cgo-test.log; then exit 1; fi
           CGO_ENABLED=0 go test ./integration -run '^TestSituationalAwarenessBOFCorpus$' -count=1 -v | tee linux-bof-corpus-test.log
           if ! grep -Fq -- '--- PASS: TestSituationalAwarenessBOFCorpus ' linux-bof-corpus-test.log; then
             echo "Required Linux BOF corpus execution test did not pass"
@@ -419,6 +427,7 @@ jobs:
           test -s test/bof-fixtures/async_fixture_linux_arm.o
           test -s test/bof-fixtures/stop_fixture_linux_arm.o
           test -s test/bof-fixtures/host_adapter_fixture_linux_arm.o
+          test -s test/bof-fixtures/managed_worker_fixture_linux_arm.o
       - name: Prepare pinned linux/arm BOF corpus
         working-directory: test/corpus/Situational-Awareness-BOFs
         run: |
@@ -486,6 +495,7 @@ jobs:
           test -s test/bof-fixtures/async_fixture_linux_riscv64.o
           test -s test/bof-fixtures/stop_fixture_linux_riscv64.o
           test -s test/bof-fixtures/host_adapter_fixture_linux_riscv64.o
+          test -s test/bof-fixtures/managed_worker_fixture_linux_riscv64.o
       - name: Prepare pinned linux/riscv64 BOF corpus
         working-directory: test/corpus/Situational-Awareness-BOFs
         run: |
@@ -553,6 +563,7 @@ jobs:
           test -s test/bof-fixtures/async_fixture_linux_ppc64le.o
           test -s test/bof-fixtures/stop_fixture_linux_ppc64le.o
           test -s test/bof-fixtures/host_adapter_fixture_linux_ppc64le.o
+          test -s test/bof-fixtures/managed_worker_fixture_linux_ppc64le.o
       - name: Prepare pinned linux/ppc64le BOF corpus
         working-directory: test/corpus/Situational-Awareness-BOFs
         run: |
@@ -628,7 +639,7 @@ jobs:
         run: |
           set -euo pipefail
           CGO_ENABLED=0 go test ./bof ./internal/bofloader -count=1
-          intentional_skip_pattern='TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)|TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop|TestSituationalAwarenessBOFCorpus(Child)?'
+          intentional_skip_pattern='TestBuild(CSharedLibraryMatrix|RecursiveCSharedLibraryMatrix|BOFMatrix)|TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop|TestManagedBOFWorkers|TestSituationalAwarenessBOFCorpus(Child)?'
           go test ./... -skip "${intentional_skip_pattern}" -count=1 -v | tee windows-test.log
           for test_name in \
             TestLoadGeneratedCWindowsDLLAndCallStartW \
@@ -654,8 +665,8 @@ jobs:
             echo "${unexpected_skips}"
             exit 1
           fi
-          CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestBOFHostAdapterNativeCallbacks|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop)$' -count=1 -v | tee windows-bof-nocgo-test.log
-          for test_name in TestLoadAndExecuteGeneratedBOF TestBOFLoadWithOptions TestBOFHostAdapterNativeCallbacks TestConcurrentBOFStreaming TestSameImageBOFExecutionIsSerialized TestCooperativeBOFStop; do
+          CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestBOFHostAdapterNativeCallbacks|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop|TestManagedBOFWorkers)$' -count=1 -v | tee windows-bof-nocgo-test.log
+          for test_name in TestLoadAndExecuteGeneratedBOF TestBOFLoadWithOptions TestBOFHostAdapterNativeCallbacks TestConcurrentBOFStreaming TestSameImageBOFExecutionIsSerialized TestCooperativeBOFStop TestManagedBOFWorkers; do
             if ! grep -Fq -- "--- PASS: ${test_name} " windows-bof-nocgo-test.log; then
               echo "Required CGO-free Windows BOF execution test did not pass: ${test_name}"
               exit 1
@@ -665,6 +676,10 @@ jobs:
             echo "CGO-free Windows BOF execution test was skipped; refusing to pass CI."
             exit 1
           fi
+          CGO_ENABLED=1 go test ./integration -run '^(TestManagedBOFWorkers|TestBOFHostAdapterNativeCallbacks)$' -count=1 -v | tee windows-bof-workers-cgo-test.log
+          grep -Fq -- '--- PASS: TestManagedBOFWorkers ' windows-bof-workers-cgo-test.log
+          grep -Fq -- '--- PASS: TestBOFHostAdapterNativeCallbacks ' windows-bof-workers-cgo-test.log
+          if grep -Fq -- '--- SKIP:' windows-bof-workers-cgo-test.log; then exit 1; fi
           CGO_ENABLED=0 go test ./integration -run '^TestSituationalAwarenessBOFCorpus$' -timeout 45m -count=1 -v | tee windows-bof-corpus-test.log
           if ! grep -Fq -- '--- PASS: TestSituationalAwarenessBOFCorpus ' windows-bof-corpus-test.log; then
             echo "Required Windows BOF corpus execution test did not pass"

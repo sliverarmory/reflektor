@@ -77,6 +77,29 @@ func TestBOFHostAdapterNativeCallbacks(t *testing.T) {
 	if use != 5 || revert != 4 || admin != 4 || spawn != 4 {
 		t.Fatalf("repeated token-use cleanup counts = %d, %d, %d, %d", use, revert, admin, spawn)
 	}
+	var workerOutputs []bof.Output
+	err = object.ExecuteWithOptions([]byte{1, 2, 3}, bof.ExecuteOptions{
+		ManagedWorkers: true,
+		OnOutput:       func(output bof.Output) { workerOutputs = append(workerOutputs, output) },
+	})
+	for _, name := range []string{"BeaconUseToken", "BeaconRevertToken"} {
+		if err == nil || !strings.Contains(err.Error(), name+" host callback requires the BOF entry thread") {
+			t.Fatalf("worker %s error = %v", name, err)
+		}
+	}
+	if len(workerOutputs) != 1 || string(workerOutputs[0].Data) != "worker-token-denied" {
+		t.Fatalf("managed worker outputs = %#v", workerOutputs)
+	}
+	if use != 5 || revert != 4 || admin != 4 || spawn != 4 {
+		t.Fatalf("worker invoked token services or cleanup: %d, %d, %d, %d", use, revert, admin, spawn)
+	}
+	outputs, err = object.Execute(nil)
+	if err != nil || len(outputs) != 1 || string(outputs[0].Data) != "host-adapter-ok" {
+		t.Fatalf("execution after rejected worker callbacks = %#v, %v", outputs, err)
+	}
+	if use != 6 || revert != 5 || admin != 5 || spawn != 5 {
+		t.Fatalf("service counts after worker execution = %d, %d, %d, %d", use, revert, admin, spawn)
+	}
 	if err := object.Close(); err != nil {
 		t.Fatal(err)
 	}

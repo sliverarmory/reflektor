@@ -42,6 +42,7 @@ type Loader struct {
 	region      *memoryRegion
 	unwind      *unwindRegistration
 	entry       uintptr
+	executable  []executableRange
 	closing     bool
 	closed      bool
 }
@@ -273,8 +274,14 @@ func LoadWithOptions(data []byte, options LoadOptions) (*Loader, error) {
 		return nil, err
 	}
 
+	executable := make([]executableRange, 0, len(object.sections))
+	for _, section := range object.sections {
+		if section.mapped && section.size != 0 && section.protection&protExec != 0 {
+			executable = append(executable, executableRange{address: section.address, size: section.size})
+		}
+	}
 	cleanup = false
-	return &Loader{region: region, unwind: unwind, entry: entry}, nil
+	return &Loader{region: region, unwind: unwind, entry: entry, executable: executable}, nil
 }
 
 func parseObject(data []byte) (*objectFile, error) {
@@ -480,24 +487,24 @@ func mappedSectionAlignment(section objectSection, pageSize uint64) (uint64, err
 }
 
 func (loader *Loader) Execute(args []byte) ([]Output, error) {
-	return loader.execute(args, nil, true, nil)
+	return loader.execute(args, nil, true, nil, false)
 }
 
 // ExecuteWithOutput sends each owned output record to emit before the native
 // entry point returns. It does not retain the records in the execution context.
 func (loader *Loader) ExecuteWithOutput(args []byte, emit func(Output)) error {
-	_, err := loader.execute(args, emit, false, nil)
+	_, err := loader.execute(args, emit, false, nil, false)
 	return err
 }
 
 // ExecuteWithOptions streams records and makes a stop request visible to BOFs
 // that import ReflektorShouldStop. It waits for the native entry to return.
-func (loader *Loader) ExecuteWithOptions(args []byte, emit func(Output), stop <-chan struct{}) error {
-	_, err := loader.execute(args, emit, false, stop)
+func (loader *Loader) ExecuteWithOptions(args []byte, emit func(Output), stop <-chan struct{}, managedWorkers bool) error {
+	_, err := loader.execute(args, emit, false, stop, managedWorkers)
 	return err
 }
 
-func (loader *Loader) execute(args []byte, emit func(Output), capture bool, stop <-chan struct{}) ([]Output, error) {
+func (loader *Loader) execute(args []byte, emit func(Output), capture bool, stop <-chan struct{}, managedWorkers bool) ([]Output, error) {
 	loader.mu.RLock()
 	defer loader.mu.RUnlock()
 	if loader.closing || loader.closed || loader.region == nil || loader.entry == 0 {
@@ -516,6 +523,8 @@ func (loader *Loader) execute(args []byte, emit func(Output), capture bool, stop
 
 	context := newExecutionContext(emit, capture)
 	context.stop = stop
+	context.workersEnabled = managedWorkers
+	context.workerRanges = loader.executable
 	unregister, err := registerExecutionContext(context)
 	if err != nil {
 		return nil, err
@@ -529,6 +538,7 @@ func (loader *Loader) execute(args []byte, emit func(Output), capture bool, stop
 	}
 	invokeEntry(loader.entry, address, int32(len(args)))
 	runtime.KeepAlive(args)
+	context.waitWorkers()
 	context.runHostCleanups()
 
 	outputs, err := context.result()

@@ -49,6 +49,12 @@ type ExecuteOptions struct {
 	// does not poll the callback keeps running. A nil channel never requests
 	// a stop.
 	Stop <-chan struct{}
+
+	// ManagedWorkers permits the BOF to call ReflektorStartWorker with a
+	// function in its executable image. Each call starts a host-managed native
+	// thread that can use Beacon callbacks. Execute joins every such worker
+	// before returning. The zero value leaves worker routing disabled.
+	ManagedWorkers bool
 }
 
 // Import describes one external symbol referenced by a BOF image. Name is the
@@ -173,7 +179,7 @@ func (arguments *Arguments) append(value []byte) error {
 
 type objectLoader interface {
 	Execute([]byte) ([]bofloader.Output, error)
-	ExecuteWithOptions([]byte, func(bofloader.Output), <-chan struct{}) error
+	ExecuteWithOptions([]byte, func(bofloader.Output), <-chan struct{}, bool) error
 	Close() error
 }
 
@@ -275,7 +281,9 @@ func (object *Object) ExecuteWithOutput(args []byte, emit func(Output)) error {
 //
 // OnOutput runs synchronously during BOF execution and should return promptly.
 // It must not execute any BOF on the same thread or call Close on this object.
-// Beacon callbacks from native threads created by the BOF are unsupported.
+// OnOutput is serialized across the entry thread and managed worker threads;
+// their relative scheduling determines the record order. Native-created
+// threads outside ReflektorStartWorker remain unsupported.
 func (object *Object) ExecuteWithOptions(args []byte, options ExecuteOptions) error {
 	if object == nil {
 		return ErrClosed
@@ -294,7 +302,7 @@ func (object *Object) ExecuteWithOptions(args []byte, options ExecuteOptions) er
 			options.OnOutput(Output{Type: output.Type, Data: append([]byte(nil), output.Data...)})
 		}
 	}
-	err := object.loader.ExecuteWithOptions(args, forward, options.Stop)
+	err := object.loader.ExecuteWithOptions(args, forward, options.Stop, options.ManagedWorkers)
 	if errors.Is(err, bofloader.ErrClosed) {
 		return ErrClosed
 	}

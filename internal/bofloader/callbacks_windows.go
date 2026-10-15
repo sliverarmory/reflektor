@@ -54,6 +54,9 @@ func platformCallbacks() map[string]uintptr {
 		"ReflektorShouldStop": purego.NewCallback(func(_ purego.CDecl) uintptr {
 			return reflektorShouldStop()
 		}),
+		"ReflektorStartWorker": purego.NewCallback(func(_ purego.CDecl, a0, a1, a2 uintptr) uintptr {
+			return reflektorStartWorker(a0, a1, a2)
+		}),
 		"toWideChar": purego.NewCallback(func(_ purego.CDecl, a0, a1, a2 uintptr) uintptr {
 			return toWideChar(a0, a1, a2)
 		}),

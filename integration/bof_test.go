@@ -62,6 +62,8 @@ func TestBuildBOFMatrix(t *testing.T) {
 			buildBOFSource(t, outputDirectory, target, "async_fixture", "async_fixture.c")
 			buildBOFSource(t, outputDirectory, target, "stop_fixture", "stop_fixture.c")
 			buildBOFSource(t, outputDirectory, target, "host_adapter_fixture", "host_adapter_fixture.c")
+			workerPath := buildBOFSource(t, outputDirectory, target, "managed_worker_fixture", "managed_worker_fixture.c")
+			validateBOFObject(t, workerPath, target)
 			// The emulated Linux and FreeBSD runtimes deliberately have no native
 			// Zig dependency, so seed and inspect their options fixture alongside
 			// the primary fixture. Other targets continue to build it in their

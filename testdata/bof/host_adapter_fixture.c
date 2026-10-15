@@ -11,12 +11,26 @@ BEACON_IMPORT void BeaconRevertToken(void);
 BEACON_IMPORT int32_t BeaconIsAdmin(void);
 BEACON_IMPORT void BeaconGetSpawnTo(int32_t x86, char *buffer, int32_t length);
 BEACON_IMPORT void BeaconOutput(int32_t type, const char *data, int32_t length);
+BEACON_IMPORT int32_t ReflektorStartWorker(void (*worker)(char *, int32_t), const char *data, int32_t length);
+
+static void token_worker(char *args, int32_t length) {
+    static const char result[] = "worker-token-denied";
+    (void)args;
+    (void)length;
+    BeaconUseToken((uintptr_t)0x345);
+    BeaconRevertToken();
+    BeaconOutput(0, result, (int32_t)(sizeof(result) - 1));
+}
 
 void go(char *args, int32_t length) {
     char path[32] = {0};
     static const char success[] = "host-adapter-ok";
     static const char failure[] = "host-adapter-failed";
     (void)args;
+    if (length == 3) {
+        ReflektorStartWorker(token_worker, 0, 0);
+        return;
+    }
     if (!BeaconUseToken((uintptr_t)0x345) || !BeaconIsAdmin()) {
         BeaconOutput(13, failure, (int32_t)(sizeof(failure) - 1));
         return;
