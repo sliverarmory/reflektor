@@ -1,4 +1,4 @@
-//go:build (linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)) || (freebsd && (amd64 || arm64))
+//go:build (linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64 || loong64)) || (freebsd && (amd64 || arm64))
 
 package memmod
 
@@ -888,6 +888,10 @@ func hasRecursiveIRelative(f *elf.File) bool {
 			case elf.EM_RISCV:
 				// The psABI assigns relocation 58 to R_RISCV_IRELATIVE.
 				if relocationType == 58 {
+					return true
+				}
+			case elf.EM_LOONGARCH:
+				if elf.R_LARCH(relocationType) == elf.R_LARCH_IRELATIVE {
 					return true
 				}
 			case elf.EM_PPC64:
