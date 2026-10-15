@@ -279,10 +279,17 @@ go build -o reflektor ./cli
 Usage:
 
 ```bash
-./reflektor <shared-library-path> [--call-export StartW]
+./reflektor <shared-library-path> [--call-export StartW] [--recursive]
+./reflektor <shared-library-path> --call-export MyFunction --arg 0x10 --arg 25 --print-result
 ```
 
-`--call-export` defaults to `StartW`.
+`--call-export` defaults to `StartW`. `--recursive` loads non-system
+dependencies beside the library from bytes. Repeat `--arg` up to three times
+to pass decimal or `0x` hexadecimal machine-word integers to a native C or Rust
+export. Arguments automatically print the machine-word return value;
+`--print-result` also prints it for a zero-argument native export. Without
+these options, the CLI retains its original zero-argument call behavior,
+including Go c-shared exports. The CLI does not encode strings or pointers.
 
 ## Behavior Notes
 
