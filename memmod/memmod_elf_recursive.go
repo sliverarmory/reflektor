@@ -1,4 +1,4 @@
-//go:build (linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)) || (freebsd && (amd64 || arm64))
+//go:build (linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)) || (freebsd && (amd64 || arm64)) || (netbsd && amd64)
 
 package memmod
 
@@ -214,6 +214,9 @@ func (loader *linuxRecursiveLoader) parseCustomNode(data []byte, path string) (*
 		return nil, fmt.Errorf("read dynamic symbol table: %w", err)
 	}
 	goRuntime := f.Section(".go.buildinfo") != nil
+	if goRuntime && runtime.GOOS == "netbsd" {
+		return nil, errors.New("Go c-shared images are unsupported on netbsd/amd64")
+	}
 	if err := validateRecursiveELFFeatures(f, dynamicSyms, goRuntime); err != nil {
 		return nil, err
 	}
@@ -975,6 +978,8 @@ func linuxRecursiveSystemRoots() []string {
 	configured := []string{"/lib", "/lib64", "/usr/lib", "/usr/lib64"}
 	if runtime.GOOS == "freebsd" {
 		configured = []string{"/lib", "/usr/lib", "/usr/local/lib", "/usr/local/lib/compat", "/libexec", "/usr/libexec"}
+	} else if runtime.GOOS == "netbsd" {
+		configured = []string{"/lib", "/usr/lib", "/usr/pkg/lib", "/usr/X11R7/lib"}
 	}
 	seen := make(map[string]struct{}, len(configured))
 	var roots []string
@@ -1012,6 +1017,23 @@ func linuxPathWithinRoot(path string, root string) bool {
 
 func isLinuxNativeDependencyName(name string) bool {
 	base := filepath.Base(strings.TrimSpace(name))
+	if runtime.GOOS == "netbsd" {
+		switch base {
+		case "ld.elf_so",
+			"libc.so", "libc.so.12",
+			"libm.so", "libm.so.0",
+			"libpthread.so", "libpthread.so.1",
+			"librt.so", "librt.so.1",
+			"libutil.so", "libutil.so.7",
+			"libexecinfo.so", "libexecinfo.so.0",
+			"libgcc_s.so", "libgcc_s.so.1",
+			"libstdc++.so", "libstdc++.so.9",
+			"libcrypto.so", "libssl.so", "libcurl.so", "libz.so":
+			return true
+		default:
+			return false
+		}
+	}
 	if runtime.GOOS == "freebsd" {
 		switch base {
 		case "ld-elf.so.1",

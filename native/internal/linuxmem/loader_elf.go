@@ -1,4 +1,4 @@
-//go:build (linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)) || (freebsd && (amd64 || arm64))
+//go:build (linux && !android && (386 || amd64 || (arm && arm.7) || arm64 || ppc64le || riscv64)) || (freebsd && (amd64 || arm64)) || (netbsd && amd64)
 
 // SPDX-License-Identifier: MIT
 //
@@ -1121,6 +1121,9 @@ func commonLinuxDependencies() []string {
 			"libthr.so.3",
 		}
 	}
+	if runtime.GOOS == "netbsd" {
+		return []string{"libc.so.12", "libpthread.so.1"}
+	}
 
 	deps := []string{
 		"libc.so.6",
@@ -1300,6 +1303,15 @@ func dlopenCandidates(name string) []string {
 		case "libpthread.so", "libthr.so":
 			add("libthr.so.3")
 		}
+	} else if runtime.GOOS == "netbsd" {
+		switch base {
+		case "libc.so":
+			add("libc.so.12")
+		case "libm.so":
+			add("libm.so.0")
+		case "libpthread.so":
+			add("libpthread.so.1")
+		}
 	} else {
 		switch base {
 		case "libc.so":
@@ -1330,6 +1342,9 @@ func linuxLibrarySearchDirs() []string {
 			"/libexec",
 			"/usr/libexec",
 		}
+	}
+	if runtime.GOOS == "netbsd" {
+		return []string{"/lib", "/usr/lib", "/usr/pkg/lib", "/usr/X11R7/lib"}
 	}
 
 	dirs := []string{"/lib", "/lib64", "/usr/lib", "/usr/lib64"}

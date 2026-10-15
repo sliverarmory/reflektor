@@ -98,7 +98,7 @@ func buildRecursiveSharedLibs(t *testing.T, outDir string, goos string, goarch s
 			"-o", root, filepath.Join("..", "testdata", "c", "recursive_root.c"),
 			"-L" + outDir, "-lreflektor_middle",
 		})
-	case "freebsd", "linux":
+	case "freebsd", "netbsd", "linux":
 		buildRecursiveFixture(t, common, []string{
 			"-shared", "-fPIC", "-Wl,-z,now", "-Wl,-z,defs",
 			"-Wl,-soname,libreflektor_leaf.so",

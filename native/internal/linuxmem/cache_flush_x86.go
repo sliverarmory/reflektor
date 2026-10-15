@@ -1,4 +1,4 @@
-//go:build (linux && !android && (386 || amd64)) || (freebsd && amd64)
+//go:build (linux && !android && (386 || amd64)) || (freebsd && amd64) || (netbsd && amd64)
 
 package linuxmem
 

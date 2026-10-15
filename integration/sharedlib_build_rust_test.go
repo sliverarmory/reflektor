@@ -73,6 +73,8 @@ func rustTargetFor(goos string, goarch string) (string, bool) {
 		return "x86_64-unknown-freebsd", true
 	case goos == "freebsd" && goarch == "arm64":
 		return "aarch64-unknown-freebsd", true
+	case goos == "netbsd" && goarch == "amd64":
+		return "x86_64-unknown-netbsd", true
 	case goos == "linux" && goarch == "386":
 		return "i686-unknown-linux-gnu", true
 	case goos == "linux" && goarch == "amd64":
@@ -100,7 +102,7 @@ func rustSharedLibName(goos string) (string, error) {
 	switch goos {
 	case "darwin":
 		return "libreflektor_http_fixture.dylib", nil
-	case "freebsd", "linux":
+	case "freebsd", "netbsd", "linux":
 		return "libreflektor_http_fixture.so", nil
 	case "windows":
 		return "reflektor_http_fixture.dll", nil
@@ -156,7 +158,7 @@ func assertRustSharedLibIsLoadable(t *testing.T, path string, goos string) {
 				t.Fatalf("Rust Mach-O fixture contains unsupported TLS section %s (type=%#x)", section.Name, sectionType)
 			}
 		}
-	case "freebsd", "linux":
+	case "freebsd", "netbsd", "linux":
 		file, err := elf.Open(path)
 		if err != nil {
 			t.Fatalf("open Rust ELF fixture: %v", err)
