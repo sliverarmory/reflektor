@@ -7,8 +7,9 @@ target in the pinned Go toolchain, so future library acceptance covers C and
 Rust images.
 
 The executable-memory probe ran in the cross-platform-actions OpenBSD 7.9
-`x86-64` QEMU image (asset SHA-256
-`ad05bb9cdf8fb8edf0514ff4c30b124bf0067d20be6d14c49ebf89bbbc55a9c0`).
+`x86-64` QEMU image selected by the pinned action (builder release `v0.13.0`,
+asset SHA-256
+`e5965fc6bd8466806b3b2ae463cf1d9031734df072f09f33122be82f0000e0e6`).
 It verified that:
 
 - `dlopen(NULL)` and `dlsym(..., "puts")` work;
