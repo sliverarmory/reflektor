@@ -11,6 +11,35 @@ env:
   REFLEKTOR_BOF_CORPUS_DIR: ${{ github.workspace }}/test/corpus/Situational-Awareness-BOFs
 
 jobs:
+  openbsd-amd64-feasibility:
+    name: openbsd-amd64-feasibility
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Check pinned PureGo OpenBSD foreign-call bridge
+        shell: bash
+        run: bash testdata/openbsd/check-purego-bridge.sh
+      - name: Start OpenBSD 7.9 amd64 VM
+        uses: cross-platform-actions/action@5ea7e8e4677bd726033a10b094ba1c5762b15dee # v1.3.0
+        with:
+          operating_system: openbsd
+          architecture: x86-64
+          version: "7.9"
+          shell: sh
+          memory: 2G
+          cpu_count: 2
+      - name: Check OpenBSD executable-memory policy in guest
+        shell: cpa.sh {0} --sync-files runner-to-vm
+        run: sh testdata/openbsd/run-feasibility.sh
+      - name: Check CGo foreign call and callback in OpenBSD guest
+        shell: cpa.sh {0} --sync-files runner-to-vm
+        run: sh testdata/openbsd/check-cgo-bridge.sh
+
   darwin:
     name: darwin-${{ matrix.goarch }}
     strategy:
