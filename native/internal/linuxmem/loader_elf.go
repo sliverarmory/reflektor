@@ -142,6 +142,9 @@ func LoadLibrary(data []byte) (*Module, error) {
 	if err := validateELFImage(data, f); err != nil {
 		return nil, err
 	}
+	if err := rejectGeneralELFTLS(f); err != nil {
+		return nil, err
+	}
 	initInfo, err := parseDynamicInitInfo(f)
 	if err != nil {
 		return nil, err
@@ -1008,6 +1011,26 @@ func normalizeInitFnAddress(mapped mappedELF, fn uintptr) (uintptr, bool) {
 		return rebased, true
 	}
 	return 0, false
+}
+
+func rejectGeneralELFTLS(f *elf.File) error {
+	for _, program := range f.Progs {
+		if program.Type == elf.PT_TLS && (program.Memsz != 0 || program.Filesz != 0) {
+			return fmt.Errorf("general PT_TLS requires thread-local storage registration (filesz=%#x memsz=%#x)", program.Filesz, program.Memsz)
+		}
+	}
+	for _, readSymbols := range []func() ([]elf.Symbol, error){f.DynamicSymbols, f.Symbols} {
+		symbols, err := readSymbols()
+		if err != nil {
+			continue
+		}
+		for _, symbol := range symbols {
+			if elf.ST_TYPE(symbol.Info) == elf.STT_TLS {
+				return fmt.Errorf("TLS symbol %q requires thread-local storage registration", symbol.Name)
+			}
+		}
+	}
+	return nil
 }
 
 func buildExportedSymbolTable(f *elf.File, loadBias uintptr) map[string]uintptr {
