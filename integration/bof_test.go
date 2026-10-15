@@ -61,6 +61,7 @@ func TestBuildBOFMatrix(t *testing.T) {
 			// Their native execution tests validate the imports and ABI.
 			buildBOFSource(t, outputDirectory, target, "async_fixture", "async_fixture.c")
 			buildBOFSource(t, outputDirectory, target, "stop_fixture", "stop_fixture.c")
+			buildBOFSource(t, outputDirectory, target, "host_adapter_fixture", "host_adapter_fixture.c")
 			// The emulated Linux and FreeBSD runtimes deliberately have no native
 			// Zig dependency, so seed and inspect their options fixture alongside
 			// the primary fixture. Other targets continue to build it in their

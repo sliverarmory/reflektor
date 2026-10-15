@@ -521,6 +521,7 @@ func (loader *Loader) execute(args []byte, emit func(Output), capture bool, stop
 		return nil, err
 	}
 	defer unregister()
+	defer context.runHostCleanups()
 
 	var address uintptr
 	if len(args) != 0 {
@@ -528,6 +529,7 @@ func (loader *Loader) execute(args []byte, emit func(Output), capture bool, stop
 	}
 	invokeEntry(loader.entry, address, int32(len(args)))
 	runtime.KeepAlive(args)
+	context.runHostCleanups()
 
 	outputs, err := context.result()
 	if err != nil {

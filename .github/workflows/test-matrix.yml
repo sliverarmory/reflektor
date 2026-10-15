@@ -55,8 +55,8 @@ jobs:
       - name: Run Darwin native BOF execution tests without cgo
         run: |
           set -euo pipefail
-          CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop)$' -count=1 -v | tee darwin-bof-nocgo-test.log
-          for test_name in TestLoadAndExecuteGeneratedBOF TestLoadAndExecuteLegacyDarwinELFBOF TestBOFLoadWithOptions TestConcurrentBOFStreaming TestSameImageBOFExecutionIsSerialized TestCooperativeBOFStop; do
+          CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestLoadAndExecuteLegacyDarwinELFBOF|TestBOFLoadWithOptions|TestBOFHostAdapterNativeCallbacks|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop)$' -count=1 -v | tee darwin-bof-nocgo-test.log
+          for test_name in TestLoadAndExecuteGeneratedBOF TestLoadAndExecuteLegacyDarwinELFBOF TestBOFLoadWithOptions TestBOFHostAdapterNativeCallbacks TestConcurrentBOFStreaming TestSameImageBOFExecutionIsSerialized TestCooperativeBOFStop; do
             if ! grep -Fq -- "--- PASS: ${test_name} " darwin-bof-nocgo-test.log; then
               echo "Required CGO-free Darwin BOF execution test did not pass: ${test_name}"
               exit 1
@@ -324,8 +324,8 @@ jobs:
               exit 1
             fi
           done
-          CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop)$' -count=1 -v | tee linux-bof-nocgo-test.log
-          for test_name in TestLoadAndExecuteGeneratedBOF TestBOFLoadWithOptions TestConcurrentBOFStreaming TestSameImageBOFExecutionIsSerialized TestCooperativeBOFStop; do
+          CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestBOFHostAdapterNativeCallbacks|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop)$' -count=1 -v | tee linux-bof-nocgo-test.log
+          for test_name in TestLoadAndExecuteGeneratedBOF TestBOFLoadWithOptions TestBOFHostAdapterNativeCallbacks TestConcurrentBOFStreaming TestSameImageBOFExecutionIsSerialized TestCooperativeBOFStop; do
             if ! grep -Fq -- "--- PASS: ${test_name} " linux-bof-nocgo-test.log; then
               echo "Required CGO-free Linux BOF execution test did not pass: ${test_name}"
               exit 1
@@ -418,6 +418,7 @@ jobs:
           test -s test/bof-fixtures/options_fixture_linux_arm.o
           test -s test/bof-fixtures/async_fixture_linux_arm.o
           test -s test/bof-fixtures/stop_fixture_linux_arm.o
+          test -s test/bof-fixtures/host_adapter_fixture_linux_arm.o
       - name: Prepare pinned linux/arm BOF corpus
         working-directory: test/corpus/Situational-Awareness-BOFs
         run: |
@@ -484,6 +485,7 @@ jobs:
           test -s test/bof-fixtures/options_fixture_linux_riscv64.o
           test -s test/bof-fixtures/async_fixture_linux_riscv64.o
           test -s test/bof-fixtures/stop_fixture_linux_riscv64.o
+          test -s test/bof-fixtures/host_adapter_fixture_linux_riscv64.o
       - name: Prepare pinned linux/riscv64 BOF corpus
         working-directory: test/corpus/Situational-Awareness-BOFs
         run: |
@@ -550,6 +552,7 @@ jobs:
           test -s test/bof-fixtures/options_fixture_linux_ppc64le.o
           test -s test/bof-fixtures/async_fixture_linux_ppc64le.o
           test -s test/bof-fixtures/stop_fixture_linux_ppc64le.o
+          test -s test/bof-fixtures/host_adapter_fixture_linux_ppc64le.o
       - name: Prepare pinned linux/ppc64le BOF corpus
         working-directory: test/corpus/Situational-Awareness-BOFs
         run: |
@@ -651,8 +654,8 @@ jobs:
             echo "${unexpected_skips}"
             exit 1
           fi
-          CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop)$' -count=1 -v | tee windows-bof-nocgo-test.log
-          for test_name in TestLoadAndExecuteGeneratedBOF TestBOFLoadWithOptions TestConcurrentBOFStreaming TestSameImageBOFExecutionIsSerialized TestCooperativeBOFStop; do
+          CGO_ENABLED=0 go test ./integration -run '^(TestLoadAndExecuteGeneratedBOF|TestBOFLoadWithOptions|TestBOFHostAdapterNativeCallbacks|TestConcurrentBOFStreaming|TestSameImageBOFExecutionIsSerialized|TestCooperativeBOFStop)$' -count=1 -v | tee windows-bof-nocgo-test.log
+          for test_name in TestLoadAndExecuteGeneratedBOF TestBOFLoadWithOptions TestBOFHostAdapterNativeCallbacks TestConcurrentBOFStreaming TestSameImageBOFExecutionIsSerialized TestCooperativeBOFStop; do
             if ! grep -Fq -- "--- PASS: ${test_name} " windows-bof-nocgo-test.log; then
               echo "Required CGO-free Windows BOF execution test did not pass: ${test_name}"
               exit 1
