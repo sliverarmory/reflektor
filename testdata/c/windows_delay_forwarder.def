@@ -1,0 +1,4 @@
+LIBRARY libreflektor_delay_forwarder.dll
+EXPORTS
+  ReflektorDelayValue=libreflektor_delay_leaf.ReflektorDelayValue
+  ReflektorDelaySetObserver=libreflektor_delay_leaf.ReflektorDelaySetObserver
