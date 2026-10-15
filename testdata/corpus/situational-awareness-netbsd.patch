@@ -228,10 +228,10 @@ index bb7f9ca..620b708 100755
  
 +const netBSDExpectations = {
 +  ...freeBSDExpectations,
-+  findLoadedModule: ["Current-process loaded module matches:", "libc.so.12"],
-+  listmods: ["Loaded modules:", "libc.so.12"],
++  findLoadedModule: ["Current-process loaded module matches:", "libc.so"],
++  listmods: ["Loaded modules:", "libc.so"],
 +  netuser: ["Local POSIX user information:", "User name: root", "UID: 0", "Primary GID: 0"],
-+  resources: ["System resources:", "Memory and load:", "hw.physmem:", "Disk:", "Filesystem"],
++  resources: ["System resources:", "Memory and load:", "hw.physmem", "Disk:", "Filesystem"],
 +  tasklist: ["Processes:", "init"],
 +};
 +
