@@ -264,6 +264,7 @@ func TestBeaconCallbackResolution(t *testing.T) {
 		"BeaconOutput", "_BeaconOutput", "__imp_BeaconOutput", "__imp__BeaconOutput@12",
 		"BeaconDataExtractOrNull", "_BeaconDataExtractOrNull", "toWideChar", "_toWideChar", "_toWideChar@12", "__imp_toWideChar", "__imp__toWideChar@12",
 		"ReflektorShouldStop", "_ReflektorShouldStop", "__imp_ReflektorShouldStop", "__imp__ReflektorShouldStop@0",
+		"ReflektorStartWorker", "_ReflektorStartWorker", "__imp_ReflektorStartWorker", "__imp__ReflektorStartWorker@12",
 	} {
 		address, ok, err := resolveBeaconCallback(name)
 		if err != nil {

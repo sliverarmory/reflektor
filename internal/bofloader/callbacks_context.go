@@ -3,11 +3,17 @@ package bofloader
 import (
 	"errors"
 	"fmt"
+	"runtime"
 	"sync"
 	"sync/atomic"
 )
 
 const maxFormatAllocation = 16 << 20
+
+const (
+	maxManagedWorkers     = 32
+	maxManagedWorkerBytes = 16 << 20
+)
 
 var executionContexts sync.Map // map[uint64]*executionContext, keyed by native OS thread ID
 
@@ -35,18 +41,30 @@ func activeExecutionContext() *executionContext {
 }
 
 type executionContext struct {
-	mu          sync.Mutex
-	outputs     []Output
-	errors      []error
-	allocations map[uintptr][]byte
-	emit        func(Output)
-	capture     bool
-	stop        <-chan struct{}
-	stopSeen    atomic.Bool
+	mu             sync.Mutex
+	outputs        []Output
+	errors         []error
+	allocations    map[uintptr][]byte
+	emit           func(Output)
+	capture        bool
+	stop           <-chan struct{}
+	stopSeen       atomic.Bool
+	workersEnabled bool
+	workerRanges   []executableRange
+	workers        int
+	workerBytes    int
+	workerCond     *sync.Cond
 }
 
 func newExecutionContext(emit func(Output), capture bool) *executionContext {
-	return &executionContext{allocations: make(map[uintptr][]byte), emit: emit, capture: capture}
+	context := &executionContext{allocations: make(map[uintptr][]byte), emit: emit, capture: capture}
+	context.workerCond = sync.NewCond(&context.mu)
+	return context
+}
+
+type executableRange struct {
+	address uintptr
+	size    uint64
 }
 
 func (context *executionContext) stopRequested() bool {
@@ -72,23 +90,22 @@ func (context *executionContext) appendOutput(outputType int, data []byte) {
 	copyOfData := append([]byte(nil), data...)
 	output := Output{Type: outputType, Data: copyOfData}
 	context.mu.Lock()
+	defer context.mu.Unlock()
 	if context.capture {
 		context.outputs = append(context.outputs, output)
 	}
-	emit := context.emit
-	context.mu.Unlock()
-	if emit != nil {
+	if context.emit != nil {
 		// A callback into Go must not panic across the native BOF stack.
+		// Keep delivery under this lock so all threads observe the same order
+		// for captured and streamed records.
 		func() {
 			defer func() {
 				if recovered := recover(); recovered != nil {
-					context.mu.Lock()
 					context.emit = nil
-					context.mu.Unlock()
-					context.addError(fmt.Errorf("BOF output callback panic: %v", recovered))
+					context.errors = append(context.errors, fmt.Errorf("BOF output callback panic: %v", recovered))
 				}
 			}()
-			emit(output)
+			context.emit(output)
 		}()
 	}
 }
@@ -99,6 +116,95 @@ func (context *executionContext) addError(err error) {
 	}
 	context.mu.Lock()
 	context.errors = append(context.errors, err)
+	context.mu.Unlock()
+}
+
+// startWorker reserves a managed thread before launching it. The reservation
+// remains live until the native function has returned and its callback context
+// has been removed, so Execute cannot release the image while it is in use.
+func (context *executionContext) startWorker(entry, dataAddress, lengthValue uintptr) uintptr {
+	if context == nil {
+		return 0
+	}
+	length := int(int32(lengthValue))
+	context.mu.Lock()
+	var reason string
+	switch {
+	case !context.workersEnabled:
+		reason = "managed workers are disabled for this execution"
+	case length < 0 || length > maxCallbackData:
+		reason = fmt.Sprintf("worker argument length %d is outside 0..%d", length, maxCallbackData)
+	case length != 0 && dataAddress == 0:
+		reason = "nonempty worker arguments have a nil address"
+	case context.workers >= maxManagedWorkers:
+		reason = fmt.Sprintf("at most %d managed workers may be active", maxManagedWorkers)
+	case length > maxManagedWorkerBytes-context.workerBytes:
+		reason = fmt.Sprintf("managed worker arguments exceed %d bytes", maxManagedWorkerBytes)
+	default:
+		valid := false
+		for _, region := range context.workerRanges {
+			if entry >= region.address && uint64(entry-region.address) < region.size {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			reason = "worker address is not in a mapped executable BOF section"
+		}
+	}
+	if reason != "" {
+		context.errors = append(context.errors, fmt.Errorf("ReflektorStartWorker: %s", reason))
+		context.mu.Unlock()
+		return 0
+	}
+	context.workers++
+	context.workerBytes += length
+	context.mu.Unlock()
+
+	launched := false
+	defer func() {
+		if !launched {
+			context.finishWorker(length)
+		}
+	}()
+	data := append([]byte(nil), pointerBytes(dataAddress, length)...)
+	go context.runWorker(entry, data, length)
+	launched = true
+	return 1
+}
+
+func (context *executionContext) runWorker(entry uintptr, data []byte, length int) {
+	defer context.finishWorker(length)
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			context.addError(fmt.Errorf("managed BOF worker panic: %v", recovered))
+		}
+	}()
+	unregister, err := registerExecutionContext(context)
+	if err != nil {
+		context.addError(fmt.Errorf("register managed BOF worker: %w", err))
+		return
+	}
+	defer unregister()
+	invokeEntry(entry, byteSliceAddress(data), int32(len(data)))
+	runtime.KeepAlive(data)
+}
+
+func (context *executionContext) finishWorker(length int) {
+	context.mu.Lock()
+	context.workers--
+	context.workerBytes -= length
+	context.workerCond.Broadcast()
+	context.mu.Unlock()
+}
+
+func (context *executionContext) waitWorkers() {
+	context.mu.Lock()
+	for context.workers != 0 {
+		context.workerCond.Wait()
+	}
 	context.mu.Unlock()
 }
 

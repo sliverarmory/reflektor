@@ -18,7 +18,7 @@ func (*retryCloseLoader) Execute([]byte) ([]bofloader.Output, error) {
 	return nil, nil
 }
 
-func (*retryCloseLoader) ExecuteWithOptions([]byte, func(bofloader.Output), <-chan struct{}) error {
+func (*retryCloseLoader) ExecuteWithOptions([]byte, func(bofloader.Output), <-chan struct{}, bool) error {
 	return nil
 }
 

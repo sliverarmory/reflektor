@@ -5,7 +5,88 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestConcurrentOutputDeliveryMatchesCaptureOrder(t *testing.T) {
+	firstEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	delivered := make(chan string, 2)
+	context := newExecutionContext(func(output Output) {
+		if string(output.Data) == "first" {
+			close(firstEntered)
+			<-releaseFirst
+		}
+		delivered <- string(output.Data)
+	}, true)
+	firstDone := make(chan struct{})
+	go func() {
+		context.appendOutput(0, []byte("first"))
+		close(firstDone)
+	}()
+	<-firstEntered
+	secondDone := make(chan struct{})
+	go func() {
+		context.appendOutput(0, []byte("second"))
+		close(secondDone)
+	}()
+	select {
+	case <-secondDone:
+		t.Fatal("second callback overtook the first output delivery")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(releaseFirst)
+	<-firstDone
+	<-secondDone
+	outputs, err := context.result()
+	if err != nil || len(outputs) != 2 || string(outputs[0].Data) != "first" || string(outputs[1].Data) != "second" {
+		t.Fatalf("captured output = %#v, %v", outputs, err)
+	}
+	if first, second := <-delivered, <-delivered; first != "first" || second != "second" {
+		t.Fatalf("delivery order = %q, %q", first, second)
+	}
+}
+
+func TestManagedWorkerCallbackAfterContextRemovalIsIgnored(t *testing.T) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	context := newExecutionContext(nil, true)
+	context.workersEnabled = true
+	context.workerRanges = []executableRange{{address: 1, size: 1}}
+	unregister, err := registerExecutionContext(context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unregister()
+	if got := reflektorStartWorker(1, 0, 0); got != 0 {
+		t.Fatalf("late ReflektorStartWorker = %d, want 0", got)
+	}
+	if got := beaconOutput(0, 0, 0); got != 0 {
+		t.Fatalf("late BeaconOutput = %d, want 0", got)
+	}
+	outputs, err := context.result()
+	if err != nil || len(outputs) != 0 || context.workers != 0 {
+		t.Fatalf("retired context = %#v, %v, workers %d", outputs, err, context.workers)
+	}
+}
+
+func TestManagedWorkerRejectsAddressOutsideExecutableSection(t *testing.T) {
+	context := newExecutionContext(nil, false)
+	context.workersEnabled = true
+	context.workerRanges = []executableRange{{address: 0x1000, size: 0x100}}
+	for _, address := range []uintptr{0, 0xfff, 0x1100} {
+		if got := context.startWorker(address, 0, 0); got != 0 {
+			t.Fatalf("startWorker(%#x) = %d, want 0", address, got)
+		}
+	}
+	if context.workers != 0 || context.workerBytes != 0 {
+		t.Fatalf("invalid starts reserved %d workers and %d bytes", context.workers, context.workerBytes)
+	}
+	_, err := context.result()
+	if err == nil || !strings.Contains(err.Error(), "not in a mapped executable BOF section") {
+		t.Fatalf("invalid worker addresses error = %v", err)
+	}
+}
 
 func TestStreamingExecutionContextDoesNotRetainOutput(t *testing.T) {
 	var received []Output

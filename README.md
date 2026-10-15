@@ -230,10 +230,30 @@ A BOF is still arbitrary native code in the current process: malformed code
 can corrupt or terminate the host, so untrusted objects need a subprocess
 boundary.
 Object images are capped at 64 MiB and packed argument buffers at 16 MiB.
-Callback capture is synchronous: a BOF that starts native worker threads must
-join them before its entry point returns. Beacon callbacks made from those
-native-created threads are unsupported; callbacks are routed only for the
-thread executing the BOF entry point.
+Callback capture is synchronous. By default, Beacon callbacks are routed only
+for the thread executing the BOF entry point. A BOF can opt in to managed
+workers with `bof.ExecuteOptions{ManagedWorkers: true}` and import:
+
+```c
+int ReflektorStartWorker(void (*worker)(char *, int32_t),
+                         const char *data, int32_t length);
+```
+
+The function pointer must lie in an executable section of the same BOF. The
+host copies up to 16 MiB of arguments and starts the worker on another native
+thread. At most 32 workers and 16 MiB of copied worker arguments may be active
+at once. The call returns 1 on success and 0 on failure; failure also becomes
+an execution error. Managed workers may call Beacon callbacks and poll
+`ReflektorShouldStop`. `ExecuteWithOptions` joins every managed worker,
+including workers started by another worker, before it returns; `Close` waits
+for the execution to finish before unmapping the image. Output delivery is
+serialized across the entry and worker threads in callback capture order.
+Scheduling determines the order between simultaneous callbacks. `OnOutput`
+runs on the thread that emitted the record and must return promptly. A worker
+that does not return can keep `ExecuteWithOptions` and `Close` waiting.
+
+BOFs that create their own native threads must join them before their entry
+point returns. Beacon callbacks on those threads remain unsupported.
 
 `BeaconPrintf` and `BeaconFormatPrintf` accept at most ten machine-word
 arguments and implement bounded string, character, integer, and pointer

@@ -59,6 +59,7 @@ var builtinBeaconCallbackNames = map[string]struct{}{
 	"BeaconPrintf":            {},
 	"BeaconOutput":            {},
 	"ReflektorShouldStop":     {},
+	"ReflektorStartWorker":    {},
 	"toWideChar":              {},
 }
 
@@ -89,7 +90,7 @@ func normalizeImportedSymbol(symbol string) string {
 		name = strings.TrimPrefix(name, "_")
 	}
 	name = trimStdcallSuffix(name)
-	if strings.HasPrefix(name, "_") && (strings.HasPrefix(name[1:], "Beacon") || name[1:] == "toWideChar" || name[1:] == "ReflektorShouldStop") {
+	if strings.HasPrefix(name, "_") && (strings.HasPrefix(name[1:], "Beacon") || name[1:] == "toWideChar" || name[1:] == "ReflektorShouldStop" || name[1:] == "ReflektorStartWorker") {
 		name = name[1:]
 	}
 	return name
@@ -130,6 +131,12 @@ func reflektorShouldStop() (result uintptr) {
 		return 1
 	}
 	return 0
+}
+
+//go:nocheckptr
+func reflektorStartWorker(entry, dataAddress, lengthValue uintptr) (result uintptr) {
+	defer callbackPanic("ReflektorStartWorker")
+	return activeExecutionContext().startWorker(entry, dataAddress, lengthValue)
 }
 
 //go:nocheckptr
