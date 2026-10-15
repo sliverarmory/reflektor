@@ -638,6 +638,7 @@ jobs:
             TestWindowsRecursiveCyclesAndDiamonds \
             TestWindowsRecursiveDelayImports \
             TestWindowsRecursiveDelayImportRejectsLegacyDescriptor \
+            TestWindowsDelayCycleComposition \
             TestCallExportWithArgs \
             TestBOFPackageDependencyGraphIsIsolated \
             TestNativePackageCallExport \

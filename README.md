@@ -338,6 +338,7 @@ C test shared libraries are generated from:
 - `reflektor/testdata/c/recursive_middle.c`
 - `reflektor/testdata/c/recursive_root.c`
 - `reflektor/testdata/c/windows_recursive_graph.c`
+- `reflektor/testdata/c/windows_delay_cycle.c`
 
 The recursive C fixture is a transitive root -> middle -> leaf graph. Its test
 checks that the graph is absent from FreeBSD `procstat -v` mappings,
@@ -348,6 +349,10 @@ checks prove the custom dependencies came from bytes captured by Reflektor.
 The Windows graph fixture additionally tests cyclic imports, an export
 forwarder back into the cycle, and a shared-leaf diamond. It checks initializer
 order, repeated calls after source files are hidden, and reverse detach order.
+The Windows delay-cycle fixture links a normal import, an RVA-based delay
+import, and an export forwarder back to the root DLL. It checks graph binding
+before initialization, calls after the source directory is hidden, and detach
+while all three images remain mapped.
 
 The Rust fixtures are built from `reflektor/testdata/rust` and
 `reflektor/testdata/rust/native_args.rs`. The HTTPS fixture exports `StartW`,

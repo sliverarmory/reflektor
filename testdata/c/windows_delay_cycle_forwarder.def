@@ -1,0 +1,3 @@
+LIBRARY reflektor_delay_cycle_forwarder.dll
+EXPORTS
+  DelayCycleForwardedRootValue=reflektor_delay_cycle_root.DelayCycleRootValue
