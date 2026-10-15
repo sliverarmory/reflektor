@@ -300,6 +300,7 @@ jobs:
             TestNativePackageELFLifecycleLinux \
             TestNativePackageCSharedConsumerLinux \
             TestPackedRELRSharedLibraries \
+            TestELFCustomIFUNCRejected \
             TestLoadLibraryAndCallExport_Linux; do
             if ! grep -Fq -- "--- PASS: ${test_name} " linux-test.log; then
               echo "Required Linux test did not pass: ${test_name}"
@@ -312,7 +313,7 @@ jobs:
             echo "${unexpected_skips}"
             exit 1
           fi
-          CGO_ENABLED=0 go test ./integration -run '^(TestELFGeneralTLSRequiresRegistration|TestCallExportWith(Args|PuregoCallback)|TestNativePackage(CallExport|CallExportWithArgsLinux|RustCallExportWithArgsLinux|ELFLifecycleLinux|LinuxDependencyGraphIsIsolated)|TestPackedRELRSharedLibraries)$' -count=1 -v | tee linux-nocgo-test.log
+          CGO_ENABLED=0 go test ./integration -run '^(TestELFGeneralTLSRequiresRegistration|TestCallExportWith(Args|PuregoCallback)|TestNativePackage(CallExport|CallExportWithArgsLinux|RustCallExportWithArgsLinux|ELFLifecycleLinux|LinuxDependencyGraphIsIsolated)|TestPackedRELRSharedLibraries|TestELFCustomIFUNCRejected)$' -count=1 -v | tee linux-nocgo-test.log
           for test_name in \
             TestELFGeneralTLSRequiresRegistration \
             TestCallExportWithArgs \
@@ -321,7 +322,8 @@ jobs:
             TestNativePackageLinuxDependencyGraphIsIsolated \
             TestNativePackageCallExportWithArgsLinux \
             TestNativePackageRustCallExportWithArgsLinux \
-            TestNativePackageELFLifecycleLinux; do
+            TestNativePackageELFLifecycleLinux \
+            TestELFCustomIFUNCRejected; do
             if ! grep -Fq -- "--- PASS: ${test_name} " linux-nocgo-test.log; then
               echo "Required CGO-free Linux test did not pass: ${test_name}"
               exit 1
