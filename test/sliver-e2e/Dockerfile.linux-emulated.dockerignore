@@ -6,6 +6,11 @@
 !cli/**
 !memmod/
 !memmod/**
+!internal/
+!internal/elfrelr/
+!internal/elfrelr/**
+!internal/elftls/
+!internal/elftls/**
 !sliver-e2e-checkout/
 !sliver-e2e-checkout/**
 .git

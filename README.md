@@ -319,10 +319,16 @@ Usage:
   Initial-exec TLS, TLSDESC, external TLS symbols, other ELF targets, and
   `CGO_ENABLED=0` still receive explicit errors before mapping. Go c-shared
   images continue to use their separate runtime TLS reservation.
-- Recursive custom images also reject IFUNC/IRELATIVE and RELR with explicit
-  errors; these features remain available through the system-library carveout.
-  Windows custom dependency cycles and delay-load import tables are also
-  rejected explicitly. Darwin, FreeBSD, and Linux graph cycles are deduplicated.
+- FreeBSD `amd64`/`arm64` and Linux `386`/`amd64`/`arm64` custom images support
+  ELF packed RELR relocations. Other ELF targets reject packed RELR explicitly.
+- Root and native ELF loads reject defined GNU IFUNC symbols before mapping and
+  reject IRELATIVE relocations before applying them. Recursive loads enforce the
+  same boundary during graph preflight. System-library imports may still resolve
+  to GNU IFUNC implementations through the native dynamic loader.
+- Initial-exec TLS, TLSDESC, and external TLS symbols remain unsupported in
+  custom images. System-library imports may use those features through the
+  native loader. Windows custom dependency cycles and delay-load import tables
+  are rejected explicitly. Darwin, FreeBSD, and Linux graph cycles are deduplicated.
 - After the first export call, Darwin recursive mappings remain process-resident
   because dyld retains their loader records. Reusing a Darwin install-name in a
   later load follows dyld's first-loaded identity semantics. Calls made through
@@ -339,6 +345,7 @@ C test shared libraries are generated from:
 - `reflektor/testdata/c/freebsd_ld_library_path_dependency.c`
 - `reflektor/testdata/c/freebsd_ld_library_path_root.c`
 - `reflektor/testdata/c/freebsd_system_dependency.c`
+- `reflektor/testdata/c/ifunc.c`
 - `reflektor/testdata/c/native_lifecycle.c`
 - `reflektor/testdata/c/recursive_leaf.c`
 - `reflektor/testdata/c/recursive_middle.c`

@@ -38,6 +38,8 @@ WORKDIR /reflektor
 COPY go.mod go.sum reflektor.go ./
 COPY cli ./cli
 COPY memmod ./memmod
+COPY internal/elfrelr ./internal/elfrelr
+COPY internal/elftls ./internal/elftls
 
 RUN --mount=type=cache,id=reflektor-linux-386-go-build,target=/root/.cache/go-build,sharing=locked \
 	--mount=type=cache,id=reflektor-linux-386-go-mod,target=/go/pkg/mod,sharing=locked \
