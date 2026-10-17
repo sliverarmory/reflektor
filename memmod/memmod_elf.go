@@ -16,6 +16,7 @@ import (
 	"sync"
 	"unsafe"
 
+	"github.com/sliverarmory/reflektor/internal/elfifunc"
 	"github.com/sliverarmory/reflektor/internal/elfrelr"
 	"github.com/sliverarmory/reflektor/internal/elftls"
 	"golang.org/x/sys/unix"
@@ -98,6 +99,9 @@ type symbolResolver struct {
 	misses        map[string]error
 	opened        map[string]uintptr
 	resolveSymbol func(elf.Symbol) (uintptr, error)
+	resolveIFUNC  func(elf.Symbol) (elfIFUNCDefinition, bool, error)
+	enableIFUNC   bool
+	deferredIFUNC []deferredELFIFUNCRelocation
 }
 
 var linuxGoTLSSlots = struct {
@@ -122,6 +126,10 @@ func LoadLibrary(data []byte) (*Module, error) {
 		return nil, err
 	}
 	if err := rejectCustomELFIFUNC(f); err != nil {
+		return nil, err
+	}
+	ifuncFeatures, err := elfifunc.Inspect(f)
+	if err != nil {
 		return nil, err
 	}
 	initInfo, err := parseDynamicInitInfo(f)
@@ -172,11 +180,28 @@ func LoadLibrary(data []byte) (*Module, error) {
 	}()
 
 	resolver := newSymbolResolver(f)
+	resolver.enableIFUNC = ifuncFeatures.Present()
 	if err := applyDynamicRelocations(mapped, f, resolver); err != nil {
 		return nil, err
 	}
 	if err := flushELFInstructionCache(mapped); err != nil {
 		return nil, err
+	}
+	var exports map[string]uintptr
+	if ifuncFeatures.Present() {
+		if err := protectELFExecutableSegments(mapped); err != nil {
+			return nil, err
+		}
+		cache := make(elfIFUNCResolutionCache)
+		if err := resolveDeferredELFIFUNC(resolver.deferredIFUNC, mapped, cache); err != nil {
+			return nil, err
+		}
+		exports, err = buildExportedELFIFUNCSymbolTable(f, mapped, cache)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		exports = buildExportedSymbolTable(f, mapped.loadBias)
 	}
 
 	if err := applySegmentProtections(mapped); err != nil {
@@ -207,7 +232,7 @@ func LoadLibrary(data []byte) (*Module, error) {
 	module := &Module{
 		mapping:     mapped.mapping,
 		loadBias:    mapped.loadBias,
-		symbols:     buildExportedSymbolTable(f, mapped.loadBias),
+		symbols:     exports,
 		finalizers:  finalizers,
 		goRuntime:   goRuntime,
 		tlsModuleID: tlsModuleID,
@@ -575,6 +600,13 @@ func applyRELASection(data []byte, f *elf.File, mapped mappedELF, dynSyms []elf.
 			off := binary.LittleEndian.Uint64(data[i : i+8])
 			info := binary.LittleEndian.Uint64(data[i+8 : i+16])
 			addend := int64(binary.LittleEndian.Uint64(data[i+16 : i+24]))
+			queued, err := queueELFIFUNCRelocation(f, mapped, dynSyms, resolver, uint32(elf.R_SYM64(info)), uint32(elf.R_TYPE64(info)), off, addend, true, sectionName, i/ent)
+			if err != nil {
+				return err
+			}
+			if queued {
+				continue
+			}
 			if err := applyOneRelocation(f.Machine, f.Class, mapped, dynSyms, resolver, uint32(elf.R_SYM64(info)), uint32(elf.R_TYPE64(info)), off, addend, true); err != nil {
 				return fmt.Errorf("%s[%d]: %w", sectionName, i/ent, err)
 			}
@@ -588,6 +620,13 @@ func applyRELASection(data []byte, f *elf.File, mapped mappedELF, dynSyms []elf.
 			off := uint64(binary.LittleEndian.Uint32(data[i : i+4]))
 			info := binary.LittleEndian.Uint32(data[i+4 : i+8])
 			addend := int64(int32(binary.LittleEndian.Uint32(data[i+8 : i+12])))
+			queued, err := queueELFIFUNCRelocation(f, mapped, dynSyms, resolver, elf.R_SYM32(info), elf.R_TYPE32(info), off, addend, true, sectionName, i/ent)
+			if err != nil {
+				return err
+			}
+			if queued {
+				continue
+			}
 			if err := applyOneRelocation(f.Machine, f.Class, mapped, dynSyms, resolver, elf.R_SYM32(info), elf.R_TYPE32(info), off, addend, true); err != nil {
 				return fmt.Errorf("%s[%d]: %w", sectionName, i/ent, err)
 			}
@@ -608,6 +647,13 @@ func applyRELSection(data []byte, f *elf.File, mapped mappedELF, dynSyms []elf.S
 		for i := 0; i < len(data); i += ent {
 			off := binary.LittleEndian.Uint64(data[i : i+8])
 			info := binary.LittleEndian.Uint64(data[i+8 : i+16])
+			queued, err := queueELFIFUNCRelocation(f, mapped, dynSyms, resolver, uint32(elf.R_SYM64(info)), uint32(elf.R_TYPE64(info)), off, 0, false, sectionName, i/ent)
+			if err != nil {
+				return err
+			}
+			if queued {
+				continue
+			}
 			if err := applyOneRelocation(f.Machine, f.Class, mapped, dynSyms, resolver, uint32(elf.R_SYM64(info)), uint32(elf.R_TYPE64(info)), off, 0, false); err != nil {
 				return fmt.Errorf("%s[%d]: %w", sectionName, i/ent, err)
 			}
@@ -620,6 +666,13 @@ func applyRELSection(data []byte, f *elf.File, mapped mappedELF, dynSyms []elf.S
 		for i := 0; i < len(data); i += ent {
 			off := uint64(binary.LittleEndian.Uint32(data[i : i+4]))
 			info := binary.LittleEndian.Uint32(data[i+4 : i+8])
+			queued, err := queueELFIFUNCRelocation(f, mapped, dynSyms, resolver, elf.R_SYM32(info), elf.R_TYPE32(info), off, 0, false, sectionName, i/ent)
+			if err != nil {
+				return err
+			}
+			if queued {
+				continue
+			}
 			if err := applyOneRelocation(f.Machine, f.Class, mapped, dynSyms, resolver, elf.R_SYM32(info), elf.R_TYPE32(info), off, 0, false); err != nil {
 				return fmt.Errorf("%s[%d]: %w", sectionName, i/ent, err)
 			}
@@ -910,6 +963,9 @@ func resolveRelocationSymbol(symIndex uint32, dynSyms []elf.Symbol, loadBias uin
 	}
 	bind := elf.ST_BIND(sym.Info)
 	if sym.Section != elf.SHN_UNDEF && sym.Value != 0 {
+		if elf.ST_TYPE(sym.Info) == elf.STT_GNU_IFUNC {
+			return 0, fmt.Errorf("GNU IFUNC symbol %q requires deferred resolution", sym.Name)
+		}
 		return loadBias + uintptr(sym.Value), nil
 	}
 	if sym.Name == "" {
@@ -918,6 +974,9 @@ func resolveRelocationSymbol(symIndex uint32, dynSyms []elf.Symbol, loadBias uin
 
 	addr, err := resolver.ResolveSymbol(sym)
 	if err != nil {
+		if errors.Is(err, errRecursiveIFUNCRequiresDeferred) {
+			return 0, err
+		}
 		if bind == elf.STB_WEAK {
 			// Undefined weak symbols are optional, but they still bind to an
 			// available definition before falling back to zero.

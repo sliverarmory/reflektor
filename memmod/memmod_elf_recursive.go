@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/sliverarmory/reflektor/internal/elfifunc"
 	"github.com/sliverarmory/reflektor/internal/elftls"
 	"golang.org/x/sys/unix"
 )
@@ -38,6 +39,8 @@ type linuxRecursiveExport struct {
 	address uintptr
 }
 
+var errRecursiveIFUNCRequiresDeferred = errors.New("recursive GNU IFUNC requires deferred resolution")
+
 type linuxRecursiveDependency struct {
 	name   string
 	custom *linuxRecursiveNode
@@ -57,10 +60,12 @@ type linuxRecursiveNode struct {
 	dependencies []linuxRecursiveDependency
 	state        linuxRecursiveNodeState
 
-	initInfo dynamicInitInfo
-	finiInfo linuxRecursiveFiniInfo
-	mapped   mappedELF
-	exports  map[string][]linuxRecursiveExport
+	initInfo      dynamicInitInfo
+	finiInfo      linuxRecursiveFiniInfo
+	mapped        mappedELF
+	exports       map[string][]linuxRecursiveExport
+	ifuncFeatures elfifunc.Features
+	deferredIFUNC []deferredELFIFUNCRelocation
 
 	goRuntime       bool
 	tlsTemplate     *elftls.Template
@@ -108,6 +113,8 @@ type linuxRecursiveLoader struct {
 	systemRoots  []string
 	scope        []linuxRecursiveScopeEntry
 	totalBytes   uint64
+	hasIFUNC     bool
+	ifuncCache   elfIFUNCResolutionCache
 }
 
 // LoadLibraryRecursive maps an ELF root and each non-system DT_NEEDED
@@ -158,6 +165,11 @@ func LoadLibraryRecursive(data []byte, origin string, reader DependencyReader) (
 	if err := loader.discover(root, nil); err != nil {
 		return nil, err
 	}
+	if loader.hasIFUNC {
+		if err := loader.rejectIFUNCCycles(); err != nil {
+			return nil, err
+		}
+	}
 	loader.group.initOrder = linuxRecursivePostOrder(root)
 	loader.scope = linuxRecursiveScope(root)
 
@@ -167,11 +179,22 @@ func LoadLibraryRecursive(data []byte, origin string, reader DependencyReader) (
 	if err := loader.relocateAll(); err != nil {
 		return nil, err
 	}
+	if loader.hasIFUNC {
+		if err := loader.resolveAllIFUNC(); err != nil {
+			return nil, err
+		}
+	}
 	if err := loader.protectAndCollectLifecycle(); err != nil {
 		return nil, err
 	}
 
 	rootSymbols := buildExportedSymbolTable(root.file, root.mapped.loadBias)
+	if loader.hasIFUNC && root.ifuncFeatures.Present() {
+		rootSymbols, err = buildExportedELFIFUNCSymbolTable(root.file, root.mapped, loader.ifuncCache)
+		if err != nil {
+			return nil, fmt.Errorf("resolve recursive root exports: %w", err)
+		}
+	}
 	if err := loader.initializeAll(); err != nil {
 		return nil, err
 	}
@@ -204,6 +227,10 @@ func (loader *linuxRecursiveLoader) parseCustomNode(data []byte, path string) (*
 	if err := validateELFHeaders(f, data); err != nil {
 		return nil, err
 	}
+	ifuncFeatures, err := elfifunc.Inspect(f)
+	if err != nil {
+		return nil, err
+	}
 	initInfo, err := parseDynamicInitInfo(f)
 	if err != nil {
 		return nil, err
@@ -234,19 +261,20 @@ func (loader *linuxRecursiveLoader) parseCustomNode(data []byte, path string) (*
 	}
 	runPaths, rPaths := recursiveELFSearchPaths(f, path)
 	node := &linuxRecursiveNode{
-		path:        path,
-		soname:      soname,
-		aliases:     make(map[string]struct{}),
-		raw:         data,
-		file:        f,
-		dynamicSyms: dynamicSyms,
-		runPaths:    runPaths,
-		rPaths:      rPaths,
-		needed:      collectNeededLibraries(f),
-		initInfo:    initInfo,
-		finiInfo:    finiInfo,
-		goRuntime:   goRuntime,
-		tlsTemplate: generalTLS,
+		path:          path,
+		soname:        soname,
+		aliases:       make(map[string]struct{}),
+		raw:           data,
+		file:          f,
+		dynamicSyms:   dynamicSyms,
+		runPaths:      runPaths,
+		rPaths:        rPaths,
+		needed:        collectNeededLibraries(f),
+		initInfo:      initInfo,
+		finiInfo:      finiInfo,
+		ifuncFeatures: ifuncFeatures,
+		goRuntime:     goRuntime,
+		tlsTemplate:   generalTLS,
 	}
 	node.addAlias(path)
 	node.addAlias(soname)
@@ -255,6 +283,7 @@ func (loader *linuxRecursiveLoader) parseCustomNode(data []byte, path string) (*
 }
 
 func (loader *linuxRecursiveLoader) registerCustomNode(node *linuxRecursiveNode) {
+	loader.hasIFUNC = loader.hasIFUNC || node.ifuncFeatures.Present()
 	loader.byPath[node.path] = node
 	if node.soname != "" {
 		if _, exists := loader.bySONAME[node.soname]; !exists {
@@ -416,21 +445,50 @@ func (loader *linuxRecursiveLoader) relocateAll() error {
 	for _, node := range loader.group.nodes {
 		requester := node
 		resolver := &symbolResolver{
+			enableIFUNC: loader.hasIFUNC,
 			resolveSymbol: func(sym elf.Symbol) (uintptr, error) {
 				return loader.resolveExternal(requester, sym)
+			},
+			resolveIFUNC: func(sym elf.Symbol) (elfIFUNCDefinition, bool, error) {
+				return loader.lookupIFUNC(requester, sym)
 			},
 		}
 		if err := applyDynamicRelocations(node.mapped, node.file, resolver); err != nil {
 			return fmt.Errorf("relocate recursive dependency %q: %w", node.path, err)
 		}
+		node.deferredIFUNC = resolver.deferredIFUNC
+	}
+	return nil
+}
+
+func (loader *linuxRecursiveLoader) resolveAllIFUNC() error {
+	for _, node := range loader.group.nodes {
+		if err := elfifunc.CheckExecutableLayout(node.file); err != nil {
+			return fmt.Errorf("validate executable layout for recursive dependency %q: %w", node.path, err)
+		}
+		if err := flushELFInstructionCache(node.mapped); err != nil {
+			return fmt.Errorf("flush recursive dependency %q: %w", node.path, err)
+		}
+		if err := protectELFExecutableSegments(node.mapped); err != nil {
+			return fmt.Errorf("protect executable pages for recursive dependency %q: %w", node.path, err)
+		}
+	}
+	loader.ifuncCache = make(elfIFUNCResolutionCache)
+	for _, node := range loader.group.initOrder {
+		if err := resolveDeferredELFIFUNC(node.deferredIFUNC, node.mapped, loader.ifuncCache); err != nil {
+			return fmt.Errorf("resolve IFUNC relocations for recursive dependency %q: %w", node.path, err)
+		}
+		node.deferredIFUNC = nil
 	}
 	return nil
 }
 
 func (loader *linuxRecursiveLoader) protectAndCollectLifecycle() error {
 	for _, node := range loader.group.nodes {
-		if err := flushELFInstructionCache(node.mapped); err != nil {
-			return fmt.Errorf("flush recursive dependency %q: %w", node.path, err)
+		if !loader.hasIFUNC {
+			if err := flushELFInstructionCache(node.mapped); err != nil {
+				return fmt.Errorf("flush recursive dependency %q: %w", node.path, err)
+			}
 		}
 		if err := applySegmentProtections(node.mapped); err != nil {
 			return fmt.Errorf("protect recursive dependency %q: %w", node.path, err)
@@ -481,6 +539,7 @@ func (loader *linuxRecursiveLoader) releaseLoadMetadata() {
 		node.exports = nil
 		node.dependencies = nil
 		node.initializers = nil
+		node.deferredIFUNC = nil
 	}
 	loader.scope = nil
 	loader.byPath = nil
@@ -502,6 +561,8 @@ func (loader *linuxRecursiveLoader) resolveExternal(requester *linuxRecursiveNod
 			tried[index] = struct{}{}
 			if address, err := entry.lookup(loader.group.api, symbol); err == nil && address != 0 {
 				return address, nil
+			} else if errors.Is(err, errRecursiveIFUNCRequiresDeferred) {
+				return 0, err
 			}
 		}
 	}
@@ -511,6 +572,8 @@ func (loader *linuxRecursiveLoader) resolveExternal(requester *linuxRecursiveNod
 		}
 		if address, err := entry.lookup(loader.group.api, symbol); err == nil && address != 0 {
 			return address, nil
+		} else if errors.Is(err, errRecursiveIFUNCRequiresDeferred) {
+			return 0, err
 		}
 	}
 
@@ -541,13 +604,73 @@ func (entry linuxRecursiveScopeEntry) matchesLibrary(name string) bool {
 }
 
 func (node *linuxRecursiveNode) lookup(imported elf.Symbol) (uintptr, error) {
+	candidate, ok := node.lookupCandidate(imported)
+	if !ok {
+		return 0, fmt.Errorf("symbol %q not exported by %q", imported.Name, node.path)
+	}
+	if elf.ST_TYPE(candidate.symbol.Info) == elf.STT_GNU_IFUNC {
+		return 0, fmt.Errorf("%w: %q from %q", errRecursiveIFUNCRequiresDeferred, imported.Name, node.path)
+	}
+	return candidate.address, nil
+}
+
+func (node *linuxRecursiveNode) lookupCandidate(imported elf.Symbol) (linuxRecursiveExport, bool) {
 	for _, candidate := range node.exports[imported.Name] {
 		if !recursiveSymbolVersionMatches(imported, candidate.symbol) {
 			continue
 		}
-		return candidate.address, nil
+		return candidate, true
 	}
-	return 0, fmt.Errorf("symbol %q not exported by %q", imported.Name, node.path)
+	return linuxRecursiveExport{}, false
+}
+
+func (loader *linuxRecursiveLoader) lookupIFUNC(requester *linuxRecursiveNode, imported elf.Symbol) (elfIFUNCDefinition, bool, error) {
+	if imported.Name == "" {
+		return elfIFUNCDefinition{}, false, nil
+	}
+	lookup := func(entry linuxRecursiveScopeEntry) (elfIFUNCDefinition, bool, bool, error) {
+		if entry.custom != nil {
+			candidate, found := entry.custom.lookupCandidate(imported)
+			if !found {
+				return elfIFUNCDefinition{}, false, false, nil
+			}
+			if elf.ST_TYPE(candidate.symbol.Info) != elf.STT_GNU_IFUNC {
+				return elfIFUNCDefinition{}, false, true, nil
+			}
+			return elfIFUNCDefinition{file: entry.custom.file, mapped: entry.custom.mapped, resolverVAddr: candidate.symbol.Value, name: candidate.symbol.Name}, true, true, nil
+		}
+		if entry.system != nil {
+			address, err := resolveWithLinuxHandle(loader.group.api, entry.system.handle, imported.Name, imported.Version)
+			if err == nil && address != 0 {
+				return elfIFUNCDefinition{}, false, true, nil
+			}
+		}
+		return elfIFUNCDefinition{}, false, false, nil
+	}
+	tried := make(map[int]struct{}, len(loader.scope))
+	if imported.Library != "" {
+		for index, entry := range loader.scope {
+			if !entry.matchesLibrary(imported.Library) {
+				continue
+			}
+			tried[index] = struct{}{}
+			definition, isIFUNC, found, err := lookup(entry)
+			if err != nil || found {
+				return definition, isIFUNC, err
+			}
+		}
+	}
+	for index, entry := range loader.scope {
+		if _, alreadyTried := tried[index]; alreadyTried {
+			continue
+		}
+		definition, isIFUNC, found, err := lookup(entry)
+		if err != nil || found {
+			return definition, isIFUNC, err
+		}
+	}
+	_ = requester
+	return elfIFUNCDefinition{}, false, nil
 }
 
 func buildRecursiveExportTable(node *linuxRecursiveNode) (map[string][]linuxRecursiveExport, error) {
@@ -565,12 +688,15 @@ func buildRecursiveExportTable(node *linuxRecursiveNode) (map[string][]linuxRecu
 			continue
 		}
 		switch elf.ST_TYPE(symbol.Info) {
-		case elf.STT_FUNC, elf.STT_OBJECT, elf.STT_NOTYPE:
+		case elf.STT_FUNC, elf.STT_OBJECT, elf.STT_NOTYPE, elf.STT_GNU_IFUNC:
 		default:
 			continue
 		}
 
 		var address uintptr
+		if elf.ST_TYPE(symbol.Info) == elf.STT_GNU_IFUNC && symbol.Section == elf.SHN_ABS {
+			return nil, fmt.Errorf("recursive IFUNC export %q in %q uses an absolute resolver", symbol.Name, node.path)
+		}
 		if symbol.Section == elf.SHN_ABS {
 			address = uintptr(symbol.Value)
 		} else {
@@ -652,6 +778,35 @@ func linuxRecursivePostOrder(root *linuxRecursiveNode) []*linuxRecursiveNode {
 	}
 	visit(root)
 	return order
+}
+
+// IFUNC resolvers can call code in dependencies before any constructor runs.
+// A cycle has no stable dependency-first point at which to invoke them.
+func (loader *linuxRecursiveLoader) rejectIFUNCCycles() error {
+	state := make(map[*linuxRecursiveNode]uint8)
+	var visit func(*linuxRecursiveNode) error
+	visit = func(node *linuxRecursiveNode) error {
+		if node == nil || state[node] == 2 {
+			return nil
+		}
+		if state[node] == 1 {
+			return fmt.Errorf("recursive ELF IFUNC graph contains a dependency cycle through %q", node.path)
+		}
+		state[node] = 1
+		for _, dependency := range node.dependencies {
+			if err := visit(dependency.custom); err != nil {
+				return err
+			}
+		}
+		state[node] = 2
+		return nil
+	}
+	for _, node := range loader.group.nodes {
+		if err := visit(node); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (group *linuxRecursiveGroup) free() {

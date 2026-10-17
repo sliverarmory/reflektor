@@ -107,7 +107,40 @@ func Inspect(file *elf.File) (Features, error) {
 			}
 		}
 	}
+	if features.Present() {
+		if err := CheckExecutableLayout(file); err != nil {
+			return features, err
+		}
+	}
 	return features, nil
+}
+
+// CheckExecutableLayout requires distinct PT_LOAD page ranges. Otherwise a
+// later segment protection could restore write permission to resolver code or
+// remove execute permission from an implementation returned by the resolver.
+func CheckExecutableLayout(file *elf.File) error {
+	pageSize := uint64(os.Getpagesize())
+	type pageRange struct{ first, last uint64 }
+	var ranges []pageRange
+	for _, program := range file.Progs {
+		if program.Type != elf.PT_LOAD || program.Memsz == 0 {
+			continue
+		}
+		if program.Vaddr > math.MaxUint64-program.Memsz {
+			return fmt.Errorf("IFUNC PT_LOAD vaddr=%#x overflows", program.Vaddr)
+		}
+		if program.Flags&elf.PF_X != 0 && program.Flags&elf.PF_W != 0 {
+			return fmt.Errorf("IFUNC PT_LOAD vaddr=%#x requests writable executable memory", program.Vaddr)
+		}
+		current := pageRange{first: program.Vaddr / pageSize, last: (program.Vaddr + program.Memsz - 1) / pageSize}
+		for _, previous := range ranges {
+			if current.first <= previous.last && current.last >= previous.first {
+				return fmt.Errorf("IFUNC PT_LOAD vaddr=%#x overlaps another segment page", program.Vaddr)
+			}
+		}
+		ranges = append(ranges, current)
+	}
+	return nil
 }
 
 func IsIRelative(machine elf.Machine, relocationType uint32) bool {
