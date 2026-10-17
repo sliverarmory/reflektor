@@ -289,7 +289,7 @@ jobs:
             TestLoadGeneratedGoSharedLibraryRecursiveMode \
             TestLoadGeneratedRustSharedLibraryRecursiveMode \
             TestLoadLibraryRecursiveDependencies \
-            TestELFGeneralTLSRequiresRegistration \
+            TestELFLocalDynamicTLSRootAndNative \
             TestCallExportWithArgs \
             TestBOFPackageDependencyGraphIsIsolated \
             TestNativePackageCallExport \
