@@ -132,6 +132,10 @@ func LoadLibrary(data []byte) (*Module, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Keep the runtime path unreachable until all loader gates can accept it.
+	if ifuncFeatures.Present() {
+		return nil, errors.New("custom ELF image does not support IRELATIVE/IFUNC resolver relocations")
+	}
 	initInfo, err := parseDynamicInitInfo(f)
 	if err != nil {
 		return nil, err

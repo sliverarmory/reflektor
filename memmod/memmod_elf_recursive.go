@@ -231,6 +231,14 @@ func (loader *linuxRecursiveLoader) parseCustomNode(data []byte, path string) (*
 	if err != nil {
 		return nil, err
 	}
+	// Keep recursive resolver execution unreachable until the whole graph is
+	// runtime-proven with the same guarded acceptance gate as root and native.
+	if ifuncFeatures.Present() {
+		if ifuncFeatures.DefinedIFUNC {
+			return nil, errors.New("recursive ELF loading does not support GNU IFUNC symbols")
+		}
+		return nil, errors.New("recursive ELF loading does not support IRELATIVE/IFUNC relocations")
+	}
 	initInfo, err := parseDynamicInitInfo(f)
 	if err != nil {
 		return nil, err

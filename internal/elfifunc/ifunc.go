@@ -44,6 +44,9 @@ func Inspect(file *elf.File) (Features, error) {
 				continue
 			}
 			features.DefinedIFUNC = true
+			if symbol.Section >= elf.SHN_LORESERVE {
+				return features, fmt.Errorf("GNU IFUNC resolver %q uses unsupported special section %s", symbol.Name, symbol.Section)
+			}
 			if !Supported(file) {
 				return features, fmt.Errorf("custom ELF image does not support GNU IFUNC resolver %q on %s/%s", symbol.Name, runtime.GOOS, runtime.GOARCH)
 			}
