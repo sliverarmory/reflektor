@@ -9,6 +9,8 @@
 !internal/
 !internal/elfrelr/
 !internal/elfrelr/**
+!internal/elfifunc/
+!internal/elfifunc/**
 !internal/elftls/
 !internal/elftls/**
 !sliver-e2e-checkout/

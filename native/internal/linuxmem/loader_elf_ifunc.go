@@ -32,14 +32,14 @@ type deferredELFIFUNCRelocation struct {
 }
 
 type elfIFUNCKey struct {
-	image    uintptr
+	file     *elf.File
 	resolver uint64
 }
 
 type elfIFUNCResolutionCache map[elfIFUNCKey]uintptr
 
 func (cache elfIFUNCResolutionCache) resolve(definition elfIFUNCDefinition) (uintptr, error) {
-	key := elfIFUNCKey{image: definition.mapped.loadBias, resolver: definition.resolverVAddr}
+	key := elfIFUNCKey{file: definition.file, resolver: definition.resolverVAddr}
 	if implementation, exists := cache[key]; exists {
 		if implementation == 0 {
 			return 0, fmt.Errorf("IFUNC resolver %q recursively entered", definition.name)
