@@ -43,8 +43,11 @@ const (
 	// ELF dynamic tags used for runtime initialization hooks.
 	dynTagNull        = 0
 	dynTagInit        = 12
+	dynTagFini        = 13
 	dynTagInitArray   = 25
+	dynTagFiniArray   = 26
 	dynTagInitArraySz = 27
+	dynTagFiniArraySz = 28
 	dynTagPreinitArr  = 32
 	dynTagPreinitSz   = 33
 )
@@ -54,6 +57,7 @@ type Module struct {
 	mapping     []byte
 	loadBias    uintptr
 	symbols     map[string]uintptr
+	finalizers  []uintptr
 	goRuntime   bool
 	tlsModuleID uint64
 	recursive   *linuxRecursiveGroup
@@ -72,8 +76,11 @@ type mappedELF struct {
 
 type dynamicInitInfo struct {
 	init        uint64
+	fini        uint64
 	initArray   uint64
+	finiArray   uint64
 	initArraySz uint64
+	finiArraySz uint64
 	preinitArr  uint64
 	preinitSz   uint64
 }
@@ -179,6 +186,10 @@ func LoadLibrary(data []byte) (*Module, error) {
 	if err != nil {
 		return nil, err
 	}
+	finalizers, err := collectELFFinalizers(mapped, f.Class, initInfo)
+	if err != nil {
+		return nil, err
+	}
 	argc, argv, envp := linuxInitCallArgs(goRuntime)
 	if goRuntime && argv == 0 {
 		return nil, errors.New("failed to allocate Go runtime argv/environment vector")
@@ -194,6 +205,7 @@ func LoadLibrary(data []byte) (*Module, error) {
 		mapping:     mapped.mapping,
 		loadBias:    mapped.loadBias,
 		symbols:     buildExportedSymbolTable(f, mapped.loadBias),
+		finalizers:  finalizers,
 		goRuntime:   goRuntime,
 		tlsModuleID: tlsModuleID,
 	}
@@ -262,38 +274,44 @@ func releaseLinuxGoTLSSlot(slot uintptr) {
 
 func (module *Module) Free() {
 	module.mu.Lock()
-	defer module.mu.Unlock()
-
 	if module.closed {
+		module.mu.Unlock()
 		return
 	}
 	module.closed = true
-	if module.recursive != nil {
-		module.recursive.free()
-		module.recursive = nil
-		module.mapping = nil
-		module.symbols = nil
-		module.loadBias = 0
+	recursive := module.recursive
+	goRuntime := module.goRuntime
+	mapping := module.mapping
+	finalizers := module.finalizers
+	tlsModuleID := module.tlsModuleID
+	module.recursive = nil
+	module.mapping = nil
+	module.symbols = nil
+	module.finalizers = nil
+	module.loadBias = 0
+	module.tlsModuleID = 0
+	module.mu.Unlock()
+
+	if recursive != nil {
+		recursive.free()
 		return
 	}
-	if module.goRuntime {
+	if goRuntime {
 		// A Go c-shared runtime owns process-lifetime threads and cannot be
 		// unloaded safely. Close the Reflektor handle while leaving its mapping
 		// and reserved TLS slot pinned until process exit.
-		module.mapping = nil
-		module.symbols = nil
-		module.loadBias = 0
 		return
 	}
 
-	if len(module.mapping) != 0 {
-		_ = unix.Munmap(module.mapping)
-		module.mapping = nil
+	// Destructors may reenter the public Library. Mark it closed and release
+	// the module lock before running user code.
+	for _, finalizer := range finalizers {
+		cCallVoid0(finalizer)
 	}
-	elftls.Release(module.tlsModuleID)
-	module.tlsModuleID = 0
-	module.symbols = nil
-	module.loadBias = 0
+	if len(mapping) != 0 {
+		_ = unix.Munmap(mapping)
+	}
+	elftls.Release(tlsModuleID)
 }
 
 func (module *Module) CallExport(name string) error {
@@ -994,6 +1012,17 @@ func collectELFInitializers(mapped mappedELF, class elf.Class, info dynamicInitI
 	return initializers, nil
 }
 
+func collectELFFinalizers(mapped mappedELF, class elf.Class, info dynamicInitInfo) ([]uintptr, error) {
+	finalizers, err := appendDynamicInitArray(nil, mapped, class, info.finiArray, info.finiArraySz, "DT_FINI_ARRAY")
+	if err != nil {
+		return nil, err
+	}
+	for left, right := 0, len(finalizers)-1; left < right; left, right = left+1, right-1 {
+		finalizers[left], finalizers[right] = finalizers[right], finalizers[left]
+	}
+	return appendDynamicInitFn(finalizers, mapped, uintptr(info.fini), "DT_FINI")
+}
+
 func parseDynamicInitInfo(f *elf.File) (dynamicInitInfo, error) {
 	var info dynamicInitInfo
 	if f == nil {
@@ -1026,10 +1055,16 @@ func parseDynamicInitInfo(f *elf.File) (dynamicInitInfo, error) {
 			switch tag {
 			case dynTagInit:
 				info.init = val
+			case dynTagFini:
+				info.fini = val
 			case dynTagInitArray:
 				info.initArray = val
+			case dynTagFiniArray:
+				info.finiArray = val
 			case dynTagInitArraySz:
 				info.initArraySz = val
+			case dynTagFiniArraySz:
+				info.finiArraySz = val
 			case dynTagPreinitArr:
 				info.preinitArr = val
 			case dynTagPreinitSz:
@@ -1050,10 +1085,16 @@ func parseDynamicInitInfo(f *elf.File) (dynamicInitInfo, error) {
 			switch tag {
 			case dynTagInit:
 				info.init = val
+			case dynTagFini:
+				info.fini = val
 			case dynTagInitArray:
 				info.initArray = val
+			case dynTagFiniArray:
+				info.finiArray = val
 			case dynTagInitArraySz:
 				info.initArraySz = val
+			case dynTagFiniArraySz:
+				info.finiArraySz = val
 			case dynTagPreinitArr:
 				info.preinitArr = val
 			case dynTagPreinitSz:
