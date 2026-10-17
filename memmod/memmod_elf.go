@@ -186,9 +186,12 @@ func LoadLibrary(data []byte) (*Module, error) {
 	if err != nil {
 		return nil, err
 	}
-	finalizers, err := collectELFFinalizers(mapped, f.Class, initInfo)
-	if err != nil {
-		return nil, err
+	var finalizers []uintptr
+	if !goRuntime {
+		finalizers, err = collectELFFinalizers(mapped, f.Class, initInfo)
+		if err != nil {
+			return nil, err
+		}
 	}
 	argc, argv, envp := linuxInitCallArgs(goRuntime)
 	if goRuntime && argv == 0 {
