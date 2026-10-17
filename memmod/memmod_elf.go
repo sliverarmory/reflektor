@@ -16,6 +16,7 @@ import (
 	"sync"
 	"unsafe"
 
+	"github.com/sliverarmory/reflektor/internal/elfifunc"
 	"github.com/sliverarmory/reflektor/internal/elfrelr"
 	"github.com/sliverarmory/reflektor/internal/elftls"
 	"golang.org/x/sys/unix"
@@ -43,8 +44,11 @@ const (
 	// ELF dynamic tags used for runtime initialization hooks.
 	dynTagNull        = 0
 	dynTagInit        = 12
+	dynTagFini        = 13
 	dynTagInitArray   = 25
+	dynTagFiniArray   = 26
 	dynTagInitArraySz = 27
+	dynTagFiniArraySz = 28
 	dynTagPreinitArr  = 32
 	dynTagPreinitSz   = 33
 )
@@ -54,6 +58,7 @@ type Module struct {
 	mapping     []byte
 	loadBias    uintptr
 	symbols     map[string]uintptr
+	finalizers  []uintptr
 	goRuntime   bool
 	tlsModuleID uint64
 	recursive   *linuxRecursiveGroup
@@ -72,8 +77,11 @@ type mappedELF struct {
 
 type dynamicInitInfo struct {
 	init        uint64
+	fini        uint64
 	initArray   uint64
+	finiArray   uint64
 	initArraySz uint64
+	finiArraySz uint64
 	preinitArr  uint64
 	preinitSz   uint64
 }
@@ -91,6 +99,9 @@ type symbolResolver struct {
 	misses        map[string]error
 	opened        map[string]uintptr
 	resolveSymbol func(elf.Symbol) (uintptr, error)
+	resolveIFUNC  func(elf.Symbol) (elfIFUNCDefinition, bool, error)
+	enableIFUNC   bool
+	deferredIFUNC []deferredELFIFUNCRelocation
 }
 
 var linuxGoTLSSlots = struct {
@@ -116,6 +127,14 @@ func LoadLibrary(data []byte) (*Module, error) {
 	}
 	if err := rejectCustomELFIFUNC(f); err != nil {
 		return nil, err
+	}
+	ifuncFeatures, err := elfifunc.Inspect(f)
+	if err != nil {
+		return nil, err
+	}
+	// Keep the runtime path unreachable until all loader gates can accept it.
+	if ifuncFeatures.Present() {
+		return nil, errors.New("custom ELF image does not support IRELATIVE/IFUNC resolver relocations")
 	}
 	initInfo, err := parseDynamicInitInfo(f)
 	if err != nil {
@@ -165,11 +184,28 @@ func LoadLibrary(data []byte) (*Module, error) {
 	}()
 
 	resolver := newSymbolResolver(f)
+	resolver.enableIFUNC = ifuncFeatures.Present()
 	if err := applyDynamicRelocations(mapped, f, resolver); err != nil {
 		return nil, err
 	}
 	if err := flushELFInstructionCache(mapped); err != nil {
 		return nil, err
+	}
+	var exports map[string]uintptr
+	if ifuncFeatures.Present() {
+		if err := protectELFExecutableSegments(mapped); err != nil {
+			return nil, err
+		}
+		cache := make(elfIFUNCResolutionCache)
+		if err := resolveDeferredELFIFUNC(resolver.deferredIFUNC, mapped, cache); err != nil {
+			return nil, err
+		}
+		exports, err = buildExportedELFIFUNCSymbolTable(f, mapped, cache)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		exports = buildExportedSymbolTable(f, mapped.loadBias)
 	}
 
 	if err := applySegmentProtections(mapped); err != nil {
@@ -178,6 +214,13 @@ func LoadLibrary(data []byte) (*Module, error) {
 	initializers, err := collectELFInitializers(mapped, f.Class, initInfo)
 	if err != nil {
 		return nil, err
+	}
+	var finalizers []uintptr
+	if !goRuntime {
+		finalizers, err = collectELFFinalizers(mapped, f.Class, initInfo)
+		if err != nil {
+			return nil, err
+		}
 	}
 	argc, argv, envp := linuxInitCallArgs(goRuntime)
 	if goRuntime && argv == 0 {
@@ -193,7 +236,8 @@ func LoadLibrary(data []byte) (*Module, error) {
 	module := &Module{
 		mapping:     mapped.mapping,
 		loadBias:    mapped.loadBias,
-		symbols:     buildExportedSymbolTable(f, mapped.loadBias),
+		symbols:     exports,
+		finalizers:  finalizers,
 		goRuntime:   goRuntime,
 		tlsModuleID: tlsModuleID,
 	}
@@ -262,38 +306,44 @@ func releaseLinuxGoTLSSlot(slot uintptr) {
 
 func (module *Module) Free() {
 	module.mu.Lock()
-	defer module.mu.Unlock()
-
 	if module.closed {
+		module.mu.Unlock()
 		return
 	}
 	module.closed = true
-	if module.recursive != nil {
-		module.recursive.free()
-		module.recursive = nil
-		module.mapping = nil
-		module.symbols = nil
-		module.loadBias = 0
+	recursive := module.recursive
+	goRuntime := module.goRuntime
+	mapping := module.mapping
+	finalizers := module.finalizers
+	tlsModuleID := module.tlsModuleID
+	module.recursive = nil
+	module.mapping = nil
+	module.symbols = nil
+	module.finalizers = nil
+	module.loadBias = 0
+	module.tlsModuleID = 0
+	module.mu.Unlock()
+
+	if recursive != nil {
+		recursive.free()
 		return
 	}
-	if module.goRuntime {
+	if goRuntime {
 		// A Go c-shared runtime owns process-lifetime threads and cannot be
 		// unloaded safely. Close the Reflektor handle while leaving its mapping
 		// and reserved TLS slot pinned until process exit.
-		module.mapping = nil
-		module.symbols = nil
-		module.loadBias = 0
 		return
 	}
 
-	if len(module.mapping) != 0 {
-		_ = unix.Munmap(module.mapping)
-		module.mapping = nil
+	// Destructors may reenter the public Library. Mark it closed and release
+	// the module lock before running user code.
+	for _, finalizer := range finalizers {
+		cCallVoid0(finalizer)
 	}
-	elftls.Release(module.tlsModuleID)
-	module.tlsModuleID = 0
-	module.symbols = nil
-	module.loadBias = 0
+	if len(mapping) != 0 {
+		_ = unix.Munmap(mapping)
+	}
+	elftls.Release(tlsModuleID)
 }
 
 func (module *Module) CallExport(name string) error {
@@ -554,6 +604,13 @@ func applyRELASection(data []byte, f *elf.File, mapped mappedELF, dynSyms []elf.
 			off := binary.LittleEndian.Uint64(data[i : i+8])
 			info := binary.LittleEndian.Uint64(data[i+8 : i+16])
 			addend := int64(binary.LittleEndian.Uint64(data[i+16 : i+24]))
+			queued, err := queueELFIFUNCRelocation(f, mapped, dynSyms, resolver, uint32(elf.R_SYM64(info)), uint32(elf.R_TYPE64(info)), off, addend, true, sectionName, i/ent)
+			if err != nil {
+				return err
+			}
+			if queued {
+				continue
+			}
 			if err := applyOneRelocation(f.Machine, f.Class, mapped, dynSyms, resolver, uint32(elf.R_SYM64(info)), uint32(elf.R_TYPE64(info)), off, addend, true); err != nil {
 				return fmt.Errorf("%s[%d]: %w", sectionName, i/ent, err)
 			}
@@ -567,6 +624,13 @@ func applyRELASection(data []byte, f *elf.File, mapped mappedELF, dynSyms []elf.
 			off := uint64(binary.LittleEndian.Uint32(data[i : i+4]))
 			info := binary.LittleEndian.Uint32(data[i+4 : i+8])
 			addend := int64(int32(binary.LittleEndian.Uint32(data[i+8 : i+12])))
+			queued, err := queueELFIFUNCRelocation(f, mapped, dynSyms, resolver, elf.R_SYM32(info), elf.R_TYPE32(info), off, addend, true, sectionName, i/ent)
+			if err != nil {
+				return err
+			}
+			if queued {
+				continue
+			}
 			if err := applyOneRelocation(f.Machine, f.Class, mapped, dynSyms, resolver, elf.R_SYM32(info), elf.R_TYPE32(info), off, addend, true); err != nil {
 				return fmt.Errorf("%s[%d]: %w", sectionName, i/ent, err)
 			}
@@ -587,6 +651,13 @@ func applyRELSection(data []byte, f *elf.File, mapped mappedELF, dynSyms []elf.S
 		for i := 0; i < len(data); i += ent {
 			off := binary.LittleEndian.Uint64(data[i : i+8])
 			info := binary.LittleEndian.Uint64(data[i+8 : i+16])
+			queued, err := queueELFIFUNCRelocation(f, mapped, dynSyms, resolver, uint32(elf.R_SYM64(info)), uint32(elf.R_TYPE64(info)), off, 0, false, sectionName, i/ent)
+			if err != nil {
+				return err
+			}
+			if queued {
+				continue
+			}
 			if err := applyOneRelocation(f.Machine, f.Class, mapped, dynSyms, resolver, uint32(elf.R_SYM64(info)), uint32(elf.R_TYPE64(info)), off, 0, false); err != nil {
 				return fmt.Errorf("%s[%d]: %w", sectionName, i/ent, err)
 			}
@@ -599,6 +670,13 @@ func applyRELSection(data []byte, f *elf.File, mapped mappedELF, dynSyms []elf.S
 		for i := 0; i < len(data); i += ent {
 			off := uint64(binary.LittleEndian.Uint32(data[i : i+4]))
 			info := binary.LittleEndian.Uint32(data[i+4 : i+8])
+			queued, err := queueELFIFUNCRelocation(f, mapped, dynSyms, resolver, elf.R_SYM32(info), elf.R_TYPE32(info), off, 0, false, sectionName, i/ent)
+			if err != nil {
+				return err
+			}
+			if queued {
+				continue
+			}
 			if err := applyOneRelocation(f.Machine, f.Class, mapped, dynSyms, resolver, elf.R_SYM32(info), elf.R_TYPE32(info), off, 0, false); err != nil {
 				return fmt.Errorf("%s[%d]: %w", sectionName, i/ent, err)
 			}
@@ -889,6 +967,9 @@ func resolveRelocationSymbol(symIndex uint32, dynSyms []elf.Symbol, loadBias uin
 	}
 	bind := elf.ST_BIND(sym.Info)
 	if sym.Section != elf.SHN_UNDEF && sym.Value != 0 {
+		if elf.ST_TYPE(sym.Info) == elf.STT_GNU_IFUNC {
+			return 0, fmt.Errorf("GNU IFUNC symbol %q requires deferred resolution", sym.Name)
+		}
 		return loadBias + uintptr(sym.Value), nil
 	}
 	if sym.Name == "" {
@@ -897,6 +978,9 @@ func resolveRelocationSymbol(symIndex uint32, dynSyms []elf.Symbol, loadBias uin
 
 	addr, err := resolver.ResolveSymbol(sym)
 	if err != nil {
+		if errors.Is(err, errRecursiveIFUNCRequiresDeferred) {
+			return 0, err
+		}
 		if bind == elf.STB_WEAK {
 			// Undefined weak symbols are optional, but they still bind to an
 			// available definition before falling back to zero.
@@ -994,6 +1078,17 @@ func collectELFInitializers(mapped mappedELF, class elf.Class, info dynamicInitI
 	return initializers, nil
 }
 
+func collectELFFinalizers(mapped mappedELF, class elf.Class, info dynamicInitInfo) ([]uintptr, error) {
+	finalizers, err := appendDynamicInitArray(nil, mapped, class, info.finiArray, info.finiArraySz, "DT_FINI_ARRAY")
+	if err != nil {
+		return nil, err
+	}
+	for left, right := 0, len(finalizers)-1; left < right; left, right = left+1, right-1 {
+		finalizers[left], finalizers[right] = finalizers[right], finalizers[left]
+	}
+	return appendDynamicInitFn(finalizers, mapped, uintptr(info.fini), "DT_FINI")
+}
+
 func parseDynamicInitInfo(f *elf.File) (dynamicInitInfo, error) {
 	var info dynamicInitInfo
 	if f == nil {
@@ -1026,10 +1121,16 @@ func parseDynamicInitInfo(f *elf.File) (dynamicInitInfo, error) {
 			switch tag {
 			case dynTagInit:
 				info.init = val
+			case dynTagFini:
+				info.fini = val
 			case dynTagInitArray:
 				info.initArray = val
+			case dynTagFiniArray:
+				info.finiArray = val
 			case dynTagInitArraySz:
 				info.initArraySz = val
+			case dynTagFiniArraySz:
+				info.finiArraySz = val
 			case dynTagPreinitArr:
 				info.preinitArr = val
 			case dynTagPreinitSz:
@@ -1050,10 +1151,16 @@ func parseDynamicInitInfo(f *elf.File) (dynamicInitInfo, error) {
 			switch tag {
 			case dynTagInit:
 				info.init = val
+			case dynTagFini:
+				info.fini = val
 			case dynTagInitArray:
 				info.initArray = val
+			case dynTagFiniArray:
+				info.finiArray = val
 			case dynTagInitArraySz:
 				info.initArraySz = val
+			case dynTagFiniArraySz:
+				info.finiArraySz = val
 			case dynTagPreinitArr:
 				info.preinitArr = val
 			case dynTagPreinitSz:
